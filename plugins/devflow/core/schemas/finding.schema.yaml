@@ -8,8 +8,30 @@ required:
   - expected
   - actual
   - evidence
+  - root_cause
   - disposition
 classification:
   allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
+  disposition:
+    CONFIRMED: create remediation WORK
+    DECISION_REQUIRED: record the decision, block dependent WORK, create no code change
+    EVIDENCE_REQUIRED: create evidence WORK, never product-code changes
+    REJECTED: keep the audit record only
+    DOCUMENTATION_DRIFT: create documentation WORK
+    SPEC_DRIFT: stop affected execution until the conflict is resolved
 severity:
   allowed: [blocker, major, minor, nit]
+  meaning:
+    blocker: Shipping this corrupts data or gets money wrong. Fix before any dependent work starts.
+    major: Violates an approved specification or a repository-enforced rule. Fix inside this phase.
+    minor: Behavior is correct but carries maintenance risk. May travel to the next phase.
+    nit: Taste and readability. Closing it is optional.
+verdict:
+  allowed: [pass, conditional_pass, fail]
+  meaning:
+    pass: No blocker and no major finding.
+    conditional_pass: Only major findings, and each one names a specific fix.
+    fail: At least one blocker.
+  rule: >
+    Never write pass without evidence. Only a command that was actually executed, with its output,
+    counts as grounds for pass.

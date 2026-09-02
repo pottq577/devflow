@@ -1,3 +1,3 @@
 interface:
   display_name: "DevFlow Status"
-  short_description: "Inspect DevFlow STATE and WORK deterministically and report the current lifecycle position and next "
+  short_description: "Report the current lifecycle position and the next action, computed from STATE and WORK."

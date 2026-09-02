@@ -14,9 +14,24 @@ required_item_fields:
   - risk
   - status
   - evidence
+optional_item_fields:
+  context: Repository facts the Architect already verified, so the Executor does not re-derive them. Expected for high and critical risk.
+  premise_checks: Facts to re-confirm at current HEAD before editing anything. Mandatory for high and critical risk.
+  pitfalls: Known failure modes for this specific change. Each entry names what breaks and why.
+  blocks: WORK ids that depend on this one. Informational mirror of their dependencies.
+  transfer: Where a transferred requirement went, as {to, requirements}. Mandatory when status is transferred.
+  references: External document ids or paths the Executor should read.
 kind:
   allowed: [implementation, remediation, evidence, documentation, migration, test]
 status:
   allowed: [ready, in_progress, done, blocked, transferred, cancelled]
+terminal: [done, transferred, cancelled]
 risk_level:
   allowed: [low, medium, high, critical]
+enforced_by_validate:
+  - acceptance and verification.commands must not be empty
+  - dependencies must resolve, and the dependency graph must be acyclic
+  - a ready item must not depend on an unresolved decision
+  - high and critical risk require premise_checks
+  - done requires evidence.commands, except for kind documentation
+  - transferred requires transfer.to, and the target must carry the same origin.requirements

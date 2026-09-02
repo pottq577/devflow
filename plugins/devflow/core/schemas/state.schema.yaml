@@ -9,9 +9,22 @@ required:
   - integration
   - unresolved_decisions
   - next_action
+optional:
+  extension: Name of the audit extension to load. Resolved from .devflow/extensions/<name>.md first, then the plugin's core/extensions/<name>.md, then default.
 project_status:
   allowed: [planning, plan_review, phase_execution, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, complete, blocked]
 phase_status:
   allowed: [planned, executing, audit, remediation, verified, blocked]
 integration_status:
   allowed: [pending, audit, remediation, closure, verified]
+phase_entry:
+  required: [status, work_file, audit_file]
+  optional:
+    base_ref: Branch or ref the phase started from.
+    head_ref: Branch or ref holding the phase's work.
+    base_sha: Immutable commit the diff starts at.
+    head_sha: Immutable commit the diff ends at.
+    diff_range: The auditable range. Written by 'devflow phase ref', which refuses a 3-dot range when base is not an ancestor of head.
+  key_format: >
+    Zero-padded two-digit strings ("01", "05"). The runtime normalizes on read, so "5" also resolves,
+    but validate reports two raw keys that normalize to the same phase as an error.

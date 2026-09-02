@@ -1,3 +1,3 @@
 interface:
   display_name: "DevFlow Audit"
-  short_description: "Independently audit a DevFlow plan, phase, or whole integration using repository evidence, then clas"
+  short_description: "Independently audit a plan, phase, or integration, classify findings, and generate remediation WORK."

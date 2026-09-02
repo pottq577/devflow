@@ -1,3 +1,3 @@
 interface:
   display_name: "DevFlow Plan"
-  short_description: "Convert an approved PRD into a repository-grounded DevFlow PLAN, phase WORK manifests, decisions, an"
+  short_description: "Turn an approved PRD into a repository-grounded PLAN, phase WORK manifests, decisions, and STATE."

@@ -9,19 +9,41 @@ items:
       findings: []
       plan_items: [P01-01]
     objective: Replace with one verifiable change objective.
+
+    # Repository facts the Architect verified while planning. The Executor trusts these
+    # instead of re-deriving them, and premise_checks below is how it confirms they still hold.
+    context:
+      - "State a fact about current code that shapes this change, with the class or file that carries it."
+      - "State what must NOT change and why, when nearby code looks like it should."
+
     dependencies: []
+    blocks: []
     decision_dependencies: []
+    transfer: null
+
     scope:
       allowed: []
       forbidden: [unrelated-refactoring]
     requirements: []
+
+    # Step one of execution: confirm each of these at current HEAD before editing.
+    # If one is false, the premise moved and this is a stop condition, not a puzzle to solve.
+    premise_checks:
+      - "Name a specific method, condition, or migration number to look at, and what you expect to find."
+
     verification:
       commands: []
     acceptance: []
+
+    # Known failure modes for this change. Each entry says what breaks and what it costs.
+    pitfalls:
+      - "Name the mistake an executor is likely to make here and the symptom it produces."
+
     stop_conditions:
       - Current code invalidates a material task premise.
       - The change requires scope outside the approved PRD or PLAN.
       - A product/policy decision is required.
+    references: []
     risk:
       level: medium
       axes: []
@@ -33,3 +55,12 @@ items:
       commands: []
       deviations: []
       discoveries: []
+
+  # Shape of a transferred item. The receiving item must carry the same origin.requirements,
+  # which is what validate checks. A requirement that moved phases without this link was
+  # invisible in both phases for an entire cycle.
+  # - id: P01-I02
+  #   status: transferred
+  #   transfer:
+  #     to: P08-I03
+  #     requirements: [REQ-014]
