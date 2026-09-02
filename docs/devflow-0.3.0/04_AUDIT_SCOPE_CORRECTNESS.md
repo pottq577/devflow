@@ -15,7 +15,7 @@ plugins/devflow/scripts/devflow.py
 plugins/devflow/core/templates/STATE.yaml
 plugins/devflow/core/schemas/state.schema.yaml
 plugins/devflow/core/prompts/audit.md
-plugins/devflow/skills/devflow-audit/SKILL.md
+plugins/devflow/skills/audit/SKILL.md
 plugins/devflow/tests/test_devflow.py
 ```
 

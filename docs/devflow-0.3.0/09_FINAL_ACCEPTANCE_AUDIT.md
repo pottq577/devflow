@@ -21,10 +21,10 @@ plugins/devflow/core/protocol/lifecycle.md
 plugins/devflow/core/protocol/risk-policy.md
 plugins/devflow/core/protocol/work-item-contract.md
 plugins/devflow/core/protocol/audit-core.md
-plugins/devflow/skills/devflow-plan/SKILL.md
-plugins/devflow/skills/devflow-run/SKILL.md
-plugins/devflow/skills/devflow-audit/SKILL.md
-plugins/devflow/skills/devflow-status/SKILL.md
+plugins/devflow/skills/plan/SKILL.md
+plugins/devflow/skills/run/SKILL.md
+plugins/devflow/skills/audit/SKILL.md
+plugins/devflow/skills/status/SKILL.md
 plugins/devflow/README.md
 plugins/devflow/CHANGELOG.md
 plugins/devflow/.codex-plugin/plugin.json

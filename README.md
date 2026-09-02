@@ -7,14 +7,14 @@ Both marketplace adapters load the same `plugins/devflow` directory. The shared 
 ## Claude Code
 
 ```bash
-claude plugin marketplace add /path/to/claude-marketplace
+claude plugin marketplace add /path/to/devflow-marketplace
 claude plugin install devflow@devflow-team
 ```
 
 ## Codex
 
 ```bash
-codex plugin marketplace add /path/to/claude-marketplace
+codex plugin marketplace add /path/to/devflow-marketplace
 codex plugin add devflow@devflow-team
 ```
 

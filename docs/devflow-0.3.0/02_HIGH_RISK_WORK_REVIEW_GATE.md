@@ -18,7 +18,7 @@ plugins/devflow/core/protocol/risk-policy.md
 plugins/devflow/core/protocol/lifecycle.md
 plugins/devflow/core/protocol/audit-core.md
 plugins/devflow/core/prompts/audit.md
-plugins/devflow/skills/devflow-audit/SKILL.md
+plugins/devflow/skills/audit/SKILL.md
 plugins/devflow/tests/test_devflow.py
 ```
 

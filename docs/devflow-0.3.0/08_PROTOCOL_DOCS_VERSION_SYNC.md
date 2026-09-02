@@ -32,10 +32,10 @@ plugins/devflow/core/schemas/state.schema.yaml
 plugins/devflow/core/schemas/work.schema.yaml
 plugins/devflow/core/schemas/finding.schema.yaml
 
-plugins/devflow/skills/devflow-plan/SKILL.md
-plugins/devflow/skills/devflow-run/SKILL.md
-plugins/devflow/skills/devflow-audit/SKILL.md
-plugins/devflow/skills/devflow-status/SKILL.md
+plugins/devflow/skills/plan/SKILL.md
+plugins/devflow/skills/run/SKILL.md
+plugins/devflow/skills/audit/SKILL.md
+plugins/devflow/skills/status/SKILL.md
 
 plugins/devflow/README.md
 plugins/devflow/CHANGELOG.md

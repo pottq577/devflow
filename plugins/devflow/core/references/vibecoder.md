@@ -1,3 +1,5 @@
+> 이 문서는 DevFlow의 최초 설계 근거(design rationale)입니다. 현재 런타임 계약의 정본은 `core/protocol/*.md`와 `core/schemas/`이며, 아래 예시 중 일부는 이후 프로토콜(현재 `protocol_version: 1.1.0`)에서 바뀐 초기 스냅샷입니다. 명령어와 경로, 상태 값은 프로토콜 문서와 스키마를 기준으로 확인하세요.
+
 결론부터 말하면, **재사용 가능한 개발 프로토콜은 충분히 추출 가능하다.** 다만 이전에 제안한 `하나의 Core Skill + 여러 문서 템플릿` 구조는 현재의 문서형 기술부채를 더 정돈된 형태로 재생산할 가능성이 크다.
 
 네 워크플로우의 핵심 병목은 세 가지다.
@@ -626,7 +628,7 @@ HANDOFF.md
 예시는 다음과 같다.
 
 ```yaml
-protocol_version: 1
+protocol_version: 1.1.0
 
 domain: subscription-payment
 risk_profile: high
