@@ -733,6 +733,50 @@ def case_derived_blocked_state_and_audit_scopes(root: Path) -> None:
     check("all computed audit scopes are renderable", {action["scope"] for action in audits} == {"plan", "work", "phase", "integration"}, repr(audits))
 
 
+def case_integration_next_action_guards(root: Path) -> None:
+    """status must never advertise an integration action the mutation guard would reject."""
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+
+    # Preplanned ready integration WORK cannot starve an unverified phase's audit.
+    dump(d / "STATE.yaml", state({"01": phase("audit", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("A", status="done", commands=["true -> ok"])))
+    dump(d / "work/integration.yaml", work("integration", item("INT-I01")))
+    out = devflow(root, "status", "billing").stdout
+    check(
+        "preplanned integration WORK does not preempt phase audit",
+        "next.command: audit" in out and "next.phase: 01" in out and "next.work_item: INT-I01" not in out,
+        out,
+    )
+
+    # Blocked integration WORK projects a human decision, never an integration audit.
+    dump(d / "STATE.yaml", state({"01": phase("verified", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("A", status="done", commands=["true -> ok"])))
+    dump(d / "work/integration.yaml", work("integration", item("INT-I01", status="blocked", block_reason="waiting")))
+    out = devflow(root, "status", "billing").stdout
+    check(
+        "blocked integration WORK asks for a human integration decision",
+        "next.role: human" in out and "next.command: decision" in out and "next.scope: integration" in out,
+        out,
+    )
+    check("blocked integration WORK does not project an integration audit", "next.command: audit" not in out, out)
+
+    # An unresolved project decision precedes any integration run or audit.
+    dump(d / "STATE.yaml", state({"01": phase("verified", "01")}, unresolved_decisions=["DEC-001"]))
+    dump(d / "work/phase-01.yaml", work("01", item("A", status="done", commands=["true -> ok"])))
+    dump(d / "work/integration.yaml", work("integration", item("INT-I01", status="done", commands=["true -> ok"])))
+    out = devflow(root, "status", "billing").stdout
+    check(
+        "unresolved project decision precedes any integration run or audit",
+        "next.role: human" in out
+        and "next.command: decision" in out
+        and "next.scope: project" in out
+        and "next.command: audit" not in out
+        and "next.command: run" not in out,
+        out,
+    )
+
+
 def case_plan_review_gate(root: Path) -> None:
     devflow(root, "init", "billing", "--risk", "critical")
     d = root / "docs/domains/billing"
@@ -1059,6 +1103,7 @@ CASES = [
     case_derived_lifecycle_state,
     case_derived_integration_work_review_state,
     case_derived_blocked_state_and_audit_scopes,
+    case_integration_next_action_guards,
     case_plan_review_gate,
     case_high_risk_dependency_is_gated,
     case_verified_review_releases_dependent,

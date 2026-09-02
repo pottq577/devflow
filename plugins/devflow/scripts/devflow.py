@@ -419,11 +419,17 @@ def choose_next(root: Path, domain: str, statuses: set[str] | None = None):
     docs, index, _ = load_work_index(d)
     phases = normalized_phases(state)
     unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
+    all_phases_verified = bool(phases) and all(
+        entry.get("status") == "verified" for entry in phases.values()
+    )
 
     candidates = []
     for path, doc in docs.items():
         phase = item_phase(path, doc)
-        if phase != "integration" and phases.get(phase, {}).get("status") == "verified":
+        if phase == "integration":
+            if not all_phases_verified:
+                continue
+        elif phases.get(phase, {}).get("status") == "verified":
             continue
         for item in doc.get("items", []) or []:
             status = item.get("status")
@@ -513,6 +519,21 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
     integration = state.get("integration", {}) or {}
     istatus = integration.get("status", "pending")
     if all_verified:
+        # An unresolved project decision must clear before any integration audit/closure.
+        if state.get("unresolved_decisions"):
+            return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
+        # Blocked integration WORK needs a human decision, never an audit projection.
+        integration_items = [
+            item
+            for path, doc in docs.items() if item_phase(path, doc) == "integration"
+            for item in (doc.get("items", []) or [])
+        ]
+        blocked = [str(item.get("id")) for item in integration_items if item.get("status") == "blocked"]
+        if blocked:
+            action = {"role": "human", "command": "decision", "scope": "integration", "phase": None, "work_item": None}
+            if len(blocked) == 1:
+                action["work_item"] = blocked[0]
+            return action
         if istatus in {"pending", "audit"}:
             return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
         if istatus == "closure":
