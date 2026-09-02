@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Independently audit a DevFlow plan, phase, or whole integration using repository evidence, then classify findings and generate remediation/evidence WORK directly. Use for plan review, phase review, closure review, and cross-phase integration review in a fresh reviewer session.
+description: Independently audit a DevFlow plan, work, phase, or whole integration using repository evidence, then classify findings and generate remediation/evidence WORK directly. Use for plan review, work review, phase review, closure review, and cross-phase integration review in a fresh reviewer session.
 ---
 
 # DevFlow Audit
@@ -24,14 +24,17 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 
 ## Workflow
 
-1. Determine `scope=plan|phase|integration` and `mode=initial|closure`. Use a fresh high-reasoning
+1. Determine `scope=plan|work|phase|integration` and `mode=initial|closure`. Work scope requires
+   `--task <WORK-ID>`. A work initial audit gates high/critical dependents, and a work closure audit
+   verifies its remediation. Phase and integration each have initial and closure audits; a high-risk
+   plan review is initial before WORK begins. Use a fresh high-reasoning
    session whenever practical.
 2. **Pin the range before reading code.** If the phase has no `diff_range`, run
    `devflow phase ref <domain> <phase> --base <ref> --head <ref>`. It verifies that the base is an
    ancestor of the head and refuses otherwise, because a stacked branch cut from a work commit makes
    a 3-dot diff resolve to a stale merge base and report hundreds of unrelated files. Use `--range`
    for the diverged case, after inspecting `git log --graph --oneline <base> <head>`.
-3. Run `devflow render audit <domain> --scope <scope> [--phase XX] --mode <mode>`. The packet inlines
+3. Run `devflow render audit <domain> --scope <scope> [--task WORK-ID] [--phase XX] --mode <mode>`. The packet inlines
    the audit core with its concrete per-axis checks, the resolved domain extension, the risk and
    decision policies, and the domain's `PITFALLS.md`.
 4. Do not check out branches. Another session may be working in the tree. Read with
@@ -42,7 +45,8 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 6. Apply the common audit axes. For integration scope, also inspect cross-phase contracts,
    transferred requirements in the receiving manifest, end-to-end state and data flows, transaction
    boundaries, migration ordering, and regression/evidence gaps.
-7. Write or update the single audit artifact under `audits/`; do not create separate review-plan or
+7. Write or update the single audit artifact under `audits/`. Work audits use
+   `audits/work/<WORK-ID>.md`; do not create separate review-plan or
    handoff documents.
 8. Classify findings as `CONFIRMED`, `DECISION_REQUIRED`, `EVIDENCE_REQUIRED`, `REJECTED`,
    `DOCUMENTATION_DRIFT`, or `SPEC_DRIFT`. Assign a severity and reach a verdict of `pass`,
@@ -54,8 +58,9 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
     the same as any planned item. Build dependencies before severity ordering.
 11. Add unresolved decision IDs to STATE and document them in `DECISIONS.md`. Never guess the policy.
 12. Add durable traps you uncovered to `PITFALLS.md`.
-13. Update phase/integration state (`phase set`, `plan-review set`, `integration set`), run
-    validation, then run status.
+13. For work scope, record `devflow work review <domain> <WORK-ID> verified`,
+    `remediation --remediation-work <ID>`, or `blocked` after writing the audit artifact. Update
+    phase/integration state when applicable, run validation, then run status.
 
 ## Closure mode
 

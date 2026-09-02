@@ -16,7 +16,7 @@ when the session ends.
 | --- | --- | --- |
 | `plan` | Architect | Repository-grounded architecture and WORK generation |
 | `run` | Executor | Exactly one ready WORK item, with evidence |
-| `audit` | Auditor | Plan, phase, integration, and closure reviews |
+| `audit` | Auditor | Independent plan, work, phase, and integration verification |
 | `status` | none | Deterministic next-action reconstruction |
 
 ## Runtime dependency
@@ -37,11 +37,12 @@ devflow validate <domain>
 
 devflow render plan  <domain>
 devflow render run   <domain> [--task <ID>]
-devflow render audit <domain> --scope plan|phase|integration [--phase XX] [--mode initial|closure]
+devflow render audit <domain> --scope plan|work|phase|integration [--task <ID>] [--phase XX] [--mode initial|closure]
 
 devflow work start <domain> <ID>
 devflow work done  <domain> <ID> --commit <sha> --command '<cmd> -> <result>' [--changed-file ...]
 devflow work block <domain> <ID> --reason "..."
+devflow work review <domain> <ID> verified|remediation|blocked [--remediation-work <ID>]
 
 devflow phase set <domain> <phase> <status>
 devflow phase ref <domain> <phase> --base <ref> --head <ref> [--range <explicit>]
@@ -57,6 +58,34 @@ its own location and so works from any working directory.
 `render` emits a complete prompt: the role packet, the runtime context, the relevant protocol
 documents inline, the resolved domain extension for audits, and the domain's `PITFALLS.md`. There is
 nothing further to open by hand.
+
+Its context is deliberately bounded. Plan render includes the full approved PRD. Run render includes
+the selected WORK plus exact origin-linked PRD and PLAN sections. Work and phase audit render include
+scope-linked WORK and origin context. Integration render supplies the current PLAN, phase manifest,
+audit paths, and integration WORK without inlining every phase WORK body. This is not semantic search,
+repository RAG, or autonomous orchestration.
+
+## Typical manual flow
+
+Use the parser-supported commands below after planning has created `P01-I01`:
+
+```bash
+devflow status billing
+devflow render run billing --task P01-I01
+devflow work start billing P01-I01
+devflow work done billing P01-I01 --command "python3 tests/test_billing.py -> pass"
+devflow render audit billing --scope work --task P01-I01 --mode initial
+devflow work review billing P01-I01 verified
+devflow render audit billing --scope phase --phase 01 --mode initial
+```
+
+For high or critical WORK, the initial work audit must verify the review before dependent WORK can
+start. If it creates remediation, complete that traced WORK and render the same work audit with
+`--mode closure`. Independent low and medium WORK is batch-reviewed during the phase audit.
+
+The lifecycle is: PRD, plan, optional required high-risk plan audit, run WORK, high/critical WORK
+initial audit, remediation when confirmed, work closure audit, dependent release, phase initial
+and closure audits, integration initial and closure audits, then project completion.
 
 ## Project artifacts
 
@@ -121,3 +150,10 @@ Set the name per domain in `STATE.yaml` (`extension:`) or per project in `.devfl
 - `transferred` items linked through `transfer.to`, with the receiving item carrying the same
   `origin.requirements`
 - Requirement ids that do not appear verbatim in the PRD (warning)
+
+## Compatibility and protocol version
+
+Plugin version 0.3.0 keeps protocol version `1.1.0`. The artifact contract is backward-readable:
+existing WORK without `review` remains readable, but legacy high or critical done WORK requires
+review before dependents. A legacy `plan_review` without `audit_file` reads as `audits/plan.md`.
+Runtime normalization supplies these defaults, so no migration command is required.

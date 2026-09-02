@@ -26,4 +26,7 @@ appended below; everything you need is in this packet.
 12. Run DevFlow validation and correct structural errors.
 13. Set STATE so `status` can compute the next action.
 
+For a high-risk domain, leave plan review pending until its initial plan audit is verified. The
+runtime reports the next action but does not autonomously orchestrate execution or review.
+
 Do not create separate task Markdown documents or handoff prompts.

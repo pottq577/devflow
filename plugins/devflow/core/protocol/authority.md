@@ -46,3 +46,7 @@ behavior that looks like a defect but is a recorded decision. It is loaded by `p
 
 It is context, not authority. When it disagrees with current code, the code wins and the entry is
 stale. Fix the entry in the same change.
+
+The render commands assemble bounded context, not repository RAG or semantic search: plan receives
+the full PRD, run receives the selected WORK and exact origin-linked PRD/PLAN sections, work and
+phase audits receive scope-linked context, and integration receives broad summaries and paths.

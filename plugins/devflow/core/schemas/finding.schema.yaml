@@ -10,6 +10,8 @@ required:
   - evidence
   - root_cause
   - disposition
+scope:
+  allowed: [plan, work, phase, integration]
 classification:
   allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
   disposition:

@@ -9,6 +9,9 @@ active_phase: null
 plan_review:
   required: false
   status: skipped
+  audit_file: audits/plan.md
+
+# Existing STATE files without plan_review.audit_file read this same default at runtime.
 
 # Phase keys are zero-padded two-digit strings. The runtime normalizes on read, but two raw
 # keys that normalize to the same phase ("5" and "05") are a validation error, because the

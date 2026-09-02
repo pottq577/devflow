@@ -130,11 +130,34 @@ These are the places that actually cause incidents.
 - Configuration required by new code exists in every deployment combination that ships.
 - Deployment artifacts that reference each other stay consistent.
 
-## 3. Phase audit
+## 3. Audit scopes and modes
+
+DevFlow has four audit scopes: `plan`, `work`, `phase`, and `integration`.
+
+- A plan initial audit verifies the repository-grounded PLAN before high-risk WORK begins.
+- A work initial audit gates dependents of completed high or critical WORK.
+- A work closure audit verifies traced remediation and the original WORK acceptance criteria.
+- A phase initial audit batch-reviews terminal independent low/medium WORK and the completed phase.
+- A phase closure audit verifies phase remediation before the phase is marked verified.
+- An integration initial audit verifies the verified phases together.
+- An integration closure audit verifies integration remediation before integration is marked verified.
+
+The runtime renders context for the selected scope. It does not autonomously run reviews or create
+remediation; the auditor records the outcome and any traced WORK.
+
+## 4. Work audit
+
+For `scope=work`, inspect the selected WORK YAML, its origin requirements and PLAN items, recorded
+evidence, changed files, commit when recorded, current HEAD, and the expected `audits/work/<WORK-ID>.md`
+artifact. An initial audit either supports verification, records a block, or creates traced remediation
+WORK. Closure mode verifies the remediation and the original acceptance criteria before the review is
+marked verified.
+
+## 5. Phase audit
 
 Concentrate on the phase PLAN, its WORK items, the pinned diff, tests, and acceptance criteria.
 
-## 4. Integration audit
+## 6. Integration audit
 
 Everything above, plus:
 
@@ -146,7 +169,7 @@ Everything above, plus:
 - migration and deployment ordering,
 - regression and evidence gaps.
 
-## 5. Finding classification
+## 7. Finding classification
 
 - `CONFIRMED`: defect is supported by current repository evidence; create remediation WORK.
 - `DECISION_REQUIRED`: product or policy choice is unresolved; record decision and block dependent WORK.
@@ -158,7 +181,7 @@ Everything above, plus:
 Every finding must state expected behavior, actual behavior, evidence, root cause or uncertainty,
 classification, severity, and disposition.
 
-## 6. Severity and verdict
+## 8. Severity and verdict
 
 | Severity | Meaning |
 | --- | --- |
@@ -176,7 +199,7 @@ classification, severity, and disposition.
 **Never write `pass` without evidence.** Only a command that was actually executed, with its
 output, is grounds for a pass.
 
-## 7. Review timing
+## 9. Review timing
 
 A closure audit after every single item costs more than it returns, and batching a whole phase lets
 defects stack on a wrong premise. Let risk decide. See `risk-policy.md`.

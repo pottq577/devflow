@@ -21,6 +21,10 @@ optional_item_fields:
   blocks: WORK ids that depend on this one. Informational mirror of their dependencies.
   transfer: Where a transferred requirement went, as {to, requirements}. Mandatory when status is transferred.
   references: External document ids or paths the Executor should read.
+  review: Optional work-level review metadata, as {required, status, audit_file, remediation_work_ids}. Runtime defaults preserve legacy WORK files.
+backward_compatibility:
+  legacy_review: Existing WORK without review remains readable; high/critical done WORK defaults to pending required review.
+  migration: No migration command is required; runtime normalization preserves readability.
 kind:
   allowed: [implementation, remediation, evidence, documentation, migration, test]
 status:
@@ -28,6 +32,8 @@ status:
 terminal: [done, transferred, cancelled]
 risk_level:
   allowed: [low, medium, high, critical]
+review_status:
+  allowed: [skipped, pending, remediation, blocked, verified]
 enforced_by_validate:
   - acceptance and verification.commands must not be empty
   - dependencies must resolve, and the dependency graph must be acyclic
@@ -35,3 +41,4 @@ enforced_by_validate:
   - high and critical risk require premise_checks
   - done requires evidence.commands, except for kind documentation
   - transferred requires transfer.to, and the target must carry the same origin.requirements
+  - explicit review metadata must use a supported status and valid remediation WORK ids

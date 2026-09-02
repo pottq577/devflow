@@ -49,7 +49,7 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
    `STATE.yaml.unresolved_decisions`.
 10. Record durable domain traps you discovered in `PITFALLS.md`.
 11. For high/critical risk, keep `plan_review.required: true` and `plan_review.status: pending`;
-    otherwise mark it `skipped`.
+    otherwise mark it `skipped`. A high-risk plan initial audit verifies this gate before WORK begins.
 12. Run `devflow validate <domain>`. Fix structural errors before reporting completion.
 
 ## Boundaries

@@ -43,6 +43,7 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
     `devflow work done <domain> <ID> --commit <sha> --command '<cmd> -> <result>' ...`. It refuses a
     completion with no recorded command, because an unevidenced completion is the failure this
     protocol exists to prevent.
+    A completed high/critical item then receives an initial work audit before a dependent can start.
 11. If you discovered a trap that outlives this item, add it to `PITFALLS.md`.
 12. Run `devflow validate <domain>` and `devflow status <domain>`.
 

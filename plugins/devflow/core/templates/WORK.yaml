@@ -47,6 +47,14 @@ items:
     risk:
       level: medium
       axes: []
+    # Optional for low/medium WORK. High/critical done WORK requires an initial review before
+    # dependents run; legacy WORK with no review is read with the same gate.
+    # Derive audit_file from this item id, for example audits/work/P01-I01.md.
+    review:
+      required: false
+      status: skipped
+      audit_file: audits/work/P01-I01.md
+      remediation_work_ids: []
     status: ready
     block_reason: null
     evidence:

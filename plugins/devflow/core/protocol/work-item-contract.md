@@ -92,3 +92,14 @@ transfer:
 `done` requires evidence, not assertion. `validate` and `devflow work done` both refuse a completion
 with no `evidence.commands`, except for `kind: documentation`. Record the command and its result,
 not a claim that it passed.
+
+The runtime also requires `in_progress` before `done`. A high or critical implementation completion
+records a pending required review unless WORK already contains a later valid review state. `start`
+only accepts ready WORK after dependency, decision, phase, and required plan-review gates pass.
+`block` only accepts ready or in-progress WORK and requires a non-empty reason.
+
+## Backward compatibility
+
+`review` is optional for existing WORK. The runtime reads legacy high or critical done WORK as
+requiring review before a dependent starts, without requiring an artifact migration. New high and
+critical WORK should record the review metadata explicitly.

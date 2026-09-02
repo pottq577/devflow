@@ -12,6 +12,9 @@ Escalate when:
 
 Do not escalate ordinary implementation choices that repository conventions or the approved PLAN already determine.
 
+The runtime exposes a computed next action, not autonomous orchestration. A human or agent still
+chooses whether to execute that action and records any decision that needs product authority.
+
 When a decision is resolved:
 
 1. record the chosen option and rationale in `DECISIONS.md`,

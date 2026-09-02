@@ -13,7 +13,11 @@ and the domain's pitfalls are appended below.
 4. **Verify repository facts directly. Treat prior reports as leads only.** Paths, line numbers, and
    causal claims in earlier audits have been wrong before, and were caught only because the next
    reader re-checked them in code.
-5. Execute the common audit axes and the requested plan/phase/integration scope.
+5. Execute the common audit axes and the requested `plan`, `work`, `phase`, or `integration` scope.
+   Initial work audits gate high/critical dependents; closure work audits verify their remediation.
+   Phase and integration closure audits verify their respective remediation. For work scope,
+   inspect the full selected WORK YAML, origin links, implementation evidence, changed files, recorded
+   commit, current HEAD, and its `audits/work/<WORK-ID>.md` artifact.
 6. Classify every finding using the DevFlow finding taxonomy. Assign severity, and reach a verdict
    of `pass`, `conditional_pass`, or `fail`.
 7. Never write `pass` without evidence. Only a command you actually executed, with its output, is

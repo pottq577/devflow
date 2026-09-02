@@ -4,9 +4,10 @@
 
 | Field | Value |
 | --- | --- |
-| Scope | plan / phase / integration |
+| Scope | plan / work / phase / integration |
 | Mode | initial / closure |
 | Phase | |
+| WORK ID | Required for work scope |
 | Baseline SHA | |
 | Target SHA | |
 | Diff range | |

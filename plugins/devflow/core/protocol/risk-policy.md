@@ -2,13 +2,22 @@
 
 Risk controls review timing.
 
-- `critical` or `high` WORK: closure audit before any dependent WORK proceeds.
+- `critical` or `high` WORK: a work-level audit is required before any dependent WORK proceeds.
+- High/critical WORK becomes review status `pending` when it is done. Its initial work audit can
+  verify it, block it, or register remediation WORK. After all registered remediation is terminal
+  and reviewed where required, a closure work audit decides whether the original WORK is verified.
+- Phase and integration verification require every completed high/critical WORK in that scope to have
+  a satisfied review. A review is never verified automatically by `work done`.
+- `transferred` and `cancelled` WORK remain terminal routing outcomes and do not wait for review.
 - DB migration, state machine, concurrency, authorization, money, or external-contract changes: audit immediately after implementation when practical.
 - Work that later tasks depend on: verify before starting those dependents.
 - Independent `medium`/`low` items: batch into the phase audit.
 - Documentation-only and nit-level findings: close in the phase audit unless they block traceability.
 
 High-risk domains should run `audit --scope plan` before implementation. Examples include payments, payroll, authorization, security-sensitive flows, and destructive data migrations.
+
+The audit scopes are `plan`, `work`, `phase`, and `integration`. Initial and closure modes apply to
+work, phase, and integration; a high-risk plan review is initial before WORK begins.
 
 ## Why the timing is graded rather than uniform
 

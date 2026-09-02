@@ -34,5 +34,8 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 5. Report exactly the computed lifecycle position, blockers, next role, next command, scope and
    mode, phase, and WORK ID.
 
+`status` computes and reports the next action only. It does not autonomously run WORK, audits, or
+remediation. A pending high/critical WORK review appears before a dependent WORK is released.
+
 Do not infer a different next action from a stale README, audit prose, historical chat, or handoff
 documents. If STATE or WORK validation fails, report the validation problem as the next thing to fix.

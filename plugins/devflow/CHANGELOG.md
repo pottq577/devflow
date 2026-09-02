@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Schema-backed validation constants, atomic YAML writes, computed lifecycle state, and subprocess
+  timeouts for diagnostics.
+- `work` audit scope with initial and closure modes, plus the high/critical WORK review gate before
+  dependents proceed.
+- Runtime transition guards for WORK, plan review, phase, and integration state changes.
+- Scope-aware context assembly: full PRD for planning, origin-linked context for WORK and work/phase
+  audits, and bounded integration summaries and paths.
+
+### Changed
+
+- Plan review now uses its own artifact and defaults legacy missing `audit_file` to `audits/plan.md`.
+- Existing WORK without review remains readable. Legacy high/critical done WORK is treated as
+  requiring review before dependents, with no mandatory migration command.
+- Plugin version is 0.3.0. Protocol version remains `1.1.0`: review metadata and plan audit-file
+  defaults are backward-readable runtime normalization, so this release does not create an
+  incompatible artifact contract. The stronger dependency gate is a runtime behavior change, not a
+  protocol-version reset.
+- Autonomous orchestration is explicitly out of scope. The runtime computes and renders the next
+  action; agents or humans perform it.
+
 ## 0.2.0
 
 ### Fixed

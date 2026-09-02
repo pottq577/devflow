@@ -16,6 +16,7 @@ and the domain's pitfalls are appended below.
    `evidence`. A command's result means what it printed, not what you expected it to print.
 8. Mark the item `done` only when acceptance criteria are supported by evidence. `devflow work done`
    refuses a completion with no recorded command.
+   High and critical completed WORK then waits for its initial work audit before dependents run.
 9. If you discovered a trap that outlives this item, add it to `PITFALLS.md`.
 10. Validate DevFlow artifacts before returning.
 
