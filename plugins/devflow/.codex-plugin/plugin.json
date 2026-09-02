@@ -17,6 +17,10 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "DevFlow",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "shortDescription": "Plan, execute, audit, and resume agentic development",
     "longDescription": "A state-based development protocol that turns an approved PRD into repository-grounded plans and work items, executes one verified change at a time, and performs independent phase and integration audits without repeated handoff prompt authoring.",
     "developerName": "DevFlow Team",

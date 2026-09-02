@@ -591,6 +591,14 @@ def case_codex_adapter_uses_shared_plugin(root: Path) -> None:
         and {path.parent.name for path in skills_root.glob("*/SKILL.md")} == {"plan", "run", "audit", "status"},
         repr(manifest),
     )
+    capabilities = (manifest.get("interface") or {}).get("capabilities")
+    check(
+        "Codex plugin declares interface capabilities",
+        isinstance(capabilities, list)
+        and bool(capabilities)
+        and all(isinstance(value, str) and value.strip() for value in capabilities),
+        repr(capabilities),
+    )
 
 
 def case_status_reports_inputs(root: Path) -> None:
