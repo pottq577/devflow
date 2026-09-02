@@ -1,0 +1,23 @@
+{
+  "name": "devflow-team",
+  "interface": {
+    "displayName": "DevFlow Team"
+  },
+  "plugins": [
+    {
+      "name": "devflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/devflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+        "products": [
+          "CODEX"
+        ]
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -572,6 +572,27 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
     )
 
 
+def case_codex_adapter_uses_shared_plugin(root: Path) -> None:
+    codex_marketplace = PLUGIN.parents[1] / ".agents/plugins/marketplace.json"
+    codex_manifest = PLUGIN / ".codex-plugin/plugin.json"
+    marketplace = json.loads(codex_marketplace.read_text(encoding="utf-8"))
+    manifest = json.loads(codex_manifest.read_text(encoding="utf-8"))
+    entries = [entry for entry in marketplace.get("plugins", []) if entry.get("name") == manifest.get("name")]
+    skills_root = PLUGIN / manifest.get("skills", "")
+    check(
+        "Codex adapter points at the shared DevFlow plugin",
+        len(entries) == 1 and entries[0].get("source") == {"source": "local", "path": "./plugins/devflow"},
+        repr(entries),
+    )
+    check(
+        "Codex plugin discovers the shared 0.3.0 skills",
+        manifest.get("version") == "0.3.0"
+        and skills_root.resolve() == (PLUGIN / "skills").resolve()
+        and {path.parent.name for path in skills_root.glob("*/SKILL.md")} == {"plan", "run", "audit", "status"},
+        repr(manifest),
+    )
+
+
 def case_status_reports_inputs(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -1024,6 +1045,7 @@ CASES = [
     case_audit_scopes_use_their_own_artifacts,
     case_extension_resolution,
     case_marketplace_plugin_version_matches_manifest,
+    case_codex_adapter_uses_shared_plugin,
     case_status_reports_inputs,
     case_lifecycle_walk,
     case_derived_lifecycle_state,

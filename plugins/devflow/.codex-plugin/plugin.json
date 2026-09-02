@@ -1,0 +1,31 @@
+{
+  "name": "devflow",
+  "version": "0.3.0",
+  "description": "State-based agent development protocol for repository-grounded planning, one-item execution, independent audits, and deterministic handoffs.",
+  "author": {
+    "name": "DevFlow Team"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "agentic-development",
+    "coding",
+    "planning",
+    "code-review",
+    "workflow",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "DevFlow",
+    "shortDescription": "Plan, execute, audit, and resume agentic development",
+    "longDescription": "A state-based development protocol that turns an approved PRD into repository-grounded plans and work items, executes one verified change at a time, and performs independent phase and integration audits without repeated handoff prompt authoring.",
+    "developerName": "DevFlow Team",
+    "category": "Productivity",
+    "defaultPrompt": [
+      "Plan this PRD with DevFlow.",
+      "Execute the next DevFlow work item.",
+      "Audit the current DevFlow phase."
+    ],
+    "brandColor": "#3B82F6"
+  }
+}
