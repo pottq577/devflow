@@ -857,6 +857,59 @@ def case_remediation_returns_to_work_closure_audit(root: Path) -> None:
     check("closure verification releases original dependent", verified.returncode == 0 and "next.work_item: B" in out, verified.stdout + verified.stderr + out)
 
 
+def case_remediation_review_invariants(root: Path) -> None:
+    """Remediation is a closed unit: no bypass, no self-referential dependency graph."""
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+
+    # Bypass: verified cannot skip a still-open registered remediation.
+    dump(d / "work/phase-01.yaml", work(
+        "01", high_done("A"),
+        item("R1", kind="remediation", origin={"requirements": [], "findings": ["F-A-001"], "plan_items": []}),
+        item("B", dependencies=["A"]),
+    ))
+    (d / "audits/work").mkdir(parents=True)
+    (d / "audits/work/A.md").write_text("# A audit\n")
+    reg = devflow(root, "work", "review", "billing", "A", "remediation", "--remediation-work", "R1")
+    check("remediation registration accepts a traced remediation WORK", reg.returncode == 0, reg.stdout + reg.stderr)
+
+    bypass = devflow(root, "work", "review", "billing", "A", "verified")
+    review_status = yaml.safe_load((d / "work/phase-01.yaml").read_text())["items"][0].get("review", {}).get("status")
+    check("verified is rejected while remediation is still open", bypass.returncode == 2, bypass.stdout + bypass.stderr)
+    check("rejected verified leaves review.status=remediation", review_status == "remediation", repr(review_status))
+    started = devflow(root, "work", "start", "billing", "B")
+    check("dependent B still cannot start", started.returncode == 2, started.stdout + started.stderr)
+
+    # Direct deadlock: remediation depending on its reviewed WORK is rejected at registration, no mutation.
+    dump(d / "work/phase-01.yaml", work(
+        "01", high_done("A"),
+        item("R1", kind="remediation", dependencies=["A"], origin={"requirements": [], "findings": ["F-A-001"], "plan_items": []}),
+    ))
+    work_before = (d / "work/phase-01.yaml").read_text()
+    direct = devflow(root, "work", "review", "billing", "A", "remediation", "--remediation-work", "R1")
+    check("remediation that depends on its reviewed WORK is rejected", direct.returncode == 2 and "R1" in direct.stderr, direct.stdout + direct.stderr)
+    check("rejected remediation registration does not mutate WORK", (d / "work/phase-01.yaml").read_text() == work_before, "")
+
+    # Persisted malformed artifact: validate reports the direct dependency-cycle invariant.
+    malformed_a = high_done("A", review={"required": True, "status": "remediation", "audit_file": "audits/work/A.md", "remediation_work_ids": ["R1"]})
+    dump(d / "work/phase-01.yaml", work(
+        "01", malformed_a,
+        item("R1", kind="remediation", dependencies=["A"], origin={"requirements": [], "findings": ["F-A-001"], "plan_items": []}),
+    ))
+    out = devflow(root, "validate", "billing").stdout
+    check("validate rejects a persisted remediation dependency cycle", "ERROR:" in out and "remediation WORK R1 depends on A" in out, out)
+
+    # Transitive deadlock: R1 -> C -> A must also be rejected.
+    dump(d / "work/phase-01.yaml", work(
+        "01", malformed_a,
+        item("R1", kind="remediation", dependencies=["C"], origin={"requirements": [], "findings": ["F-A-001"], "plan_items": []}),
+        item("C", dependencies=["A"]),
+    ))
+    out = devflow(root, "validate", "billing").stdout
+    check("validate rejects a transitive remediation dependency path to the reviewed WORK", "ERROR:" in out and "remediation WORK R1 depends on A" in out, out)
+
+
 def case_legacy_high_risk_work_is_gated_without_mutation(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -1109,6 +1162,7 @@ CASES = [
     case_verified_review_releases_dependent,
     case_medium_dependency_keeps_old_behavior,
     case_remediation_returns_to_work_closure_audit,
+    case_remediation_review_invariants,
     case_legacy_high_risk_work_is_gated_without_mutation,
     case_review_metadata_validation,
     case_done_rejects_blocked_work,

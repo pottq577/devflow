@@ -288,6 +288,43 @@ def review_satisfied(item: dict[str, Any]) -> bool:
     return not review["required"] or review["status"] == "verified"
 
 
+def dependency_reaches(item_id: str, target_id: str, index: dict[str, tuple[Path, dict[str, Any]]]) -> bool:
+    """True when target_id is reachable from item_id by following `dependencies` edges only."""
+    target = str(target_id)
+    seen: set[str] = set()
+    stack = [str(item_id)]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        entry = index.get(current)
+        if not entry:
+            continue
+        for dep in entry[1].get("dependencies", []) or []:
+            dep_id = str(dep)
+            if dep_id == target:
+                return True
+            stack.append(dep_id)
+    return False
+
+
+def remediation_completion_blockers(review: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
+    """Reasons a registered remediation set is not yet closed, so `verified` may not proceed."""
+    blockers: list[str] = []
+    for remediation_id in review.get("remediation_work_ids", []) or []:
+        entry = index.get(str(remediation_id))
+        if not entry:
+            blockers.append(f"remediation WORK {remediation_id} is missing")
+            continue
+        target = entry[1]
+        if target.get("status") not in TERMINAL_STATUSES:
+            blockers.append(f"remediation WORK {remediation_id} is not terminal")
+        elif target.get("status") == "done" and not review_satisfied(target):
+            blockers.append(f"remediation WORK {remediation_id} still requires review")
+    return blockers
+
+
 def deps_satisfied(item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> bool:
     return not dependency_blockers(item, index)
 
@@ -761,6 +798,13 @@ def work_review(args: argparse.Namespace) -> int:
         print(f"{args.item}: review is not required", file=sys.stderr)
         return 2
     if args.review_status == "verified":
+        if review["status"] == "remediation":
+            _, index, _ = load_work_index(domain_dir(root, args.domain))
+            blockers = remediation_completion_blockers(review, index)
+            if blockers:
+                for blocker in blockers:
+                    print(f"{args.item}: {blocker}", file=sys.stderr)
+                return 2
         audit_path = domain_dir(root, args.domain) / review["audit_file"]
         if not audit_path.exists():
             print(f"{args.item}: work audit artifact not found: {audit_path}", file=sys.stderr)
@@ -782,6 +826,12 @@ def work_review(args: argparse.Namespace) -> int:
                 return 2
             if not ((remediation.get("origin") or {}).get("findings") or []):
                 print(f"{args.item}: {remediation_id} must carry origin.findings traceability", file=sys.stderr)
+                return 2
+            if dependency_reaches(str(remediation_id), args.item, index):
+                print(
+                    f"{args.item}: remediation WORK {remediation_id} depends on {args.item} and cannot run before {args.item} review closure",
+                    file=sys.stderr,
+                )
                 return 2
         review["status"] = "remediation"
         review["remediation_work_ids"] = list(dict.fromkeys(args.remediation_work))
@@ -1019,6 +1069,10 @@ def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: se
             for remediation_id in remediation_ids:
                 if str(remediation_id) not in all_ids:
                     errors.append(f"{item_id}: unknown remediation WORK id {remediation_id}")
+                elif review_status == "remediation" and dependency_reaches(str(remediation_id), item_id, index):
+                    errors.append(
+                        f"{item_id}: remediation WORK {remediation_id} depends on {item_id}; remediation cannot precede the reviewed WORK's own closure"
+                    )
             if review_status == "verified" and status != "done":
                 errors.append(f"{item_id}: review.status=verified requires status=done")
             if level in HIGH_RISK and status in {"done", "in_progress", "ready"} and review_required is not True:
