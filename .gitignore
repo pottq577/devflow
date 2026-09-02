@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
-docs/
-!docs/devflow-0.3.0
+docs/*
+!docs/devflow-0.3.0/
+!docs/devflow-0.3.0/**
