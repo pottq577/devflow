@@ -295,6 +295,16 @@ def case_evidence_required(root: Path) -> None:
     doc = yaml.safe_load((d / "work/phase-01.yaml").read_text())
     check("no-evidence refusal leaves item in progress", doc["items"][0]["status"] == "in_progress", repr(doc["items"][0]["status"]))
 
+    blank = devflow(root, "work", "done", "billing", "P01-I01", "--command", "   ")
+    doc = yaml.safe_load((d / "work/phase-01.yaml").read_text())
+    check("work done refuses a whitespace-only command", blank.returncode == 2, blank.stdout + blank.stderr)
+    check("whitespace-only refusal leaves item in progress", doc["items"][0]["status"] == "in_progress", repr(doc["items"][0]["status"]))
+    check(
+        "whitespace-only command is not persisted as evidence",
+        all(str(c).strip() for c in doc["items"][0].get("evidence", {}).get("commands", [])),
+        repr(doc["items"][0].get("evidence", {})),
+    )
+
     ok = devflow(root, "work", "done", "billing", "P01-I01", "--command", "pytest -> 12 passed")
     doc = yaml.safe_load((d / "work/phase-01.yaml").read_text())
     check("work done accepts a recorded command", ok.returncode == 0 and doc["items"][0]["status"] == "done", ok.stdout + ok.stderr)
@@ -306,6 +316,14 @@ def case_evidence_required(root: Path) -> None:
     dump(d / "work/phase-01.yaml", work("01", item("P01-I03", status="done", kind="documentation")))
     out = devflow(root, "validate", "billing").stdout
     check("documentation items are exempt from evidence.commands", "done without evidence.commands" not in out, out)
+
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I04", verification={"commands": ["   "]})))
+    out = devflow(root, "validate", "billing").stdout
+    check("validate rejects whitespace-only verification.commands", "verification.commands must contain a non-empty command" in out, out)
+
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I05", status="done", commands=["   "])))
+    out = devflow(root, "validate", "billing").stdout
+    check("validate rejects done whose evidence.commands are whitespace only", "done without evidence.commands" in out, out)
 
 
 def case_transfer_enforced(root: Path) -> None:

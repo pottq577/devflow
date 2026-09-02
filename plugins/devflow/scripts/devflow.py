@@ -105,6 +105,13 @@ def dump_yaml_if_changed(path: Path, data: Any) -> bool:
     return True
 
 
+def has_nonblank_string(values: Any) -> bool:
+    """True when `values` is a list holding at least one string with non-whitespace content."""
+    return isinstance(values, list) and any(
+        isinstance(value, str) and bool(value.strip()) for value in values
+    )
+
+
 def runtime_config(root: Path) -> dict[str, Any]:
     cfg_path = root / ".devflow" / "config.yaml"
     cfg = load_yaml(cfg_path, {}) or {}
@@ -753,11 +760,13 @@ def work_update(args: argparse.Namespace) -> int:
             return reject_transition(args.item, "done", [f"status=in_progress is required, not {item.get('status')}"])
         current_commands = list((item.get("evidence") or {}).get("commands") or [])
         cli_commands = list(getattr(args, "command", None) or [])
-        if item.get("kind") != "documentation" and not current_commands and not cli_commands:
+        if item.get("kind") != "documentation" and not has_nonblank_string(current_commands + cli_commands):
             return reject_transition(args.item, "done", ["verification evidence is required. Pass --command '<cmd> -> <result>'."])
         evidence = item.setdefault("evidence", {})
         for attr, key in [("changed_file", "changed_files"), ("command", "commands"), ("deviation", "deviations"), ("discovery", "discoveries")]:
             vals = getattr(args, attr, None) or []
+            if key == "commands":
+                vals = [value for value in vals if isinstance(value, str) and value.strip()]
             evidence.setdefault(key, [])
             evidence[key].extend(vals)
         if args.commit:
@@ -1024,8 +1033,8 @@ def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: se
         errors.append(f"{item_id}: invalid risk.level {level}")
     if not (item.get("acceptance") or []):
         errors.append(f"{item_id}: acceptance must not be empty")
-    if not ((item.get("verification") or {}).get("commands") or []):
-        errors.append(f"{item_id}: verification.commands must not be empty")
+    if not has_nonblank_string((item.get("verification") or {}).get("commands")):
+        errors.append(f"{item_id}: verification.commands must contain a non-empty command")
     for dep in item.get("dependencies", []) or []:
         if str(dep) not in all_ids:
             errors.append(f"{item_id}: unknown dependency {dep}")
@@ -1042,7 +1051,7 @@ def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: se
 
     # Evidence must back a completion claim.
     evidence = item.get("evidence") or {}
-    if status == "done" and kind != "documentation" and not (evidence.get("commands") or []):
+    if status == "done" and kind != "documentation" and not has_nonblank_string(evidence.get("commands")):
         errors.append(f"{item_id}: done without evidence.commands")
 
     review = item.get("review")
