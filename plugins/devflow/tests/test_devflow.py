@@ -157,15 +157,15 @@ def case_fixtures_are_valid_yaml(root: Path) -> None:
 def case_timeout_diagnostics(root: Path) -> None:
     try:
         sh(
-            [sys.executable, "-c", "import sys, time; print('stdout'); print('stderr', file=sys.stderr); sys.stdout.flush(); sys.stderr.flush(); time.sleep(1)"],
+            [sys.executable, "-u", "-c", "import sys, time; print('stdout'); print('stderr', file=sys.stderr); time.sleep(5)"],
             root,
-            timeout=0.05,
+            timeout=0.5,
         )
     except RuntimeError as exc:
         diagnostic = str(exc)
         check(
             "timeout diagnostic identifies command, cwd, timeout, stdout, and stderr",
-            all(part in diagnostic for part in ["command:", f"cwd: {root}", "0.05 seconds", "stdout: stdout", "stderr: stderr"]),
+            all(part in diagnostic for part in ["command:", f"cwd: {root}", "0.5 seconds", "stdout: stdout", "stderr: stderr"]),
             diagnostic,
         )
     else:
