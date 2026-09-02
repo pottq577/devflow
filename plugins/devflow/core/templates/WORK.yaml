@@ -1,0 +1,35 @@
+version: 1
+phase: "01"
+items:
+  - id: P01-I01
+    kind: implementation
+    title: Example work item
+    origin:
+      requirements: [REQ-001]
+      findings: []
+      plan_items: [P01-01]
+    objective: Replace with one verifiable change objective.
+    dependencies: []
+    decision_dependencies: []
+    scope:
+      allowed: []
+      forbidden: [unrelated-refactoring]
+    requirements: []
+    verification:
+      commands: []
+    acceptance: []
+    stop_conditions:
+      - Current code invalidates a material task premise.
+      - The change requires scope outside the approved PRD or PLAN.
+      - A product/policy decision is required.
+    risk:
+      level: medium
+      axes: []
+    status: ready
+    block_reason: null
+    evidence:
+      commit: null
+      changed_files: []
+      commands: []
+      deviations: []
+      discoveries: []

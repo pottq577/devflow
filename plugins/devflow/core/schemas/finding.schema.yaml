@@ -1,0 +1,15 @@
+schema: devflow-finding-v1
+required:
+  - id
+  - scope
+  - classification
+  - severity
+  - axis
+  - expected
+  - actual
+  - evidence
+  - disposition
+classification:
+  allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
+severity:
+  allowed: [blocker, major, minor, nit]

@@ -1,0 +1,17 @@
+{
+  "name": "devflow",
+  "version": "0.1.0",
+  "description": "State-based agent development protocol for repository-grounded planning, one-item execution, independent audits, and deterministic handoffs.",
+  "author": {
+    "name": "DevFlow Team"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "agentic-development",
+    "coding",
+    "planning",
+    "code-review",
+    "workflow",
+    "claude-code"
+  ]
+}

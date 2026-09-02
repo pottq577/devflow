@@ -1,0 +1,22 @@
+protocol_version: "1.0.0"
+domain: example
+risk_profile: medium
+project_status: planning
+baseline_sha: null
+target_sha: null
+active_phase: null
+plan_review:
+  required: false
+  status: skipped
+phases: {}
+integration:
+  status: pending
+  work_file: work/integration.yaml
+  audit_file: audits/integration.md
+unresolved_decisions: []
+next_action:
+  role: architect
+  command: plan
+  scope: project
+  phase: null
+  work_item: null

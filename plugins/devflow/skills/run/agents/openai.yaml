@@ -1,0 +1,3 @@
+interface:
+  display_name: "DevFlow Run"
+  short_description: "Execute exactly one ready DevFlow WORK item, verify it, and record structured evidence. Use for norm"

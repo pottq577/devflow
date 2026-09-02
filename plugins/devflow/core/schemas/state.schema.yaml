@@ -1,0 +1,17 @@
+schema: devflow-state-v1
+required:
+  - protocol_version
+  - domain
+  - risk_profile
+  - project_status
+  - baseline_sha
+  - phases
+  - integration
+  - unresolved_decisions
+  - next_action
+project_status:
+  allowed: [planning, plan_review, phase_execution, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, complete, blocked]
+phase_status:
+  allowed: [planned, executing, audit, remediation, verified, blocked]
+integration_status:
+  allowed: [pending, audit, remediation, closure, verified]

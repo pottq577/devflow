@@ -1,0 +1,22 @@
+schema: devflow-work-v1
+required_item_fields:
+  - id
+  - kind
+  - origin
+  - objective
+  - dependencies
+  - decision_dependencies
+  - scope
+  - requirements
+  - verification
+  - acceptance
+  - stop_conditions
+  - risk
+  - status
+  - evidence
+kind:
+  allowed: [implementation, remediation, evidence, documentation, migration, test]
+status:
+  allowed: [ready, in_progress, done, blocked, transferred, cancelled]
+risk_level:
+  allowed: [low, medium, high, critical]
