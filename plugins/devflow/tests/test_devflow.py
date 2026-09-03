@@ -1327,6 +1327,87 @@ def case_unknown_work_id_reports_a_clean_error(root: Path) -> None:
     )
 
 
+def case_peer_skill_composition_contract(root: Path) -> None:
+    """0.4.0 peer composition must stay optional documentation, never lifecycle coupling."""
+    protocol = PLUGIN / "core/protocol/skill-composition.md"
+    check("skill-composition protocol exists", protocol.is_file())
+    # Collapse wrapping so a stable sentence is matched regardless of where it breaks lines.
+    text = " ".join(protocol.read_text(encoding="utf-8").split())
+    for phrase in [
+        "Superpowers",
+        "Ponytail",
+        "Peer integrations are optional.",
+        "DevFlow must remain fully usable when a named peer plugin is absent.",
+        "They do not own lifecycle transitions.",
+        "Do not automatically enable Ponytail or change its mode.",
+        "Do not create separate Ponytail review artifacts.",
+        "Missing peer plugins never block DevFlow.",
+    ]:
+        check(f"skill-composition states: {phrase!r}", phrase in text, text)
+
+    plan_skill = " ".join((PLUGIN / "skills/plan/SKILL.md").read_text(encoding="utf-8").split())
+    for phrase in ["core/protocol/skill-composition.md", "planning lens", "DevFlow owns PLAN and WORK decomposition."]:
+        check(f"plan skill states: {phrase!r}", phrase in plan_skill, plan_skill)
+    check("plan skill keeps Ponytail reuse/minimalism framing", "reuse" in plan_skill and "Ponytail" in plan_skill, plan_skill)
+
+    run_skill = " ".join((PLUGIN / "skills/run/SKILL.md").read_text(encoding="utf-8").split())
+    for phrase in [
+        "core/protocol/skill-composition.md",
+        "test-driven-development",
+        "systematic-debugging",
+        "verification-before-completion",
+        "one selected ready WORK item",
+        "Do not change Ponytail mode automatically.",
+    ]:
+        check(f"run skill states: {phrase!r}", phrase in run_skill, run_skill)
+    check("run skill keeps fresh-verification framing", "Fresh verification evidence" in run_skill, run_skill)
+
+    audit_skill = " ".join((PLUGIN / "skills/audit/SKILL.md").read_text(encoding="utf-8").split())
+    for phrase in [
+        "core/protocol/skill-composition.md",
+        "Treat every Ponytail observation as a lead.",
+        "independently verify it",
+        "normal DevFlow AUDIT artifact",
+    ]:
+        check(f"audit skill states: {phrase!r}", phrase in audit_skill, audit_skill)
+
+
+def case_no_peer_plugin_lifecycle_state(root: Path) -> None:
+    """Peer composition adds no machine-owned state fields to templates, schemas, or config."""
+    forbidden = ["superpowers", "ponytail", "ponytail_mode", "peer_skills", "skill_composition"]
+
+    contract_docs = {
+        "STATE template": PLUGIN / "core/templates/STATE.yaml",
+        "STATE schema": PLUGIN / "core/schemas/state.schema.yaml",
+        "WORK schema": PLUGIN / "core/schemas/work.schema.yaml",
+    }
+    for name, path in contract_docs.items():
+        lowered = path.read_text(encoding="utf-8").lower()
+        for token in forbidden:
+            check(f"{name} introduces no {token!r} field", token not in lowered, lowered)
+
+    devflow(root, "init", "billing")
+    config = (root / ".devflow/config.yaml").read_text(encoding="utf-8").lower()
+    for token in forbidden:
+        check(f"generated .devflow config has no {token!r} field", token not in config, config)
+
+
+def case_lifecycle_runs_without_peer_plugins(root: Path) -> None:
+    """A normal DevFlow flow must not assume Superpowers or Ponytail exists."""
+    init = devflow(root, "init", "billing")
+    check("init succeeds without peer plugins", init.returncode == 0, init.stdout + init.stderr)
+
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+
+    rendered = devflow(root, "render", "plan", "billing")
+    validated = devflow(root, "validate", "billing")
+    for name, proc in [("render plan", rendered), ("validate", validated)]:
+        check(f"{name} succeeds without peer plugins", proc.returncode == 0, proc.stdout + proc.stderr)
+        check(f"{name} reports no peer dependency error", "Superpowers" not in proc.stderr and "Ponytail" not in proc.stderr, proc.stderr)
+
+
 CASES = [
     case_fixtures_are_valid_yaml,
     case_timeout_diagnostics,
@@ -1386,6 +1467,9 @@ CASES = [
     case_phase_commands_refuse_to_invent_a_phase,
     case_work_review_order_follows_phase,
     case_unknown_work_id_reports_a_clean_error,
+    case_peer_skill_composition_contract,
+    case_no_peer_plugin_lifecycle_state,
+    case_lifecycle_runs_without_peer_plugins,
 ]
 
 

@@ -73,10 +73,10 @@ deleted while preserving the contract.
 
 Treat every Ponytail observation as a lead. Before recording a finding, independently verify it
 against the PLAN, the current WORK or audit scope, repository callers, tests, compatibility
-requirements, repository conventions, and acceptance criteria. A verified lead is a finding on
-the existing overengineering and scope-intrusion axis (audit core axis F); do not create a new
-audit axis or a Ponytail-specific audit document. Use the existing classification and remediation
-lifecycle.
+requirements, repository conventions, and acceptance criteria. Only a verified lead enters the
+normal DevFlow AUDIT artifact, as a finding on the existing overengineering and scope-intrusion
+axis (audit core axis F). Do not create a new audit axis or a Ponytail-specific audit document,
+and use the existing classification and remediation lifecycle.
 
 Superpowers `receiving-code-review` output is advisory only. The DevFlow audit finding is the
 authoritative record. Do not trigger `requesting-code-review` from an audit.
