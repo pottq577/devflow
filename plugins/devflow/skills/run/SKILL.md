@@ -54,5 +54,54 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 - Do not expand allowed scope to make the implementation easier.
 - Do not create a separate completion report; evidence belongs in the WORK item.
 
+## Peer execution disciplines
+
+Follow `core/protocol/skill-composition.md`. The active WORK is the hard execution boundary.
+
+### Behavior-changing WORK
+
+When Superpowers test-driven-development is available, use it before production behavior changes:
+
+1. establish the required behavior from the WORK contract;
+2. add or identify a test that fails for the expected reason;
+3. make the minimum production change;
+4. verify the targeted test passes;
+5. run the WORK verification DevFlow requires.
+
+Explicit repository or user instructions already carry sufficient authority for a TDD exception.
+Do not halt the run to ask again for permission that repository or user instructions already
+grant. This does not weaken TDD in general.
+
+### Defect and remediation WORK
+
+When systematic-debugging is available:
+
+1. reproduce or verify the defect;
+2. identify evidence for the root cause;
+3. avoid speculative fixes;
+4. add regression coverage when behavior changes;
+5. implement the minimum confirmed fix;
+6. execute the WORK verification.
+
+### Completion
+
+Before reporting a WORK complete, use verification-before-completion when available. Fresh
+verification evidence must support the same behavior the WORK verification criteria require.
+Record the actual executed evidence through `devflow work done`. Never record peer-skill
+invocation itself as proof that the WORK passed.
+
+### Ponytail
+
+Apply the currently active Ponytail policy when available. Prefer reuse and the smallest
+implementation that satisfies the WORK. Ponytail must not widen or shrink required WORK scope,
+remove acceptance criteria, weaken security or validation, skip required tests, bypass premise
+checks, or bypass DevFlow lifecycle gates. Do not change Ponytail mode automatically.
+
+### Lifecycle ownership
+
+One invocation executes exactly one selected ready WORK item. Do not invoke peer controller
+workflows that select multiple tasks, dispatch subagents, create worktrees, run a separate final
+review, or finish branches.
+
 Finish with WORK ID, changed files, verification evidence, deviations/discoveries, status, and the
 next DevFlow action.
