@@ -194,8 +194,8 @@ completion, so a nested controller would duplicate the lifecycle.
 
 ## Compatibility and protocol version
 
-Plugin version 0.3.1 raises protocol version to `1.2.0`. The artifact contract stays
-backward-readable in the same direction as before: a `1.0.0` or `1.1.0` domain validates unchanged,
+Plugin version 0.4.0 keeps protocol version `1.2.0`, which 0.3.1 introduced. The artifact contract
+stays backward-readable in the same direction as before: a `1.0.0` or `1.1.0` domain validates unchanged,
 existing WORK without `review` remains readable, legacy high or critical done WORK requires review
 before dependents, and a legacy `plan_review` without `audit_file` reads as `audits/plan.md`. Runtime
 normalization supplies these defaults, so no migration command is required.
