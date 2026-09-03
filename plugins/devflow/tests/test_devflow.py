@@ -131,6 +131,17 @@ def work(phase_num: str, *items: dict[str, Any]) -> dict[str, Any]:
     return {"version": 1, "phase": phase_num, "items": list(items)}
 
 
+def broken_delivery_fixture(root: Path) -> Path:
+    devflow(root, "init", "billing", "--risk", "high")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text())
+    state_doc["workflow_type"] = "delivery"
+    dump(d / "STATE.yaml", state_doc)
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+    (d / "audits/integration.md").write_text("# Existing integration audit\n", encoding="utf-8")
+    return d
+
+
 def check(name: str, condition: bool, detail: str = "") -> None:
     if condition:
         PASSED.append(name)
@@ -181,6 +192,48 @@ def case_init_creates_artifacts(root: Path) -> None:
         check(f"init creates {name}", (d / name).exists())
     doc = yaml.safe_load((d / "STATE.yaml").read_text())
     check("high risk requires a plan review", doc["plan_review"] == {"required": True, "status": "pending", "audit_file": "audits/plan.md"}, repr(doc.get("plan_review")))
+
+
+def case_delivery_render_rejects_out_of_sequence_integration_audit(root: Path) -> None:
+    broken_delivery_fixture(root)
+    out = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "delivery render rejects an integration audit while plan review is pending",
+        out.returncode == 2 and "audit_scope: integration" not in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_validate_rejects_orphan_phase_manifest(root: Path) -> None:
+    broken_delivery_fixture(root)
+    out = devflow(root, "validate", "billing")
+    check(
+        "validate rejects a phase manifest absent from STATE",
+        out.returncode != 0 and "orphan" in out.stdout.lower() and "phase-01.yaml" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_validate_rejects_placeholder_delivery_contract_before_execution(root: Path) -> None:
+    broken_delivery_fixture(root)
+    out = devflow(root, "validate", "billing")
+    check(
+        "validate rejects placeholder delivery PRD and PLAN before execution",
+        out.returncode != 0 and "placeholder" in out.stdout.lower() and "PRD.md" in out.stdout and "PLAN.md" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_render_guard_does_not_mutate_artifacts(root: Path) -> None:
+    d = broken_delivery_fixture(root)
+    before = {str(path.relative_to(d)): None if path.is_dir() else path.read_bytes() for path in d.rglob("*")}
+    out = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(d)): None if path.is_dir() else path.read_bytes() for path in d.rglob("*")}
+    check(
+        "rejected render leaves domain artifacts unchanged",
+        out.returncode == 2 and before == after,
+        f"returncode={out.returncode}\nartifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
 
 
 def case_schema_required_fields_are_enforced(root: Path) -> None:
@@ -1412,6 +1465,10 @@ CASES = [
     case_fixtures_are_valid_yaml,
     case_timeout_diagnostics,
     case_init_creates_artifacts,
+    case_delivery_render_rejects_out_of_sequence_integration_audit,
+    case_validate_rejects_orphan_phase_manifest,
+    case_validate_rejects_placeholder_delivery_contract_before_execution,
+    case_render_guard_does_not_mutate_artifacts,
     case_schema_required_fields_are_enforced,
     case_phase_key_normalization,
     case_phase_set_no_duplicate,
