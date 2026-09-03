@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- **`validate` now gates verification instead of only reporting.** A domain whose WORK manifests
+  failed validation could be driven all the way to `project_status: complete`. No transition
+  consulted the validator, so items missing `objective`, `scope`, `requirements`, and
+  `stop_conditions` rode through phase verification and integration verification untouched. `phase
+  set <phase> verified` and `integration set verified` now refuse while the domain has validation
+  errors, and report them prefixed with `validation:`.
+- **`protocol_version` is read, not just written.** The runtime recorded the version in STATE and in
+  `.devflow/config.yaml` and never compared it to its own. A STATE claiming `2.0.0`, or a malformed
+  value, validated cleanly. `validate` now errors on a different major version, errors on an
+  unparseable one, and warns when the minor version is newer than the runtime's.
+- **The schema's required phase entry fields are enforced.** `state.schema.yaml` declared
+  `phase_entry.required: [status, work_file, audit_file]`, but the validator only checked `status`,
+  so a phase entry missing both file paths passed without so much as a warning.
+- **`phase set` and `phase ref` no longer invent a phase.** A mistyped number created a new STATE
+  entry that could never be verified, which blocked integration permanently because integration
+  requires every phase verified. Both commands now accept a phase that is already in STATE or has its
+  WORK file on disk, and refuse otherwise.
+- **An initial work audit reports its own lifecycle position.** `project_status` projected a
+  work-scope audit as `phase_audit`, contradicting the `next.scope: work` printed beside it. The
+  derived value is now `work_audit`.
+- **Work review selection orders by phase before id.** `work_review_action` sorted by WORK id first
+  while `choose_next` sorted by phase first, so a later phase's review could be handed out ahead of
+  an earlier phase's. Both halves of the runtime now use the same ordering.
+- **An unknown WORK id prints a clean message.** `str(KeyError)` is the repr of its argument, so the
+  CLI reported `DevFlow error: 'Unknown WORK item: X'` with the quotes included.
+- **`bin/devflow` resolves symlinks.** Linking it into a `PATH` directory made `dirname "$0"` resolve
+  to the link's directory, and the wrapper looked for the runtime under the wrong root.
+
+### Changed
+
+- Protocol version is `1.2.0`. `project_status` gained the derived value `work_audit`, and a `1.1.0`
+  runtime validates that field against its own allowed set, so it would reject a STATE this runtime
+  writes. Existing `1.0.0` and `1.1.0` domains keep validating here, and no migration is required.
+- Removed four parameters that every caller passed and no body read: `root` and `domain` from
+  `work_start_errors`, `index` from `phase_verify_errors` and `integration_verify_errors`, and
+  `state` from `project_status_for_action`.
+
 ## 0.3.0
 
 ### Added

@@ -53,6 +53,10 @@ devflow integration set <domain> <status>
 devflow decision add|resolve <domain> <ID>
 ```
 
+`phase set` and `phase ref` operate on a phase that already exists in `STATE.yaml`, or on one whose
+`work/phase-XX.yaml` is on disk. They refuse anything else rather than inventing a phase entry, since
+a mistyped number would otherwise sit in STATE and block integration forever.
+
 `bin/devflow` is a thin wrapper if you prefer a bare command name on `PATH`. Skills invoke
 `scripts/devflow.py` through each skill's `scripts/invoke.py`, which resolves the plugin root from
 its own location and so works from any working directory.
@@ -141,6 +145,9 @@ Set the name per domain in `STATE.yaml` (`extension:`) or per project in `.devfl
 ## What `validate` enforces
 
 - STATE required fields, and every status value against its allowed set
+- `protocol_version` against the runtime's own, rejecting a different major version and warning on a
+  newer minor one
+- The schema's required phase entry fields: `status`, `work_file`, and `audit_file`
 - Duplicate phase entries, including two raw keys that normalize to the same phase
 - A phase marked `verified` while its own work is unfinished, and an integration marked `verified`
   while a phase is not
@@ -153,9 +160,20 @@ Set the name per domain in `STATE.yaml` (`extension:`) or per project in `.devfl
   `origin.requirements`
 - Requirement ids that do not appear verbatim in the PRD (warning)
 
+`validate` is not only a report. `phase set <phase> verified` and `integration set verified` refuse
+the transition while the domain has validation errors, so a structurally broken manifest cannot ride
+through to project completion.
+
 ## Compatibility and protocol version
 
-Plugin version 0.3.0 keeps protocol version `1.1.0`. The artifact contract is backward-readable:
-existing WORK without `review` remains readable, but legacy high or critical done WORK requires
-review before dependents. A legacy `plan_review` without `audit_file` reads as `audits/plan.md`.
-Runtime normalization supplies these defaults, so no migration command is required.
+Plugin version 0.3.1 raises protocol version to `1.2.0`. The artifact contract stays
+backward-readable in the same direction as before: a `1.0.0` or `1.1.0` domain validates unchanged,
+existing WORK without `review` remains readable, legacy high or critical done WORK requires review
+before dependents, and a legacy `plan_review` without `audit_file` reads as `audits/plan.md`. Runtime
+normalization supplies these defaults, so no migration command is required.
+
+The minor bump exists because `project_status` gained the derived value `work_audit`. A `1.1.0`
+runtime validates that field against its own allowed set and would reject a STATE this runtime wrote,
+so the version now carries that signal. `validate` reads `protocol_version` rather than only
+recording it: a different major version is an error, and a newer minor version is a warning that the
+artifact came from a newer runtime.

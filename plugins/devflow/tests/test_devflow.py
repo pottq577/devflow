@@ -408,6 +408,9 @@ def case_phase_ref(root: Path) -> None:
     sh(["git", "checkout", "-q", "phase-b"], root, check=True)
 
     devflow(root, "init", "billing")
+    # A phase is real only once its WORK file exists; the runtime refuses to invent one.
+    dump(root / "docs/domains/billing/work/phase-01.yaml", work("01", item("P01-I01")))
+    dump(root / "docs/domains/billing/work/phase-02.yaml", work("02", item("P02-I01")))
 
     ok = devflow(root, "phase", "ref", "billing", "1", "--base", "phase-a", "--head", "phase-b")
     doc = yaml.safe_load((root / "docs/domains/billing/STATE.yaml").read_text())
@@ -585,7 +588,7 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
     entries = [entry for entry in marketplace.get("plugins", []) if entry.get("name") == manifest.get("name")]
     check(
         "marketplace plugin version matches manifest",
-        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.3.0",
+        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.3.1",
         repr(entries),
     )
 
@@ -603,8 +606,8 @@ def case_codex_adapter_uses_shared_plugin(root: Path) -> None:
         repr(entries),
     )
     check(
-        "Codex plugin discovers the shared 0.3.0 skills",
-        manifest.get("version") == "0.3.0"
+        "Codex plugin discovers the shared 0.3.1 skills",
+        manifest.get("version") == "0.3.1"
         and skills_root.resolve() == (PLUGIN / "skills").resolve()
         and {path.parent.name for path in skills_root.glob("*/SKILL.md")} == {"plan", "run", "audit", "status"},
         repr(manifest),
@@ -677,6 +680,7 @@ def case_derived_lifecycle_state(root: Path) -> None:
     devflow(root, "status", "billing")
     derived = yaml.safe_load((d / "STATE.yaml").read_text())
     check("derived phase audit status and phase", derived["project_status"] == "phase_audit" and derived["active_phase"] == "01", repr(derived))
+    check("derived phase audit keeps the phase scope", derived["next_action"]["scope"] == "phase", repr(derived["next_action"]))
 
     derived["phases"]["01"]["diff_range"] = "HEAD^..HEAD"
     dump(d / "STATE.yaml", derived)
@@ -712,8 +716,8 @@ def case_derived_integration_work_review_state(root: Path) -> None:
     devflow(root, "status", "billing")
     derived = yaml.safe_load((d / "STATE.yaml").read_text())
     check(
-        "integration work review derives integration audit status",
-        derived["project_status"] == "integration_audit" and derived["active_phase"] is None,
+        "integration work review derives work audit status",
+        derived["project_status"] == "work_audit" and derived["active_phase"] is None,
         repr(derived),
     )
 
@@ -1148,6 +1152,132 @@ def case_work_block_requires_active_status_and_reason(root: Path) -> None:
     check("work block requires trimmed reason", empty.returncode == 2 and "reason" in empty.stderr, empty.stdout + empty.stderr)
 
 
+def case_verification_is_gated_by_validation(root: Path) -> None:
+    """A structurally invalid manifest used to reach project completion untouched."""
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    broken = item("P01-I01", status="done", commands=["true -> ok"])
+    broken.pop("stop_conditions")
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", broken))
+    (d / "audits/phase-01.md").parent.mkdir(parents=True, exist_ok=True)
+    (d / "audits/phase-01.md").write_text("# phase audit\n")
+    derived = yaml.safe_load((d / "STATE.yaml").read_text())
+    derived["phases"]["01"]["diff_range"] = "HEAD^..HEAD"
+    dump(d / "STATE.yaml", derived)
+
+    out = devflow(root, "phase", "set", "billing", "01", "verified")
+    check(
+        "phase verification refuses a domain that fails validation",
+        out.returncode == 2 and "validation:" in out.stderr and "stop_conditions" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+    # The same guard must hold at the integration boundary.
+    dump(d / "STATE.yaml", state({"01": phase("verified", "01")}))
+    (d / "audits/integration.md").write_text("# integration audit\n")
+    out = devflow(root, "integration", "set", "billing", "verified")
+    check(
+        "integration verification refuses a domain that fails validation",
+        out.returncode == 2 and "validation:" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+    # A clean domain still passes both gates.
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01", status="done", commands=["true -> ok"])))
+    out = devflow(root, "integration", "set", "billing", "verified")
+    check("a valid domain still verifies", out.returncode == 0, out.stdout + out.stderr)
+
+
+def case_protocol_version_is_enforced(root: Path) -> None:
+    devflow(root, "init", "billing")
+    p = root / "docs/domains/billing/STATE.yaml"
+
+    for value, expected in [("2.0.0", "Unsupported protocol_version"), ("garbage", "Invalid protocol_version")]:
+        doc = yaml.safe_load(p.read_text())
+        doc["protocol_version"] = value
+        dump(p, doc)
+        out = devflow(root, "validate", "billing")
+        check(f"validate rejects protocol_version {value!r}", out.returncode != 0 and expected in out.stdout, out.stdout + out.stderr)
+
+    doc = yaml.safe_load(p.read_text())
+    doc["protocol_version"] = "1.99.0"
+    dump(p, doc)
+    out = devflow(root, "validate", "billing")
+    check(
+        "validate warns about a newer minor protocol version without failing",
+        out.returncode == 0 and "newer than this runtime" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_phase_entry_schema_fields_are_enforced(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": {"status": "executing"}}))
+    out = devflow(root, "validate", "billing")
+    check(
+        "validate enforces the schema's required phase entry fields",
+        out.returncode != 0 and "Phase 01 missing field: work_file" in out.stdout and "audit_file" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_phase_commands_refuse_to_invent_a_phase(root: Path) -> None:
+    """A mistyped phase number used to enter STATE and block integration forever."""
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+
+    typo = devflow(root, "phase", "set", "billing", "99", "executing")
+    doc = yaml.safe_load((d / "STATE.yaml").read_text())
+    check(
+        "phase set refuses a phase with no WORK file",
+        typo.returncode == 2 and "does not exist" in typo.stderr,
+        typo.stdout + typo.stderr,
+    )
+    check("the refused phase never reached STATE", "99" not in doc["phases"], repr(doc["phases"]))
+
+    ref_typo = devflow(root, "phase", "ref", "billing", "99", "--base", "HEAD", "--head", "HEAD")
+    check(
+        "phase ref refuses a phase with no WORK file",
+        ref_typo.returncode == 2 and "does not exist" in ref_typo.stderr,
+        ref_typo.stdout + ref_typo.stderr,
+    )
+
+    dump(d / "work/phase-02.yaml", work("02", item("P02-I01")))
+    real = devflow(root, "phase", "set", "billing", "02", "executing")
+    check("phase set still creates a phase whose WORK file exists", real.returncode == 0, real.stdout + real.stderr)
+
+
+def case_work_review_order_follows_phase(root: Path) -> None:
+    """Review selection must order by phase first, the same way choose_next does."""
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01"), "02": phase("executing", "02")}))
+    dump(d / "work/phase-01.yaml", work("01", high_done("Z-EARLY-PHASE")))
+    dump(d / "work/phase-02.yaml", work("02", high_done("A-LATE-PHASE")))
+
+    devflow(root, "status", "billing")
+    action = yaml.safe_load((d / "STATE.yaml").read_text())["next_action"]
+    check(
+        "the earlier phase's review is selected even when its id sorts later",
+        action["work_item"] == "Z-EARLY-PHASE" and action["phase"] == "01",
+        repr(action),
+    )
+
+
+def case_unknown_work_id_reports_a_clean_error(root: Path) -> None:
+    devflow(root, "init", "billing")
+    out = devflow(root, "render", "audit", "billing", "--scope", "work", "--task", "NOPE")
+    check(
+        "an unknown WORK id reports its message without KeyError quoting",
+        out.returncode == 2 and "DevFlow error: Unknown WORK item: NOPE" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+
 CASES = [
     case_fixtures_are_valid_yaml,
     case_timeout_diagnostics,
@@ -1200,6 +1330,12 @@ CASES = [
     case_integration_verification_requires_audit_artifact,
     case_rejected_phase_transition_does_not_mutate_state,
     case_work_block_requires_active_status_and_reason,
+    case_verification_is_gated_by_validation,
+    case_protocol_version_is_enforced,
+    case_phase_entry_schema_fields_are_enforced,
+    case_phase_commands_refuse_to_invent_a_phase,
+    case_work_review_order_follows_phase,
+    case_unknown_work_id_reports_a_clean_error,
 ]
 
 

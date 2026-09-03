@@ -1,4 +1,15 @@
 #!/usr/bin/env sh
 set -eu
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
+
+# Resolve symlinks, so a link to this file from a PATH directory still finds the plugin root.
+self=$0
+while [ -L "$self" ]; do
+    link=$(readlink "$self")
+    case $link in
+        /*) self=$link ;;
+        *) self=$(dirname -- "$self")/$link ;;
+    esac
+done
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)}"
 exec python3 "$PLUGIN_ROOT/scripts/devflow.py" "$@"

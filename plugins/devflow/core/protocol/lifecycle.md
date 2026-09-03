@@ -47,6 +47,8 @@ Mutation commands reject invalid transitions with exit code `2` before writing S
 - A verified plan review requires `PLAN.md` and its audit artifact. Required plan reviews cannot be skipped.
 - A phase verification requires terminal phase WORK, completed high-risk WORK reviews, a diff range, a phase audit artifact, and no unresolved phase decision. Verified phases cannot be reopened through `phase set`.
 - Integration verification requires verified phases, terminal integration WORK, completed high-risk integration WORK reviews, its audit artifact, and no unresolved project decision. Verified integration cannot be reopened through `integration set`.
+- Both verifications additionally require the domain to pass `validate`. A structurally broken WORK manifest cannot ride through to project completion, and the refusal names each validation error.
+- `phase set` and `phase ref` act on a phase already present in STATE, or on one whose `work/phase-XX.yaml` exists. Neither invents a phase entry, because a mistyped number would block integration for good.
 
 ## Backward-readable artifacts
 

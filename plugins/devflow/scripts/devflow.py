@@ -17,7 +17,7 @@ except ImportError:
     print("DevFlow requires PyYAML. Install with: python3 -m pip install PyYAML", file=sys.stderr)
     raise SystemExit(2)
 
-PROTOCOL_VERSION = "1.1.0"
+PROTOCOL_VERSION = "1.2.0"
 HIGH_RISK = {"high", "critical"}
 REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.I)
 
@@ -67,6 +67,7 @@ def load_schema(name: str) -> dict[str, Any]:
 STATE_SCHEMA = load_schema("state")
 WORK_SCHEMA = load_schema("work")
 STATE_REQUIRED_FIELDS = STATE_SCHEMA["required"]
+PHASE_ENTRY_REQUIRED_FIELDS = STATE_SCHEMA["phase_entry"]["required"]
 PROJECT_STATUSES = set(STATE_SCHEMA["project_status"]["allowed"])
 PHASE_STATUSES = set(STATE_SCHEMA["phase_status"]["allowed"])
 INTEGRATION_STATUSES = set(STATE_SCHEMA["integration_status"]["allowed"])
@@ -360,7 +361,7 @@ def decision_blockers(item: dict[str, Any], unresolved: set[str]) -> list[str]:
     return [f"unresolved decision {decision}" for decision in item.get("decision_dependencies", []) or [] if str(decision) in unresolved]
 
 
-def work_start_errors(root: Path, domain: str, state: dict[str, Any], path: Path, doc: dict[str, Any], item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
+def work_start_errors(state: dict[str, Any], path: Path, doc: dict[str, Any], item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
     errors = []
     if item.get("status") != "ready":
         errors.append(f"status must be ready, not {item.get('status')}")
@@ -389,7 +390,7 @@ def phase_items(d: Path, docs: dict[Path, dict[str, Any]], key: str, phase: dict
     return list(doc.get("items", []) or [])
 
 
-def phase_verify_errors(root: Path, domain: str, state: dict[str, Any], phase_key_value: str, docs: dict[Path, dict[str, Any]], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
+def phase_verify_errors(root: Path, domain: str, state: dict[str, Any], phase_key_value: str, docs: dict[Path, dict[str, Any]]) -> list[str]:
     phases = normalized_phases(state)
     phase = phases.get(phase_key_value)
     if phase is None:
@@ -421,7 +422,7 @@ def phase_verify_errors(root: Path, domain: str, state: dict[str, Any], phase_ke
     return errors
 
 
-def integration_verify_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path, dict[str, Any]], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
+def integration_verify_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path, dict[str, Any]]) -> list[str]:
     phases = normalized_phases(state)
     errors = []
     if not phases:
@@ -499,12 +500,13 @@ def work_review_action(root: Path, domain: str, state: dict[str, Any]) -> dict[s
             review = effective_review(item)
             if item.get("status") == "done" and review["required"] and review["status"] != "verified":
                 reviews.append((str(item.get("id")), item_phase(path, doc), item, review))
-    for item_id, phase, _, review in sorted(reviews, key=lambda entry: (entry[0], entry[1])):
+    # Phase before id, the same ordering choose_next uses, so both halves of the runtime agree.
+    for item_id, phase, _, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
         if review["status"] == "pending":
             return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item_id}
         if review["status"] == "blocked":
             return {"role": "human", "command": "decision", "scope": "work", "phase": None if phase == "integration" else phase, "work_item": item_id}
-    for item_id, phase, _, review in sorted(reviews, key=lambda entry: (entry[0], entry[1])):
+    for item_id, phase, _, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
         if review["status"] != "remediation":
             continue
         remediation = [index.get(str(remediation_id)) for remediation_id in review["remediation_work_ids"]]
@@ -590,7 +592,7 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
     return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None, "reason": "lifecycle is incomplete"}
 
 
-def project_status_for_action(state: dict[str, Any], action: dict[str, Any]) -> str:
+def project_status_for_action(action: dict[str, Any]) -> str:
     """Map a computed action to the schema's lifecycle projection."""
     command = action.get("command")
     scope = action.get("scope")
@@ -609,9 +611,11 @@ def project_status_for_action(state: dict[str, Any], action: dict[str, Any]) -> 
         if scope == "plan":
             return "plan_review"
         if scope == "work":
-            if action.get("phase") is None:
-                return "integration_closure" if action.get("mode") == "closure" else "integration_audit"
-            return "remediation" if action.get("mode") == "closure" else "phase_audit"
+            # An initial work audit is its own lifecycle position. Reporting it as phase_audit
+            # contradicted the next.scope printed beside it.
+            if action.get("mode") != "closure":
+                return "work_audit"
+            return "integration_closure" if action.get("phase") is None else "remediation"
         if scope == "phase":
             return "remediation" if action.get("mode") == "closure" else "phase_audit"
         if scope == "integration":
@@ -642,7 +646,7 @@ def refresh_state(root: Path, domain: str) -> dict[str, Any]:
     state = load_yaml(path, {}) or {}
     state["target_sha"] = current_sha(root)
     state["next_action"] = compute_next_action(root, domain, state)
-    state["project_status"] = project_status_for_action(state, state["next_action"])
+    state["project_status"] = project_status_for_action(state["next_action"])
     state["active_phase"] = active_phase_for_action(root, domain, state, state["next_action"])
     dump_yaml_if_changed(path, state)
     return state
@@ -750,7 +754,7 @@ def work_update(args: argparse.Namespace) -> int:
     if args.work_command == "start":
         state = load_yaml(state_path(root, args.domain), {}) or {}
         _, index, _ = load_work_index(domain_dir(root, args.domain))
-        errors = work_start_errors(root, args.domain, state, path, doc, item, index)
+        errors = work_start_errors(state, path, doc, item, index)
         if errors:
             return reject_transition(args.item, "start", errors)
         item["status"] = "in_progress"
@@ -857,9 +861,22 @@ def phase_entry(state: dict[str, Any], key: str) -> dict[str, Any]:
     phases = state.setdefault("phases", {})
     raw = raw_phase_key(state, key)
     if raw is None:
-        phases[key] = {"work_file": f"work/phase-{key}.yaml", "audit_file": f"audits/phase-{key}.md"}
+        phases[key] = {"status": "planned", "work_file": f"work/phase-{key}.yaml", "audit_file": f"audits/phase-{key}.md"}
         return phases[key]
     return phases[raw]
+
+
+def phase_creation_errors(root: Path, domain: str, state: dict[str, Any], key: str) -> list[str]:
+    """A mistyped phase number used to appear in STATE and block integration forever."""
+    if raw_phase_key(state, key) is not None:
+        return []
+    work_file = domain_dir(root, domain) / f"work/phase-{key}.yaml"
+    if work_file.exists():
+        return []
+    return [
+        f"phase {key} is not in STATE and {work_file.relative_to(root)} does not exist. "
+        "Add the phase in PLAN and STATE, or create its WORK file first."
+    ]
 
 
 def set_phase(args: argparse.Namespace) -> int:
@@ -869,11 +886,15 @@ def set_phase(args: argparse.Namespace) -> int:
     key = phase_key(args.phase)
     phases = normalized_phases(state)
     existing = phases.get(key)
+    creation_errors = phase_creation_errors(root, args.domain, state, key)
+    if creation_errors:
+        return reject_transition(f"phase {key}", "be created", creation_errors)
     if existing and existing.get("status") == "verified" and args.status != "verified":
         return reject_transition(f"phase {key}", "change", ["a verified phase cannot be reopened"])
     if args.status == "verified":
-        docs, index, _ = load_work_index(domain_dir(root, args.domain))
-        errors = phase_verify_errors(root, args.domain, state, key, docs, index)
+        docs, _, _ = load_work_index(domain_dir(root, args.domain))
+        errors = phase_verify_errors(root, args.domain, state, key, docs)
+        errors.extend(f"validation: {error}" for error in collect_validation(root, args.domain)[0])
         if errors:
             return reject_transition(f"phase {key}", "be verified", errors)
     phase = phase_entry(state, key)
@@ -890,6 +911,9 @@ def set_phase_ref(args: argparse.Namespace) -> int:
     path = state_path(root, args.domain)
     state = load_yaml(path, {}) or {}
     key = phase_key(args.phase)
+    creation_errors = phase_creation_errors(root, args.domain, state, key)
+    if creation_errors:
+        return reject_transition(f"phase {key}", "be created", creation_errors)
     phase = phase_entry(state, key)
 
     if args.range:
@@ -959,8 +983,9 @@ def set_integration(args: argparse.Namespace) -> int:
     if integ.get("status") == "verified" and args.status != "verified":
         return reject_transition("integration", "change", ["a verified integration cannot be reopened"])
     if args.status == "verified":
-        docs, index, _ = load_work_index(domain_dir(root, args.domain))
-        errors = integration_verify_errors(root, args.domain, state, docs, index)
+        docs, _, _ = load_work_index(domain_dir(root, args.domain))
+        errors = integration_verify_errors(root, args.domain, state, docs)
+        errors.extend(f"validation: {error}" for error in collect_validation(root, args.domain)[0])
         if errors:
             return reject_transition("integration", "be verified", errors)
     integ["status"] = args.status
@@ -987,10 +1012,26 @@ def decision_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def validate_protocol_version(state: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
+    """The version was recorded but never read, so an artifact from any protocol validated."""
+    if "protocol_version" not in state:
+        return
+    value = str(state.get("protocol_version") or "")
+    parts = value.split(".")
+    runtime = PROTOCOL_VERSION.split(".")
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        errors.append(f"Invalid protocol_version: {value or '<empty>'}")
+    elif parts[0] != runtime[0]:
+        errors.append(f"Unsupported protocol_version {value}: this runtime implements {PROTOCOL_VERSION}")
+    elif int(parts[1]) > int(runtime[1]):
+        warnings.append(f"STATE protocol_version {value} is newer than this runtime's {PROTOCOL_VERSION}")
+
+
 def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: list[str]) -> None:
     for field in STATE_REQUIRED_FIELDS:
         if field not in state:
             errors.append(f"STATE missing field: {field}")
+    validate_protocol_version(state, errors, warnings)
     if state.get("project_status") not in PROJECT_STATUSES:
         errors.append(f"Invalid project_status: {state.get('project_status')}")
     if state.get("risk_profile") not in RISK_LEVELS:
@@ -1004,7 +1045,10 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
         seen[key] = str(raw)
 
     for key, phase in normalized_phases(state).items():
-        if phase.get("status") not in PHASE_STATUSES:
+        for field in PHASE_ENTRY_REQUIRED_FIELDS:
+            if field not in phase:
+                errors.append(f"Phase {key} missing field: {field}")
+        if "status" in phase and phase.get("status") not in PHASE_STATUSES:
             errors.append(f"Phase {key} invalid status: {phase.get('status')}")
         wf = phase.get("work_file")
         if wf and not (d / wf).exists():
@@ -1104,14 +1148,11 @@ def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: se
                 errors.append(f"{item_id}: transferred requirements not registered on {target_id}: {', '.join(sorted(missing))}")
 
 
-def validate(args: argparse.Namespace) -> int:
-    root = repo_root()
-    d = domain_dir(root, args.domain)
+def collect_validation(root: Path, domain: str) -> tuple[list[str], list[str]]:
+    """Structural findings for a domain, so state transitions can gate on them too."""
+    d = domain_dir(root, domain)
     errors: list[str] = []
     warnings: list[str] = []
-    if not d.exists():
-        print(f"Domain not initialized: {args.domain}", file=sys.stderr)
-        return 2
     state = load_yaml(d / "STATE.yaml", {}) or {}
     validate_state(state, d, errors, warnings)
 
@@ -1171,6 +1212,18 @@ def validate(args: argparse.Namespace) -> int:
             for req in (item.get("origin") or {}).get("requirements", []) or []:
                 if str(req) not in prd_ids:
                     warnings.append(f"{item_id}: requirement id not found verbatim in PRD: {req}")
+
+    return errors, warnings
+
+
+def validate(args: argparse.Namespace) -> int:
+    root = repo_root()
+    d = domain_dir(root, args.domain)
+    if not d.exists():
+        print(f"Domain not initialized: {args.domain}", file=sys.stderr)
+        return 2
+    errors, warnings = collect_validation(root, args.domain)
+    _, index, _ = load_work_index(d)
 
     print(f"DevFlow validation: {args.domain}")
     for warning in warnings:
@@ -1488,6 +1541,10 @@ def main() -> int:
         return int(args.func(args))
     except KeyboardInterrupt:
         return 130
+    except KeyError as exc:
+        # str(KeyError) is the repr of its argument, which printed the message inside quotes.
+        print(f"DevFlow error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        return 2
     except Exception as exc:
         print(f"DevFlow error: {exc}", file=sys.stderr)
         return 2

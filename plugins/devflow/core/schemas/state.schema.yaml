@@ -19,7 +19,7 @@ backward_compatibility:
   legacy_plan_review_audit_file: Existing plan_review without audit_file reads as audits/plan.md.
   migration: No migration command is required; runtime normalization preserves readability.
 project_status:
-  allowed: [planning, plan_review, phase_execution, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, complete, blocked]
+  allowed: [planning, plan_review, phase_execution, work_audit, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, complete, blocked]
 phase_status:
   allowed: [planned, executing, audit, remediation, verified, blocked]
 integration_status:
