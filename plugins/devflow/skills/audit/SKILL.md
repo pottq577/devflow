@@ -62,6 +62,25 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
     `remediation --remediation-work <ID>`, or `blocked` after writing the audit artifact. Update
     phase/integration state when applicable, run validation, then run status.
 
+## Peer audit lenses
+
+Follow `core/protocol/skill-composition.md`.
+
+When Ponytail review guidance is available, use it as an additional discovery lens for
+unnecessary abstractions, duplicate wrappers or layers, speculative extension points, unused
+configurability, avoidable custom implementations, unnecessary dependencies, and code that can be
+deleted while preserving the contract.
+
+Treat every Ponytail observation as a lead. Before recording a finding, independently verify it
+against the PLAN, the current WORK or audit scope, repository callers, tests, compatibility
+requirements, repository conventions, and acceptance criteria. A verified lead is a finding on
+the existing overengineering and scope-intrusion axis (audit core axis F); do not create a new
+audit axis or a Ponytail-specific audit document. Use the existing classification and remediation
+lifecycle.
+
+Superpowers `receiving-code-review` output is advisory only. The DevFlow audit finding is the
+authoritative record. Do not trigger `requesting-code-review` from an audit.
+
 ## Closure mode
 
 Verify that the prior finding is actually closed, acceptance still holds, and no new regression was
