@@ -1017,13 +1017,15 @@ def validate_protocol_version(state: dict[str, Any], errors: list[str], warnings
     if "protocol_version" not in state:
         return
     value = str(state.get("protocol_version") or "")
-    parts = value.split(".")
-    runtime = PROTOCOL_VERSION.split(".")
-    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
+    if match is None:
         errors.append(f"Invalid protocol_version: {value or '<empty>'}")
-    elif parts[0] != runtime[0]:
+        return
+    major, minor, _patch = map(int, match.groups())
+    runtime_major, runtime_minor, _runtime_patch = map(int, PROTOCOL_VERSION.split("."))
+    if major != runtime_major:
         errors.append(f"Unsupported protocol_version {value}: this runtime implements {PROTOCOL_VERSION}")
-    elif int(parts[1]) > int(runtime[1]):
+    elif minor > runtime_minor:
         warnings.append(f"STATE protocol_version {value} is newer than this runtime's {PROTOCOL_VERSION}")
 
 

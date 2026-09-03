@@ -1193,12 +1193,27 @@ def case_protocol_version_is_enforced(root: Path) -> None:
     devflow(root, "init", "billing")
     p = root / "docs/domains/billing/STATE.yaml"
 
-    for value, expected in [("2.0.0", "Unsupported protocol_version"), ("garbage", "Invalid protocol_version")]:
+    invalid_versions = ["", "1.2", "1.2.foo", "1.2.0.0", "v1.2.0"]
+    for value in invalid_versions:
         doc = yaml.safe_load(p.read_text())
         doc["protocol_version"] = value
         dump(p, doc)
         out = devflow(root, "validate", "billing")
-        check(f"validate rejects protocol_version {value!r}", out.returncode != 0 and expected in out.stdout, out.stdout + out.stderr)
+        check(
+            f"validate rejects malformed protocol_version {value!r}",
+            out.returncode != 0 and "Invalid protocol_version" in out.stdout,
+            out.stdout + out.stderr,
+        )
+
+    doc = yaml.safe_load(p.read_text())
+    doc["protocol_version"] = "2.0.0"
+    dump(p, doc)
+    out = devflow(root, "validate", "billing")
+    check(
+        "validate rejects unsupported protocol major version",
+        out.returncode != 0 and "Unsupported protocol_version" in out.stdout,
+        out.stdout + out.stderr,
+    )
 
     doc = yaml.safe_load(p.read_text())
     doc["protocol_version"] = "1.99.0"

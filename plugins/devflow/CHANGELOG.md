@@ -12,8 +12,9 @@
   errors, and report them prefixed with `validation:`.
 - **`protocol_version` is read, not just written.** The runtime recorded the version in STATE and in
   `.devflow/config.yaml` and never compared it to its own. A STATE claiming `2.0.0`, or a malformed
-  value, validated cleanly. `validate` now errors on a different major version, errors on an
-  unparseable one, and warns when the minor version is newer than the runtime's.
+  value, validated cleanly. `protocol_version` must use the numeric x.y.z form. Malformed short,
+  extended, prefixed, or non-numeric forms are rejected. `validate` now errors on a different major
+  version, errors on an unparseable one, and warns when the minor version is newer than the runtime's.
 - **The schema's required phase entry fields are enforced.** `state.schema.yaml` declared
   `phase_entry.required: [status, work_file, audit_file]`, but the validator only checked `status`,
   so a phase entry missing both file paths passed without so much as a warning.
