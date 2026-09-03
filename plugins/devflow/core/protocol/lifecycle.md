@@ -38,6 +38,14 @@ Return to the human/Chat layer only for product-policy decisions, scope changes,
 
 `refresh_state()` owns those derived fields. Mutation commands update authoritative lifecycle state and then refresh the projection; status and render write STATE only when that projection changed.
 
+## Peer skill composition
+
+The DevFlow lifecycle stays authoritative even when peer skills are active. WORK selection, STATE
+transitions, review gates, remediation scheduling, and completion decisions remain DevFlow's.
+Optional peer execution disciplines and minimization guidance compose inside the current
+lifecycle boundary according to `core/protocol/skill-composition.md`, and a missing peer plugin
+never blocks a DevFlow command.
+
 ## Runtime transition guards
 
 Mutation commands reject invalid transitions with exit code `2` before writing STATE or WORK.
