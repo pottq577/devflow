@@ -61,5 +61,23 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 - When authoritative sources conflict, record `SPEC_DRIFT` or a decision instead of choosing
   silently.
 
+## Peer skill composition
+
+Follow `core/protocol/skill-composition.md`. DevFlow owns PLAN and WORK decomposition.
+
+When Ponytail guidance is available, use it as a planning lens:
+
+- inspect existing implementation before proposing new components;
+- reuse repository patterns and installed capabilities where suitable;
+- keep each WORK item to the smallest independently verifiable change;
+- avoid speculative abstractions and future-proofing the PRD or repository constraints do not
+  require.
+
+Ponytail does not override explicit PRD requirements, security, compatibility, or required
+verification, and its mode is never changed automatically.
+
+Do not start a separate Superpowers writing-plans, executing-plans, subagent-driven-development,
+or worktree lifecycle from inside DevFlow planning.
+
 Finish with the domain, baseline SHA, phase count, work-item count, unresolved decisions, validation
 result, and the next DevFlow action.
