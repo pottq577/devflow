@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- **Normative peer-skill composition policy.** `core/protocol/skill-composition.md` defines where
+  DevFlow authority ends and optional peer skill behavior begins, and `lifecycle.md` cross-references
+  it without duplicating the policy.
+- **Superpowers execution-discipline composition.** The `run` skill composes test-driven-development
+  for behavior-changing WORK, systematic-debugging for defect and remediation WORK, and
+  verification-before-completion before a WORK is reported done, all inside the one selected ready
+  WORK. Explicit repository or user instructions already authorize a TDD exception, so the run does
+  not stop to re-ask.
+- **Ponytail reuse/YAGNI composition.** The `plan` and `run` skills apply the currently active
+  Ponytail policy as a minimalism lens inside DevFlow-owned boundaries.
+- **Ponytail-backed complexity discovery as an advisory audit lens.** The `audit` skill treats
+  Ponytail observations as leads mapped to the existing overengineering axis; only an independently
+  verified lead becomes a DevFlow AUDIT finding.
+- **Regression coverage** protecting DevFlow lifecycle ownership, the optional and non-coupling
+  nature of peer composition, and the absence of peer-plugin state fields in templates and schemas.
+
+### Changed
+
+- DevFlow skills now explicitly distinguish lifecycle ownership from optional peer execution and
+  minimization policies.
+- Documentation describes safe composition with separately installed Superpowers and Ponytail,
+  including the warning against running a Superpowers controller workflow nested inside an active
+  DevFlow lifecycle.
+
+### Compatibility
+
+- Plugin version: 0.4.0.
+- Protocol version: 1.2.0, unchanged. Peer composition is documentation and skill guidance only and
+  creates no new artifact contract.
+- No STATE, WORK, or AUDIT schema migration is required, and existing 0.3.1 project artifacts remain
+  readable.
+- Superpowers and Ponytail remain optional external plugins. No DevFlow command fails when a peer
+  plugin is absent.
+
 ## 0.3.1
 
 ### Fixed

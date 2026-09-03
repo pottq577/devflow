@@ -164,6 +164,34 @@ Set the name per domain in `STATE.yaml` (`extension:`) or per project in `.devfl
 the transition while the domain has validation errors, so a structurally broken manifest cannot ride
 through to project completion.
 
+## Optional peer skill composition
+
+DevFlow can compose with separately installed Superpowers and Ponytail. DevFlow stays the
+lifecycle owner. `core/protocol/skill-composition.md` is the normative contract.
+
+When available:
+
+- Superpowers can provide test-driven-development, systematic-debugging, and
+  verification-before-completion disciplines inside the active WORK.
+- Ponytail can provide reuse-first and YAGNI guidance during planning, execution, and audit.
+  Ponytail observations in an audit are leads that a DevFlow auditor verifies before they become
+  findings.
+
+Both integrations are optional. DevFlow does not bundle these plugins, does not require them to
+execute a project, and does not switch Ponytail modes. Peer tools do not replace PLAN, WORK,
+STATE, AUDIT, lifecycle gates, or remediation. There is no discovery API; a peer capability is
+used only when the environment already provides it.
+
+Usage:
+
+1. Optionally enable and configure Superpowers or Ponytail the normal way.
+2. Run DevFlow as usual.
+3. DevFlow composes compatible peer skills inside its current stage.
+
+Do not run Superpowers subagent-driven-development or executing-plans as a nested controller
+inside an active DevFlow lifecycle. DevFlow already owns task selection, reviews, remediation, and
+completion, so a nested controller would duplicate the lifecycle.
+
 ## Compatibility and protocol version
 
 Plugin version 0.3.1 raises protocol version to `1.2.0`. The artifact contract stays
