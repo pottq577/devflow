@@ -97,7 +97,7 @@ and closure audits, integration initial and closure audits, then project complet
 
 ```text
 .devflow/
-├── config.yaml            # protocol_version, domains_root, default extension
+├── config.yaml            # domains_root, default extension
 └── extensions/            # optional project-local audit extensions
 docs/domains/<domain>/
 ├── PRD.md                 # product and domain contract
@@ -145,8 +145,8 @@ Set the name per domain in `STATE.yaml` (`extension:`) or per project in `.devfl
 ## What `validate` enforces
 
 - STATE required fields, and every status value against its allowed set
-- `protocol_version` against the runtime's own, rejecting a different major version and warning on a
-  newer minor one
+- `STATE.yaml` `protocol_version` against the runtime's own, rejecting a different major version and
+  warning on a newer minor one
 - The schema's required phase entry fields: `status`, `work_file`, and `audit_file`
 - Duplicate phase entries, including two raw keys that normalize to the same phase
 - A phase marked `verified` while its own work is unfinished, and an integration marked `verified`
@@ -177,3 +177,7 @@ runtime validates that field against its own allowed set and would reject a STAT
 so the version now carries that signal. `validate` reads `protocol_version` rather than only
 recording it: a different major version is an error, and a newer minor version is a warning that the
 artifact came from a newer runtime.
+
+`STATE.yaml` is the domain artifact source of truth for `protocol_version`. `.devflow/config.yaml`
+contains project-local runtime configuration only. Older configs that still contain `protocol_version`
+remain readable; that value does not override STATE.

@@ -1226,6 +1226,40 @@ def case_protocol_version_is_enforced(root: Path) -> None:
     )
 
 
+def case_state_is_protocol_version_source_of_truth(root: Path) -> None:
+    out = devflow(root, "init", "billing")
+    check("init succeeds for protocol source test", out.returncode == 0, out.stdout + out.stderr)
+
+    config_path = root / ".devflow/config.yaml"
+    state_path = root / "docs/domains/billing/STATE.yaml"
+
+    config = yaml.safe_load(config_path.read_text())
+    state_doc = yaml.safe_load(state_path.read_text())
+
+    check(
+        "generated config does not duplicate protocol_version",
+        "protocol_version" not in config,
+        repr(config),
+    )
+    check(
+        "generated STATE owns protocol_version",
+        state_doc.get("protocol_version") == "1.2.0",
+        repr(state_doc),
+    )
+
+    # Legacy projects may still have this obsolete config field.
+    # It must not override the domain artifact contract.
+    config["protocol_version"] = "9.9.9"
+    dump(config_path, config)
+
+    out = devflow(root, "validate", "billing")
+    check(
+        "legacy config protocol_version does not override STATE",
+        out.returncode == 0,
+        out.stdout + out.stderr,
+    )
+
+
 def case_phase_entry_schema_fields_are_enforced(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -1347,6 +1381,7 @@ CASES = [
     case_work_block_requires_active_status_and_reason,
     case_verification_is_gated_by_validation,
     case_protocol_version_is_enforced,
+    case_state_is_protocol_version_source_of_truth,
     case_phase_entry_schema_fields_are_enforced,
     case_phase_commands_refuse_to_invent_a_phase,
     case_work_review_order_follows_phase,

@@ -35,6 +35,9 @@
 
 ### Changed
 
+- Generated `.devflow/config.yaml` no longer duplicates `protocol_version`. `STATE.yaml` is the
+  protocol-version source of truth for each domain. Existing configs carrying the old field remain
+  readable and the stale field is ignored.
 - Protocol version is `1.2.0`. `project_status` gained the derived value `work_audit`, and a `1.1.0`
   runtime validates that field against its own allowed set, so it would reject a STATE this runtime
   writes. Existing `1.0.0` and `1.1.0` domains keep validating here, and no migration is required.

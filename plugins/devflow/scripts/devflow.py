@@ -116,7 +116,6 @@ def has_nonblank_string(values: Any) -> bool:
 def runtime_config(root: Path) -> dict[str, Any]:
     cfg_path = root / ".devflow" / "config.yaml"
     cfg = load_yaml(cfg_path, {}) or {}
-    cfg.setdefault("protocol_version", PROTOCOL_VERSION)
     cfg.setdefault("domains_root", "docs/domains")
     return cfg
 
@@ -164,7 +163,7 @@ def ensure_runtime(root: Path) -> None:
     runtime.mkdir(parents=True, exist_ok=True)
     cfg = runtime / "config.yaml"
     if not cfg.exists():
-        dump_yaml(cfg, {"protocol_version": PROTOCOL_VERSION, "domains_root": "docs/domains", "extension": "default"})
+        dump_yaml(cfg, {"domains_root": "docs/domains", "extension": "default"})
 
 
 def phase_key(value: Any) -> str:
