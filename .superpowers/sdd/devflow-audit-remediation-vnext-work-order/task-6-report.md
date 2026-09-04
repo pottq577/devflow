@@ -208,3 +208,44 @@ plugins/devflow/tests/test_devflow.py
 커밋 메시지: `fix(devflow): enforce work v2 at mutation boundaries`
 
 남은 우려 사항은 없다. Task 7의 두 known RED는 이 수정 범위에 포함하지 않았다.
+
+## Fix round 2
+
+### 독립 리뷰 지적과 RED
+
+- `work review`만 대상 WORK 문서 검증을 거치지 않아 invalid v2의 review 상태를 기록하고 dependent WORK를 해제했다.
+- 기존 mutation matrix에 high-risk completed WORK의 `review verified`를 추가했다.
+- invalid empty contract, boolean version, float version, unsupported version에서 review가 모두 exit 0으로 성공하고 `P01-I02`를 다음 작업으로 선택했다.
+- RED 결과는 `passed=12 failed=4`, exit 1이었다. 실패 4개는 review mutation이었다.
+
+### 수정
+
+- `work_review`가 쓰기 전에 기존 `validate_work_file`을 호출하도록 했다.
+- 같은 대상 WORK 파일의 기존 index와 decision context를 사용한다. 전체 domain validation이나 새 helper는 추가하지 않았다.
+- 검증된 index를 remediation review 검사에도 재사용해 중복 파일 읽기를 제거했다.
+
+### GREEN과 검증
+
+- mutation matrix: `passed=16 failed=0`, exit 0.
+- review 네 경우 모두 exit 2, 전체 domain file bytes 불변, `P01-I02` 미해제를 확인했다.
+- Task 6 기존 및 신규 case: `passed=34 failed=0`, exit 0.
+- Task 5 traceability: `passed=20 failed=0`, exit 0.
+- Task 4 lifecycle: `passed=23 failed=0`, exit 0.
+- 명시적 WORK v1 lifecycle과 문자열 shape는 Task 6 case에서 유지됐다.
+- `version`이 없는 legacy WORK는 `validate=0 start=0 done=0 shape_preserved=True`를 다시 확인했다.
+- `python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py`: exit 0.
+- 첫 full suite에서 `case_lifecycle_walk`이 일시적으로 추가 실패했으나 단독 재실행은 `passed=5 failed=0`이었다.
+- 최종 full suite 재실행은 `passed=350 failed=2`, exit 1이다. 실패는 Task 7 소유의 두 known RED뿐이다.
+- `git diff --check`: exit 0.
+
+### 변경 파일과 커밋
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-6-report.md
+plugins/devflow/scripts/devflow.py
+plugins/devflow/tests/test_devflow.py
+```
+
+커밋 메시지: `fix(devflow): validate work review mutations`
+
+범위 내 남은 우려 사항은 없다. Task 7의 두 known RED는 이 수정 범위에 포함하지 않았다.

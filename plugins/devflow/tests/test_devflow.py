@@ -2291,6 +2291,8 @@ def case_work_v1_remains_readable(root: Path) -> None:
 def case_work_mutations_reject_invalid_work_v2_contract(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
+    (d / "audits/work").mkdir(parents=True)
+    (d / "audits/work/P01-I01.md").write_text("# work audit\n", encoding="utf-8")
     state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
     state_doc["phases"] = {"01": phase("executing", "01")}
     invalid_docs = [
@@ -2300,24 +2302,46 @@ def case_work_mutations_reject_invalid_work_v2_contract(root: Path) -> None:
         ("unsupported version", {**work_v2("01", v2_item("P01-I01")), "version": 3}),
     ]
     mutations = [
-        ("start", ["work", "start", "billing", "P01-I01"], "ready"),
-        ("done", ["work", "done", "billing", "P01-I01", "--command", "true -> passed"], "in_progress"),
-        ("block", ["work", "block", "billing", "P01-I01", "--reason", "blocked"], "ready"),
+        ("start", ["work", "start", "billing", "P01-I01"], "ready", False),
+        ("done", ["work", "done", "billing", "P01-I01", "--command", "true -> passed"], "in_progress", False),
+        ("block", ["work", "block", "billing", "P01-I01", "--reason", "blocked"], "ready", False),
+        ("review", ["work", "review", "billing", "P01-I01", "verified"], "done", True),
     ]
     for invalid_name, invalid_doc in invalid_docs:
-        for mutation_name, args, status in mutations:
+        for mutation_name, args, status, is_review in mutations:
             doc = copy.deepcopy(invalid_doc)
             doc["items"][0]["status"] = status
+            if is_review:
+                doc["items"][0]["risk"]["level"] = "high"
+                doc["items"][0]["premise_checks"] = ["confirm current HEAD"]
+                doc["items"][0]["evidence"]["commands"] = ["true -> passed"]
+                doc["items"][0]["review"] = {
+                    "required": True,
+                    "status": "pending",
+                    "audit_file": "audits/work/P01-I01.md",
+                    "remediation_work_ids": [],
+                }
+                dependent = v2_item("P01-I02")
+                dependent["dependencies"] = ["P01-I01"]
+                doc["items"].append(dependent)
             dump(d / "STATE.yaml", state_doc)
             dump(d / "work/phase-01.yaml", doc)
             validated = devflow(root, "validate", "billing")
             before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
             mutated = devflow(root, *args)
             after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+            projected = devflow(root, "status", "billing") if is_review else None
             check(
                 f"work {mutation_name} rejects {invalid_name} before mutation",
-                validated.returncode == 1 and mutated.returncode == 2 and before == after,
-                validated.stdout + validated.stderr + mutated.stdout + mutated.stderr,
+                validated.returncode == 1
+                and mutated.returncode == 2
+                and before == after
+                and (projected is None or "next.work_item: P01-I02" not in projected.stdout),
+                validated.stdout
+                + validated.stderr
+                + mutated.stdout
+                + mutated.stderr
+                + (projected.stdout + projected.stderr if projected else ""),
             )
 
 

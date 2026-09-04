@@ -1419,6 +1419,7 @@ def work_update(args: argparse.Namespace) -> int:
 
 def work_review(args: argparse.Namespace) -> int:
     root = repo_root()
+    d = domain_dir(root, args.domain)
     state = load_yaml(state_path(root, args.domain), {}) or {}
     if args.review_status == "verified" and requires_audit_apply(state):
         return reject_transition(args.item, "be verified", ["protocol 1.3+ requires devflow audit apply"])
@@ -1427,6 +1428,12 @@ def work_review(args: argparse.Namespace) -> int:
     except KeyError as e:
         print(str(e), file=sys.stderr)
         return 2
+    _, index, _ = load_work_index(d)
+    _, open_decisions = decision_state_errors(state, d)
+    unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []} | open_decisions
+    document_errors, _ = validate_work_file(path, doc, index, unresolved)
+    if document_errors:
+        return reject_transition(args.item, "be reviewed", document_errors)
     review = effective_review(item)
     if item.get("status") != "done":
         print(f"{args.item}: review requires status=done", file=sys.stderr)
@@ -1436,13 +1443,12 @@ def work_review(args: argparse.Namespace) -> int:
         return 2
     if args.review_status == "verified":
         if review["status"] == "remediation":
-            _, index, _ = load_work_index(domain_dir(root, args.domain))
             blockers = remediation_completion_blockers(review, index)
             if blockers:
                 for blocker in blockers:
                     print(f"{args.item}: {blocker}", file=sys.stderr)
                 return 2
-        audit_path = domain_dir(root, args.domain) / review["audit_file"]
+        audit_path = d / review["audit_file"]
         if not audit_path.exists():
             print(f"{args.item}: work audit artifact not found: {audit_path}", file=sys.stderr)
             return 2
@@ -1451,7 +1457,6 @@ def work_review(args: argparse.Namespace) -> int:
         if not args.remediation_work:
             print(f"{args.item}: remediation review requires --remediation-work", file=sys.stderr)
             return 2
-        _, index, _ = load_work_index(domain_dir(root, args.domain))
         for remediation_id in args.remediation_work:
             target = index.get(remediation_id)
             if not target:
