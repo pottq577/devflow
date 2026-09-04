@@ -12,6 +12,7 @@ malformed fixture cannot masquerade as a passing assertion.
 from __future__ import annotations
 
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -2287,6 +2288,84 @@ def case_work_v1_remains_readable(root: Path) -> None:
     )
 
 
+def case_work_mutations_reject_invalid_work_v2_contract(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    invalid_docs = [
+        ("empty acceptance and commands", work_v2("01", v2_item("P01-I01", [], []))),
+        ("boolean version", {**work_v2("01", v2_item("P01-I01")), "version": True}),
+        ("float version", {**work_v2("01", v2_item("P01-I01")), "version": 2.0}),
+        ("unsupported version", {**work_v2("01", v2_item("P01-I01")), "version": 3}),
+    ]
+    mutations = [
+        ("start", ["work", "start", "billing", "P01-I01"], "ready"),
+        ("done", ["work", "done", "billing", "P01-I01", "--command", "true -> passed"], "in_progress"),
+        ("block", ["work", "block", "billing", "P01-I01", "--reason", "blocked"], "ready"),
+    ]
+    for invalid_name, invalid_doc in invalid_docs:
+        for mutation_name, args, status in mutations:
+            doc = copy.deepcopy(invalid_doc)
+            doc["items"][0]["status"] = status
+            dump(d / "STATE.yaml", state_doc)
+            dump(d / "work/phase-01.yaml", doc)
+            validated = devflow(root, "validate", "billing")
+            before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+            mutated = devflow(root, *args)
+            after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+            check(
+                f"work {mutation_name} rejects {invalid_name} before mutation",
+                validated.returncode == 1 and mutated.returncode == 2 and before == after,
+                validated.stdout + validated.stderr + mutated.stdout + mutated.stderr,
+            )
+
+
+def case_work_schema_trust_anchor_rejects_malformed_contract(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    mutations = [
+        ("schema identifier", lambda schema: schema.update(schema="corrupt-work-schema")),
+        ("missing version 2 contract", lambda schema: schema.pop("version_2")),
+        ("extended supported versions", lambda schema: schema["version"].update(supported=[1, 2, 3])),
+        ("non-list supported versions", lambda schema: schema["version"].update(supported=True)),
+    ]
+    for name, mutate in mutations:
+        fake_plugin = root / f"fake-plugin-work-{name.replace(' ', '-')}"
+        shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+        schema_path = fake_plugin / "core/schemas/work.schema.yaml"
+        schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+        mutate(schema_doc)
+        dump(schema_path, schema_doc)
+        before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        runtime = load_runtime_module()
+        with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+            out = invoke_runtime(root, runtime, "validate", "billing")
+        after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        check(
+            f"WORK schema trust anchor rejects {name} with a clean CLI error",
+            out.returncode == 2
+            and "work schema" in out.stderr.lower()
+            and "traceback" not in out.stderr.lower()
+            and before == after,
+            out.stdout + out.stderr,
+        )
+
+
+def case_render_audit_includes_work_v2_contract(root: Path) -> None:
+    audit_remediation_fixture(root)
+    out = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "render audit includes the actionable WORK v2 coverage contract",
+        out.returncode == 0
+        and "version: 2" in out.stdout
+        and "stable item-local ID" in out.stdout
+        and "covers: [AC-P01-I01-01]" in out.stdout
+        and "layer where its outcome is observable" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
 def case_transfer_enforced(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -3483,6 +3562,9 @@ CASES = [
     case_verification_coverage_rejects_unknown_acceptance_id,
     case_work_v2_rejects_mixed_legacy_shapes,
     case_work_v1_remains_readable,
+    case_work_mutations_reject_invalid_work_v2_contract,
+    case_work_schema_trust_anchor_rejects_malformed_contract,
+    case_render_audit_includes_work_v2_contract,
     case_transfer_enforced,
     case_lifecycle_consistency,
     case_validate_core_rules,

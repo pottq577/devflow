@@ -25,7 +25,7 @@ REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.
 PROMPT_PROTOCOLS = {
     "plan": ["authority", "lifecycle", "work-item-contract", "decision-policy"],
     "run": ["authority", "work-item-contract", "risk-policy"],
-    "audit": ["authority", "audit-core", "risk-policy", "decision-policy"],
+    "audit": ["authority", "audit-core", "work-item-contract", "risk-policy", "decision-policy"],
 }
 
 
@@ -370,8 +370,57 @@ def validate_schema_value(
     return errors
 
 
+def work_schema_contract_errors(schema: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if schema.get("schema") != "devflow-work-v2":
+        errors.append("schema identifier must be devflow-work-v2")
+    version = schema.get("version")
+    if not isinstance(version, dict):
+        errors.append("version must be a mapping")
+    else:
+        if type(version.get("current")) is not int or version.get("current") != 2:
+            errors.append("version.current must be integer 2")
+        supported = version.get("supported")
+        if (
+            not isinstance(supported, list)
+            or any(type(value) is not int for value in supported)
+            or len(supported) != 2
+            or set(supported) != {1, 2}
+        ):
+            errors.append("version.supported must contain exactly integer versions 1 and 2")
+    version_2 = schema.get("version_2")
+    if not isinstance(version_2, dict) or not all(
+        isinstance(version_2.get(field), dict) for field in ["acceptance", "verification_command"]
+    ):
+        errors.append("version_2 must define acceptance and verification_command mappings")
+    return errors
+
+
+def configure_work_schema() -> None:
+    global WORK_SCHEMA, WORK_REQUIRED_ITEM_FIELDS, WORK_VERSIONS, WORK_STATUSES
+    global TERMINAL_STATUSES, KINDS, RISK_LEVELS, REVIEW_STATUSES
+    global FINDING_TRACEABILITY_KINDS, AGGREGATION_REASON_THRESHOLD
+
+    schema = load_schema("work")
+    errors = work_schema_contract_errors(schema)
+    if errors:
+        raise ValueError(f"Required WORK schema is invalid: {'; '.join(errors)}")
+    try:
+        WORK_REQUIRED_ITEM_FIELDS = schema["required_item_fields"]
+        WORK_VERSIONS = set(schema["version"]["supported"])
+        WORK_STATUSES = set(schema["status"]["allowed"])
+        TERMINAL_STATUSES = set(schema["terminal"])
+        KINDS = set(schema["kind"]["allowed"])
+        RISK_LEVELS = set(schema["risk_level"]["allowed"])
+        REVIEW_STATUSES = set(schema.get("review_status", {}).get("allowed", ["skipped", "pending", "remediation", "blocked", "verified"]))
+        FINDING_TRACEABILITY_KINDS = set(schema["finding_traceability"]["required_for_kinds"])
+        AGGREGATION_REASON_THRESHOLD = int(schema["finding_traceability"]["aggregation_reason_required_when_findings_at_least"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Required WORK schema is invalid: {exc}") from exc
+    WORK_SCHEMA = schema
+
+
 STATE_SCHEMA = load_schema("state")
-WORK_SCHEMA = load_schema("work")
 STATE_REQUIRED_FIELDS = STATE_SCHEMA["required"]
 WORKFLOW_TYPES = set(STATE_SCHEMA["workflow_type"]["allowed"])
 PHASE_ENTRY_REQUIRED_FIELDS = STATE_SCHEMA["phase_entry"]["required"]
@@ -379,15 +428,16 @@ PROJECT_STATUSES = set(STATE_SCHEMA["project_status"]["allowed"])
 PHASE_STATUSES = set(STATE_SCHEMA["phase_status"]["allowed"])
 INTEGRATION_STATUSES = set(STATE_SCHEMA["integration_status"]["allowed"])
 PLAN_REVIEW_STATUSES = set(STATE_SCHEMA["plan_review_status"]["allowed"])
-WORK_REQUIRED_ITEM_FIELDS = WORK_SCHEMA["required_item_fields"]
-WORK_VERSIONS = set(WORK_SCHEMA["version"]["supported"])
-WORK_STATUSES = set(WORK_SCHEMA["status"]["allowed"])
-TERMINAL_STATUSES = set(WORK_SCHEMA["terminal"])
-KINDS = set(WORK_SCHEMA["kind"]["allowed"])
-RISK_LEVELS = set(WORK_SCHEMA["risk_level"]["allowed"])
-REVIEW_STATUSES = set(WORK_SCHEMA.get("review_status", {}).get("allowed", ["skipped", "pending", "remediation", "blocked", "verified"]))
-FINDING_TRACEABILITY_KINDS = set(WORK_SCHEMA["finding_traceability"]["required_for_kinds"])
-AGGREGATION_REASON_THRESHOLD = int(WORK_SCHEMA["finding_traceability"]["aggregation_reason_required_when_findings_at_least"])
+WORK_SCHEMA: dict[str, Any] = {}
+WORK_REQUIRED_ITEM_FIELDS: list[str] = []
+WORK_VERSIONS: set[int] = set()
+WORK_STATUSES: set[str] = set()
+TERMINAL_STATUSES: set[str] = set()
+KINDS: set[str] = set()
+RISK_LEVELS: set[str] = set()
+REVIEW_STATUSES: set[str] = set()
+FINDING_TRACEABILITY_KINDS: set[str] = set()
+AGGREGATION_REASON_THRESHOLD = 0
 
 
 def atomic_write_text(path: Path, content: str) -> None:
@@ -1309,21 +1359,26 @@ def next_item(args: argparse.Namespace) -> int:
 
 def work_update(args: argparse.Namespace) -> int:
     root = repo_root()
+    d = domain_dir(root, args.domain)
     try:
         path, doc, item = find_item(root, args.domain, args.item)
     except KeyError as e:
         print(str(e), file=sys.stderr)
         return 2
+    state = load_yaml(state_path(root, args.domain), {}) or {}
+    _, index, _ = load_work_index(d)
+    _, open_decisions = decision_state_errors(state, d)
+    unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []} | open_decisions
+    document_errors, _ = validate_work_file(path, doc, index, unresolved)
     if args.work_command == "start":
-        state = load_yaml(state_path(root, args.domain), {}) or {}
-        d = domain_dir(root, args.domain)
-        _, index, _ = load_work_index(d)
-        errors = work_start_errors(state, d, path, doc, item, index)
+        errors = document_errors + work_start_errors(state, d, path, doc, item, index)
         if errors:
             return reject_transition(args.item, "start", errors)
         item["status"] = "in_progress"
         item["block_reason"] = None
     elif args.work_command == "done":
+        if document_errors:
+            return reject_transition(args.item, "done", document_errors)
         if item.get("status") != "in_progress":
             return reject_transition(args.item, "done", [f"status=in_progress is required, not {item.get('status')}"])
         current_commands = list((item.get("evidence") or {}).get("commands") or [])
@@ -1347,6 +1402,8 @@ def work_update(args: argparse.Namespace) -> int:
         item["status"] = "done"
         item["block_reason"] = None
     elif args.work_command == "block":
+        if document_errors:
+            return reject_transition(args.item, "block", document_errors)
         if item.get("status") not in {"ready", "in_progress"}:
             return reject_transition(args.item, "block", [f"cannot block status {item.get('status')}"])
         reason = (args.reason or "").strip()
@@ -1907,6 +1964,25 @@ def validate_item(
                 errors.append(f"{item_id}: transferred requirements not registered on {target_id}: {', '.join(sorted(missing))}")
 
 
+def validate_work_file(
+    path: Path,
+    doc: dict[str, Any],
+    index: dict[str, tuple[Path, dict[str, Any]]],
+    unresolved: set[str],
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    version = work_document_version(doc)
+    if version not in WORK_VERSIONS:
+        return [f"{path.name}: unsupported WORK version {doc.get('version')!r}"], warnings
+    items = doc.get("items", []) or []
+    if not isinstance(items, list):
+        return [f"{path.name}: items must be a list"], warnings
+    for item in items:
+        validate_item(item, version, set(index), index, unresolved, errors, warnings)
+    return errors, warnings
+
+
 def collect_validation(
     root: Path,
     domain: str,
@@ -1941,16 +2017,9 @@ def collect_validation(
                 errors.append(f"plan_review: unknown remediation WORK id {remediation_id}")
 
     for path, doc in docs.items():
-        version = work_document_version(doc)
-        if version not in WORK_VERSIONS:
-            errors.append(f"{path.name}: unsupported WORK version {doc.get('version')!r}")
-            continue
-        items = doc.get("items", []) or []
-        if not isinstance(items, list):
-            errors.append(f"{path.name}: items must be a list")
-            continue
-        for item in items:
-            validate_item(item, version, all_ids, index, unresolved, errors, warnings)
+        file_errors, file_warnings = validate_work_file(path, doc, index, unresolved)
+        errors.extend(file_errors)
+        warnings.extend(file_warnings)
 
     # A phase cannot be verified while its own work is unfinished.
     for key, phase_state in phases.items():
@@ -2773,6 +2842,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     try:
+        configure_work_schema()
         args = build_parser().parse_args()
         return int(args.func(args))
     except KeyboardInterrupt:

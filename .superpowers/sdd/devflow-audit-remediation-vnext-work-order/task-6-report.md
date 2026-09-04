@@ -162,3 +162,49 @@ plugins/devflow/tests/test_devflow.py
 ```
 
 커밋 메시지: `feat(devflow): map acceptance criteria to verification`
+
+## Fix round 1
+
+### 독립 리뷰 지적과 원인
+
+- invalid WORK v2 문서는 `validate`에서 거절됐지만 `work start`, `work done`, `work block`은 `validate_item` 경계를 거치지 않고 직접 상태를 썼다.
+- WORK schema는 module import 시 상수로 펼쳐져 schema 식별자와 v2 계약 자체가 변조돼도 신뢰 경계를 확인하지 않았다.
+- audit render는 `audit-core`만 포함해 감사자가 생성할 WORK v2 ID, `covers`, observable layer 지침을 받지 못했다.
+
+### RED
+
+- mutation과 schema 및 render 회귀 3개 case를 먼저 추가했다.
+- 첫 실행은 `passed=5 failed=12`, exit 1이었다.
+- 실패 12개는 empty v2 계약, boolean version, float version, unsupported version 각각에 대한 start, done, block mutation이었다. 각 명령이 exit 0으로 문서를 변경해 결함을 재현했다.
+- schema trust anchor 4개 assertion과 audit render 1개 assertion은 이전 구현 세션의 미커밋 production 변경 때문에 이미 통과했다. 해당 변경을 검토한 뒤 유지했다.
+
+### 수정
+
+- `configure_work_schema`가 매 CLI 진입 시 bundled WORK schema를 다시 읽고 schema 식별자, 현재 version 2, 지원 version 1과 2, v2 acceptance와 verification contract를 확인한 뒤 runtime 상수를 구성한다.
+- `validate_work_file`로 기존 `validate_item` 경로를 재사용했다. `collect_validation`과 세 work mutation이 같은 대상 문서 검증을 거친다.
+- mutation 검증은 대상 WORK 파일에만 적용한다. 전체 domain validation을 호출하지 않아 Task 7의 known RED가 mutation을 막지 않는다.
+- start는 기존 전이 오류와 문서 오류를 함께 보고해 구체적인 unresolved decision ID를 보존한다. done과 block은 문서 오류를 쓰기 전에 반환한다.
+- audit render가 기존 `work-item-contract.md`를 포함하도록 구성했다. 새 prompt나 중복 규칙은 추가하지 않았다.
+
+### GREEN과 검증
+
+- Task 6 기존 6개와 신규 3개 case: `passed=30 failed=0`, exit 0.
+- invalid mutation 12개 assertion은 모두 exit 2와 전체 domain file bytes 불변을 확인했다.
+- 명시적 WORK v1 lifecycle은 기존 case에서 validate, start, done과 문자열 shape 보존을 확인했다.
+- `version`이 없는 legacy WORK는 별도 실행에서 `validate=0 start=0 done=0 shape_preserved=True`를 확인했다.
+- Task 5 traceability: `passed=20 failed=0`, exit 0.
+- Task 4 lifecycle: `passed=23 failed=0`, exit 0.
+- `python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py`: exit 0.
+- full suite: `passed=346 failed=2`, exit 1. 실패는 Task 7 소유의 `case_validate_rejects_orphan_phase_manifest`, `case_validate_rejects_placeholder_delivery_contract_before_execution` 두 건뿐이다.
+
+### 변경 파일과 커밋
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-6-report.md
+plugins/devflow/scripts/devflow.py
+plugins/devflow/tests/test_devflow.py
+```
+
+커밋 메시지: `fix(devflow): enforce work v2 at mutation boundaries`
+
+남은 우려 사항은 없다. Task 7의 두 known RED는 이 수정 범위에 포함하지 않았다.
