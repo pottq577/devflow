@@ -227,6 +227,33 @@ plugins/devflow/tests/test_devflow.py
 
 커밋 메시지: `fix(devflow): validate lifecycle artifacts as one contract`
 
+## Fix round 5 review correction
+
+### 확인한 지적
+
+- Canonical closure의 `mode`만 검사하면 schema-invalid artifact가 ready remediation WORK보다 closure를 우선하게 만들 수 있었다.
+- 가장 최근의 committed prior audit에 duplicate finding ID가 있어도 closure history로 신뢰했다.
+
+### RED와 구현
+
+Production 변경 전에 adversarial case 2개를 추가했고 `passed=0 failed=2`, exit 1로 재현했다.
+
+- `case_malformed_closure_metadata_does_not_hide_ready_work`
+- `case_latest_prior_audit_rejects_duplicate_finding_ids`
+
+기존 schema validator와 `audit_finding_id_errors`만 재사용했다. Canonical audit priority는 schema, finding ID uniqueness, scope, mode, baseline, current target을 모두 만족할 때만 인정한다. Prior audit history는 가장 최근 artifact와 initial 후보 모두 duplicate finding ID를 거절한다. 새 abstraction과 dependency는 추가하지 않았다.
+
+### GREEN
+
+- 신규 adversarial case 2개: `passed=2 failed=0`, exit 0
+- 보정된 Task 8 E2E 5개: `passed=15 failed=0`, exit 0
+- Python syntax: exit 0
+- 전체 suite 1회차: `passed=406 failed=0`, exit 0
+- 전체 suite 2회차: `passed=406 failed=0`, exit 0
+- `git diff --check`: exit 0
+
+변경 파일은 `plugins/devflow/scripts/devflow.py`, `plugins/devflow/tests/test_devflow.py`, 이 보고서다. Task 8 테스트 보정은 별도 작업 단위로 커밋한다.
+
 ## Fix round 1
 
 ### 시작 상태

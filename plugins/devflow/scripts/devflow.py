@@ -364,7 +364,24 @@ def canonical_audit_has_mode(
 ) -> bool:
     try:
         path = canonical_audit_path(root, domain, state, scope, phase, work_item)
-        return path.exists() and parse_audit_metadata(path).get("mode") == mode
+        if not path.exists():
+            return False
+        metadata = parse_audit_metadata(path)
+        audit_schema, finding_schema = load_audit_schemas()
+        schema_errors = validate_schema_value(
+            metadata,
+            audit_schema,
+            "canonical audit",
+            {"finding": finding_schema},
+        )
+        return (
+            not schema_errors
+            and not audit_finding_id_errors(metadata.get("findings", []) or [])
+            and metadata.get("scope") == scope
+            and metadata.get("mode") == mode
+            and metadata.get("baseline_sha") == state.get("baseline_sha")
+            and metadata.get("target_sha") == current_sha(root)
+        )
     except (OSError, UnicodeError, ValueError, KeyError):
         return False
 
@@ -399,6 +416,8 @@ def prior_audit_metadata(
 
     latest = read_committed_metadata(commits[0])
     latest_errors = validate_schema_value(latest, audit_schema, f"latest prior audit for {relative}", references)
+    if not latest_errors:
+        latest_errors.extend(audit_finding_id_errors(latest.get("findings", []) or []))
     if latest_errors:
         raise ValueError(f"Latest prior audit for canonical file {relative} is invalid: {'; '.join(latest_errors)}")
     if latest.get("scope") != scope:
@@ -414,7 +433,10 @@ def prior_audit_metadata(
             continue
         if candidate.get("scope") != scope:
             continue
-        if not validate_schema_value(candidate, audit_schema, f"initial audit for {relative}", references):
+        candidate_errors = validate_schema_value(candidate, audit_schema, f"initial audit for {relative}", references)
+        if not candidate_errors:
+            candidate_errors.extend(audit_finding_id_errors(candidate.get("findings", []) or []))
+        if not candidate_errors:
             initial_found = True
             break
     if not initial_found:
