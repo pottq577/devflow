@@ -1132,6 +1132,64 @@ def case_audit_apply_rejects_corrupt_schema_contracts(root: Path) -> None:
         )
 
 
+def case_audit_schema_trust_anchor_rejects_removed_verdict_contract(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    fake_plugin = root / "fake-plugin-audit-anchor"
+    shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+    schema_path = fake_plugin / "core/schemas/audit.schema.yaml"
+    schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    schema_doc["contract"]["required_allowed"] = ["properties.scope"]
+    schema_doc["contract"].pop("rubric")
+    schema_doc["properties"]["verdict"].pop("allowed")
+    schema_doc.pop("verdict")
+    dump(schema_path, schema_doc)
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="BOGUS"))
+    before = (d / "STATE.yaml").read_bytes()
+    runtime = load_runtime_module()
+
+    with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+        out = invoke_runtime(root, runtime, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "audit schema trust anchor rejects simultaneous verdict contract removal",
+        out.returncode == 2
+        and "audit schema" in out.stderr.lower()
+        and (d / "STATE.yaml").read_bytes() == before,
+        out.stdout + out.stderr,
+    )
+
+
+def case_finding_schema_trust_anchor_rejects_removed_enum_contract(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    fake_plugin = root / "fake-plugin-finding-anchor"
+    shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+    schema_path = fake_plugin / "core/schemas/finding.schema.yaml"
+    schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    schema_doc["contract"]["required_allowed"] = ["properties.severity"]
+    schema_doc["properties"]["classification"].pop("allowed")
+    schema_doc["properties"]["disposition"]["properties"]["action"].pop("allowed")
+    dump(schema_path, schema_doc)
+    finding = audit_finding(
+        "F-01",
+        classification="BOGUS",
+        disposition={"action": "BOGUS", "work_ids": [], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, findings=[finding]))
+    before = (d / "STATE.yaml").read_bytes()
+    runtime = load_runtime_module()
+
+    with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+        out = invoke_runtime(root, runtime, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "finding schema trust anchor rejects simultaneous enum contract removal",
+        out.returncode == 2
+        and "finding schema" in out.stderr.lower()
+        and (d / "STATE.yaml").read_bytes() == before,
+        out.stdout + out.stderr,
+    )
+
+
 def case_audit_remediation_prioritizes_unresolved_decisions(root: Path) -> None:
     d = audit_remediation_fixture(root)
     remediation = item(
@@ -2626,6 +2684,8 @@ CASES = [
     case_plan_audit_remediation_reaches_closure,
     case_audit_apply_requires_schema_files,
     case_audit_apply_rejects_corrupt_schema_contracts,
+    case_audit_schema_trust_anchor_rejects_removed_verdict_contract,
+    case_finding_schema_trust_anchor_rejects_removed_enum_contract,
     case_audit_remediation_prioritizes_unresolved_decisions,
     case_delivery_integration_prioritizes_unresolved_decisions,
     case_plan_review_remediation_metadata_is_validated,

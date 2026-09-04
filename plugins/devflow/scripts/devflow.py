@@ -178,7 +178,36 @@ def audit_schema_contract_errors(
     schema: dict[str, Any],
     references: dict[str, dict[str, Any]],
 ) -> list[str]:
+    anchors = {
+        "audit": {
+            "root_keys": {"schema", "type", "contract", "required", "properties", "verdict"},
+            "contract_keys": {"required_allowed", "references", "rubric"},
+            "required_allowed": {
+                "properties.scope",
+                "properties.mode",
+                "properties.verdict",
+                "properties.closure.items.properties.outcome",
+            },
+            "references": {"finding"},
+            "rubric": "verdict",
+        },
+        "finding": {
+            "root_keys": {"schema", "type", "contract", "required", "properties"},
+            "contract_keys": {"required_allowed", "references"},
+            "required_allowed": {
+                "properties.classification",
+                "properties.severity",
+                "properties.disposition.properties.action",
+            },
+            "references": set(),
+            "rubric": None,
+        },
+    }
+    anchor = anchors[name]
     errors: list[str] = []
+    missing_root_keys = sorted(anchor["root_keys"] - set(schema))
+    if missing_root_keys:
+        errors.append(f"missing bootstrap keys: {', '.join(missing_root_keys)}")
     expected_identifier = f"devflow-{name}-v1"
     if schema.get("schema") != expected_identifier:
         errors.append(f"schema identifier must be {expected_identifier}")
@@ -189,10 +218,19 @@ def audit_schema_contract_errors(
     contract = schema.get("contract")
     if not isinstance(contract, dict):
         return errors + ["contract must be a mapping"]
+    missing_contract_keys = sorted(anchor["contract_keys"] - set(contract))
+    if missing_contract_keys:
+        errors.append(f"contract missing bootstrap keys: {', '.join(missing_contract_keys)}")
     required_allowed = contract.get("required_allowed")
-    if not isinstance(required_allowed, list) or not required_allowed:
-        errors.append("contract.required_allowed must be a non-empty list")
+    if (
+        not isinstance(required_allowed, list)
+        or not required_allowed
+        or any(not isinstance(value, str) or not value.strip() for value in required_allowed)
+    ):
+        errors.append("contract.required_allowed must be a non-empty list of nonblank strings")
         required_allowed = []
+    elif set(required_allowed) != anchor["required_allowed"]:
+        errors.append("contract.required_allowed does not match the required enum paths")
     for dotted_path in required_allowed:
         node = nested_schema_value(schema, str(dotted_path))
         allowed = node.get("allowed") if isinstance(node, dict) else None
@@ -203,12 +241,16 @@ def audit_schema_contract_errors(
     if not isinstance(declared_references, list) or any(not isinstance(value, str) or not value.strip() for value in declared_references):
         errors.append("contract.references must be a list of nonblank strings")
         declared_references = []
+    elif set(declared_references) != anchor["references"]:
+        errors.append("contract.references does not match the required schema references")
     discovered_references: set[str] = set()
     errors.extend(schema_node_errors(schema, name, references, discovered_references))
     if set(declared_references) != discovered_references:
         errors.append("contract.references does not match schema references")
 
     rubric_name = contract.get("rubric")
+    if rubric_name != anchor["rubric"]:
+        errors.append(f"contract.rubric must be {anchor['rubric']!r}")
     if rubric_name is not None:
         rubric = schema.get(str(rubric_name))
         allowed = nested_schema_value(schema, f"properties.{rubric_name}.allowed")
