@@ -940,6 +940,160 @@ def case_decisions_state_and_work_dependencies_are_bidirectional(root: Path) -> 
     )
 
 
+def case_work_audit_rejects_unlinked_unknown_findings_in_same_manifest(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    parent_finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="major",
+        severity_reason="The parent integration audit found a defect.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-TARGET"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[parent_finding]))
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["integration"]["status"] = "remediation"
+    dump(d / "STATE.yaml", state_doc)
+
+    target = high_done(
+        "INT-TARGET",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    known_parent = item(
+        "INT-KNOWN",
+        kind="remediation",
+        status="cancelled",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    unknown_done = item(
+        "INT-UNKNOWN-DONE",
+        kind="remediation",
+        status="done",
+        commands=["true -> passed"],
+        origin={"requirements": [], "findings": ["F-404"], "plan_items": []},
+    )
+    unknown_transferred = item(
+        "INT-UNKNOWN-TRANSFERRED",
+        kind="remediation",
+        status="transferred",
+        transfer={"to": "INT-TARGET", "requirements": []},
+        origin={"requirements": [], "findings": ["F-404"], "plan_items": []},
+    )
+    unknown_cancelled = item(
+        "INT-UNKNOWN-CANCELLED",
+        kind="remediation",
+        status="cancelled",
+        origin={"requirements": [], "findings": ["F-404"], "plan_items": []},
+    )
+    dump(
+        d / "work/integration.yaml",
+        work("integration", target, known_parent, unknown_done, unknown_transferred, unknown_cancelled),
+    )
+    projected = devflow(root, "status", "billing")
+    current_finding = audit_finding("F-W01")
+    write_audit(d / "audits/work/INT-TARGET.md", audit_metadata(d, scope="work", findings=[current_finding]))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "work", "--task", "INT-TARGET", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "work audit rejects unlinked terminal WORK findings absent from canonical audits",
+        projected.returncode == 0
+        and out.returncode == 2
+        and all(work_id in out.stderr for work_id in ["INT-UNKNOWN-DONE", "INT-UNKNOWN-TRANSFERRED", "INT-UNKNOWN-CANCELLED"])
+        and "F-404" in out.stderr
+        and "F-01" not in out.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{projected.stdout}{projected.stderr}{out.stdout}{out.stderr}",
+    )
+
+
+def case_decision_record_stops_at_next_markdown_heading(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    (d / "DECISIONS.md").write_text(
+        "# Decisions\n\n"
+        "## Open\n\n"
+        "### DEC-301 Retention policy\n"
+        "- Trigger: An audit found an unresolved policy.\n\n"
+        "### Notes\n"
+        "- Option A: Retain records for 30 days.\n"
+        "- Option B: Delete records immediately.\n\n"
+        "## Resolved\n",
+        encoding="utf-8",
+    )
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="A product policy choice is unresolved.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-301"]},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "decision options after the next Markdown heading do not belong to the prior record",
+        out.returncode == 2
+        and "DEC-301" in out.stderr
+        and "option" in out.stderr.lower()
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+
+def case_decision_placeholder_options_are_invalid(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    initial_state = (d / "STATE.yaml").read_bytes()
+    (d / "DECISIONS.md").write_text(
+        "# Decisions\n\n"
+        "## Open\n\n"
+        "### DEC-302 Retention policy\n"
+        "- Trigger: An audit found an unresolved policy.\n"
+        "- Option A: TBD\n"
+        "- Option B: TODO\n\n"
+        "## Resolved\n",
+        encoding="utf-8",
+    )
+    state_doc = yaml.safe_load(initial_state)
+    state_doc["unresolved_decisions"] = ["DEC-302"]
+    dump(d / "STATE.yaml", state_doc)
+    before_validate = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    validated = devflow(root, "validate", "billing")
+    after_validate = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "validate rejects TBD and TODO as decision options without changing files",
+        validated.returncode == 1
+        and "DEC-302" in validated.stdout
+        and "option" in validated.stdout.lower()
+        and before_validate == after_validate,
+        f"artifacts_unchanged={before_validate == after_validate}\n{validated.stdout}{validated.stderr}",
+    )
+
+    (d / "STATE.yaml").write_bytes(initial_state)
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="A product policy choice is unresolved.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-302"]},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+    before_apply = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    applied = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after_apply = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "audit apply rejects placeholder decision options without changing files",
+        applied.returncode == 2
+        and "DEC-302" in applied.stderr
+        and "option" in applied.stderr.lower()
+        and before_apply == after_apply,
+        f"artifacts_unchanged={before_apply == after_apply}\n{applied.stdout}{applied.stderr}",
+    )
+
+
 def case_audit_apply_failure_is_atomic(root: Path) -> None:
     d = audit_remediation_fixture(root)
     dump(d / "work/integration.yaml", work("integration", item("INT-I01")))
@@ -3040,6 +3194,9 @@ CASES = [
     case_unlinked_work_cannot_reference_unknown_audit_finding,
     case_decision_apply_requires_actual_nonblank_options,
     case_decisions_state_and_work_dependencies_are_bidirectional,
+    case_work_audit_rejects_unlinked_unknown_findings_in_same_manifest,
+    case_decision_record_stops_at_next_markdown_heading,
+    case_decision_placeholder_options_are_invalid,
     case_audit_apply_failure_is_atomic,
     case_audit_apply_updates_state_and_next_action,
     case_audit_closure_covers_every_prior_finding,

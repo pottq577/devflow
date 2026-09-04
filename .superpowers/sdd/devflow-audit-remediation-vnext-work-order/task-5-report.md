@@ -205,6 +205,109 @@ plugins/devflow/skills/plan/SKILL.md
 plugins/devflow/tests/test_devflow.py
 ```
 
+## 11. Fix round 2
+
+### 시작 상태
+
+- 작업일: 2026-09-04
+- branch: `main`
+- 시작 HEAD: `76bb6d98ae7dd9f5a1da25756c4156a49d0200be`
+- 시작 tracked working tree: clean
+- branch와 worktree 및 subagent를 만들지 않았다.
+
+### Assumptions
+
+- work audit의 같은 manifest에 있는 WORK origin은 현재 work audit finding과 부모 audit finding을 모두 참조할 수 있다.
+- known finding ID는 현재 audit metadata와 domain의 canonical audit artifact front matter에서 구조적으로 확인된 ID의 합집합이다.
+- canonical audit artifact가 없거나 malformed인 경우 이번 fix에서는 해당 artifact의 cross-artifact 정합성을 새로 검증하지 않는다. 이는 Task 7 범위다.
+- decision record는 다음 Markdown heading에서 끝난다. option label 뒤 값이 `TBD`, `TODO`, bracket placeholder이면 nonblank 선택지로 인정하지 않는다.
+- 자연어 의미는 추론하지 않고 heading, labeled field, ID 집합만 확인한다.
+
+### RED
+
+production 변경 전에 다음 case를 추가했다.
+
+- `case_work_audit_rejects_unlinked_unknown_findings_in_same_manifest`
+- `case_decision_record_stops_at_next_markdown_heading`
+- `case_decision_placeholder_options_are_invalid`
+
+실행 결과는 `passed=0 failed=4`, exit 1이었다. 기존 runtime은 같은 manifest의 unlinked done, transferred, cancelled WORK가 참조한 `F-404`를 work audit에서 모두 허용했다. 또한 `### Notes` 아래 option을 앞 decision record에 흡수했고 `TBD`, `TODO`를 실제 option으로 인정했다. 잘못 성공한 audit apply가 STATE와 WORK를 변경해 apply atomicity assertion도 실패했다. validate 자체는 파일을 변경하지 않았지만 placeholder decision을 정상으로 판정했다.
+
+### 구현
+
+- `known_canonical_finding_ids`가 STATE와 WORK metadata가 가리키는 canonical plan, phase, integration, work audit artifact에서 finding ID만 수집한다.
+- work audit도 target이 속한 manifest 전체를 검사하되 현재 audit과 canonical parent audit에서 알려진 finding ID를 모두 허용한다.
+- 명시적으로 linked WORK는 기존처럼 manifest 경계와 무관하게 검사한다.
+- canonical path가 domain 밖으로 나가면 읽지 않고, absent 또는 malformed artifact는 이번 helper에서 건너뛴다.
+- DECISIONS parser가 모든 Markdown heading에서 현재 record를 닫도록 수정했다.
+- bracket placeholder, `TBD`, `TODO`를 공통으로 판정하는 작은 `is_placeholder_text` helper를 option과 resolved Decision field에 재사용했다.
+- `decision-policy.md`에 heading boundary와 placeholder 규칙을 명시했다.
+
+### GREEN과 회귀
+
+- 신규 변형: `passed=4 failed=0`, exit 0
+- 기존 Task 5 전체와 신규 변형: `passed=18 failed=0`, exit 0
+- Task 4 closure 및 remediation lifecycle focused: `passed=23 failed=0`, exit 0
+- full suite 최종 실행 두 번: 각각 `passed=314 failed=2`, exit 1
+- 최종 실패는 Task 7 known RED인 `validate rejects a phase manifest absent from STATE`, `validate rejects placeholder delivery PRD and PLAN before execution` 두 건뿐이다.
+
+### Self-review
+
+- current work audit finding namespace와 parent audit finding namespace는 known ID 합집합으로만 연결한다.
+- canonical artifact의 내용 의미, severity, coverage, 교차 참조는 검사하지 않아 Task 7을 선행하지 않았다.
+- invalid work audit apply와 invalid decision apply의 domain 파일 byte identity를 확인했다.
+- invalid validate도 STATE와 DECISIONS를 포함한 domain 파일을 변경하지 않았다.
+- 새 dependency와 새 artifact를 추가하지 않았다.
+- production 변경은 Task 5 허용 파일인 runtime과 decision protocol에만 있다.
+
+### Exact commands와 exit
+
+```bash
+git branch --show-current
+git status --short
+git rev-parse HEAD
+```
+
+결과: `main`, clean, `76bb6d98ae7dd9f5a1da25756c4156a49d0200be`, 모두 exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task5_fix2_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_work_audit_rejects_unlinked_unknown_findings_in_same_manifest","case_decision_record_stops_at_next_markdown_heading","case_decision_placeholder_options_are_invalid"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+production 변경 전 결과: `passed=0 failed=4`, exit 1. 구현 후 결과: `passed=4 failed=0`, exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task5_all_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_multi_finding_work_requires_aggregation_reason","case_multi_finding_work_accepts_coherent_explicit_aggregation","case_audit_work_links_are_bidirectional","case_decision_finding_cannot_generate_ready_work","case_decision_finding_requires_decision_id","case_evidence_finding_requires_evidence_work","case_documentation_drift_requires_documentation_work","case_work_cannot_reference_unknown_audit_finding","case_unlinked_work_cannot_reference_unknown_audit_finding","case_decision_apply_requires_actual_nonblank_options","case_decisions_state_and_work_dependencies_are_bidirectional","case_finding_schema_trust_anchor_requires_work_kind","case_work_audit_rejects_unlinked_unknown_findings_in_same_manifest","case_decision_record_stops_at_next_markdown_heading","case_decision_placeholder_options_are_invalid"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+결과: `passed=18 failed=0`, exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task4_lifecycle_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_audit_closure_covers_every_prior_finding","case_audit_closure_reopens_finding","case_audit_remediation_lifecycle_reaches_closure_and_complete","case_audit_closure_uses_git_history_for_prior_findings","case_plan_audit_remediation_reaches_closure","case_lifecycle_walk","case_remediation_returns_to_work_closure_audit"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+결과: `passed=23 failed=0`, exit 0.
+
+```bash
+python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+git diff --check
+git status --short
+git branch --show-current
+git diff --name-only
+```
+
+최종 결과는 아래 commit 직전 검증에 기록한다.
+
+### Commit file list
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-5-report.md
+plugins/devflow/core/protocol/decision-policy.md
+plugins/devflow/scripts/devflow.py
+plugins/devflow/tests/test_devflow.py
+```
+
 ## 10. Fix round 1
 
 ### 시작 상태
@@ -317,3 +420,16 @@ plugins/devflow/core/protocol/decision-policy.md
 plugins/devflow/scripts/devflow.py
 plugins/devflow/tests/test_devflow.py
 ```
+
+## Fix round 2 최종 검증 기록
+
+Fix round 2의 상세 RED, 구현, GREEN, full suite, self-review, exact commands는 위 `## 11. Fix round 2`에 기록했다.
+
+- 최종 py_compile: exit 0
+- 최종 `git diff --check`: exit 0
+- full suite 실행 1: `passed=314 failed=2`, exit 1
+- full suite 실행 2: `passed=314 failed=2`, exit 1
+- 두 실패는 Task 7 known RED와 정확히 일치한다.
+- 추가된 diff의 금지 문장부호 검색: 0건, `rg` exit 1
+- 최종 branch: `main`
+- tracked 변경 파일: report, decision protocol, runtime, tests 네 파일

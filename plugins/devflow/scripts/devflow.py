@@ -1560,6 +1560,15 @@ def decision_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def is_placeholder_text(value: str) -> bool:
+    stripped = value.strip()
+    return (
+        not stripped
+        or (stripped.startswith("[") and stripped.endswith("]"))
+        or stripped.upper() in {"TBD", "TODO"}
+    )
+
+
 def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]]:
     if not path.exists():
         return set(), set(), []
@@ -1568,15 +1577,17 @@ def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]
     section = ""
     current: tuple[str, str, str, list[str]] | None = None
     for line in path.read_text(encoding="utf-8").splitlines():
-        section_match = re.match(r"^##\s+(Open|Resolved)\s*$", line, re.I)
-        if section_match:
-            section = section_match.group(1).lower()
+        markdown_heading = re.match(r"^(#{1,6})\s+(.*?)\s*$", line)
+        if markdown_heading:
             current = None
-            continue
-        heading_match = re.match(r"^###\s+(DEC-[A-Z0-9][A-Z0-9-]*)(?:\s+(.*))?$", line, re.I)
-        if heading_match and section in {"open", "resolved"}:
-            current = (section, heading_match.group(1), (heading_match.group(2) or "").strip(), [])
-            records.append(current)
+            level, heading = len(markdown_heading.group(1)), markdown_heading.group(2)
+            if level == 2:
+                section = heading.lower() if heading.lower() in {"open", "resolved"} else ""
+            elif level == 3 and section in {"open", "resolved"}:
+                decision_heading = re.match(r"^(DEC-[A-Z0-9][A-Z0-9-]*)(?:\s+(.*))?$", heading, re.I)
+                if decision_heading:
+                    current = (section, decision_heading.group(1), (decision_heading.group(2) or "").strip(), [])
+                    records.append(current)
             continue
         if current is not None:
             current[3].append(line)
@@ -1598,7 +1609,7 @@ def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]
                 option_match = re.match(r"^\s*-\s*Option(?:\s+[^:]+)?:\s*(.*?)\s*$", line, re.I)
                 if option_match:
                     value = option_match.group(1).strip()
-                    if value and not (value.startswith("[") and value.endswith("]")):
+                    if not is_placeholder_text(value):
                         options.append(value)
             if len(options) < 2:
                 errors.append(f"DECISIONS.md open decision {decision_id} requires at least two nonblank options")
@@ -1610,7 +1621,7 @@ def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]
                 decision_match = re.match(r"^\s*-\s*Decision:\s*(.*?)\s*$", line, re.I)
                 if decision_match:
                     value = decision_match.group(1).strip()
-                    if value and not (value.startswith("[") and value.endswith("]")):
+                    if not is_placeholder_text(value):
                         choices.append(value)
             if not choices:
                 errors.append(f"DECISIONS.md resolved decision {decision_id} requires a nonblank Decision field")
@@ -1947,6 +1958,45 @@ def canonical_audit_path(
     return path
 
 
+def known_canonical_finding_ids(
+    d: Path,
+    state: dict[str, Any],
+    work_index: dict[str, tuple[Path, dict[str, Any]]],
+) -> set[str]:
+    relative_paths = {
+        str(effective_plan_review(state)["audit_file"]),
+        str((state.get("integration") or {}).get("audit_file", "audits/integration.md")),
+    }
+    relative_paths.update(
+        str(phase_state.get("audit_file", f"audits/phase-{phase_key_value}.md"))
+        for phase_key_value, phase_state in normalized_phases(state).items()
+    )
+    relative_paths.update(
+        str(effective_review(item)["audit_file"])
+        for _, item in work_index.values()
+    )
+
+    finding_ids: set[str] = set()
+    domain_path = d.resolve()
+    for relative in relative_paths:
+        path = (d / relative).resolve()
+        if not path.is_relative_to(domain_path) or not path.exists():
+            continue
+        try:
+            metadata = parse_audit_metadata(path)
+        except (OSError, UnicodeError, ValueError):
+            continue
+        findings = metadata.get("findings", []) or []
+        if not isinstance(findings, list):
+            continue
+        finding_ids.update(
+            str(finding["id"])
+            for finding in findings
+            if isinstance(finding, dict) and isinstance(finding.get("id"), str) and finding["id"].strip()
+        )
+    return finding_ids
+
+
 def validate_audit_metadata(
     root: Path,
     domain: str,
@@ -2092,13 +2142,12 @@ def validate_audit_metadata(
     elif scope == "phase" and phase is not None:
         phase_state = normalized_phases(state).get(phase_key(phase), {})
         relevant_work_paths = {d / phase_state.get("work_file", f"work/phase-{phase_key(phase)}.yaml")}
-    elif scope == "work":
-        # The reviewed WORK carries origins from its parent audit. Only WORK explicitly linked by
-        # this work audit belongs to this audit's finding namespace.
-        relevant_work_paths = set()
+    elif scope == "work" and work_item is not None and work_item in work_index:
+        relevant_work_paths = {work_index[work_item][0]}
     else:
         relevant_work_paths = set(work_docs)
 
+    known_finding_ids = set(finding_ids) | known_canonical_finding_ids(d, state, work_index)
     for work_id, (work_path, work_item_doc) in work_index.items():
         if work_path not in relevant_work_paths and work_id not in linked_work_ids:
             continue
@@ -2107,7 +2156,7 @@ def validate_audit_metadata(
             str(value)
             for value in (work_origin.get("findings", []) or [])
         } if isinstance(work_origin, dict) else set()
-        unknown_findings = sorted(work_findings - set(finding_ids))
+        unknown_findings = sorted(work_findings - known_finding_ids)
         if unknown_findings:
             errors.append(
                 f"{work_id}: origin.findings references finding absent from audit: {', '.join(unknown_findings)}"
