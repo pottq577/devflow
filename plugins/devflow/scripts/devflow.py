@@ -353,7 +353,29 @@ def load_audit_schemas() -> tuple[dict[str, Any], dict[str, Any]]:
     return audit_schema, finding_schema
 
 
-def initial_audit_metadata(root: Path, path: Path) -> dict[str, Any]:
+def canonical_audit_has_mode(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    scope: str,
+    mode: str,
+    phase: str | None,
+    work_item: str | None,
+) -> bool:
+    try:
+        path = canonical_audit_path(root, domain, state, scope, phase, work_item)
+        return path.exists() and parse_audit_metadata(path).get("mode") == mode
+    except (OSError, UnicodeError, ValueError, KeyError):
+        return False
+
+
+def prior_audit_metadata(
+    root: Path,
+    path: Path,
+    audit_schema: dict[str, Any],
+    references: dict[str, dict[str, Any]],
+    scope: str,
+) -> dict[str, Any]:
     try:
         relative = path.resolve().relative_to(root.resolve())
     except ValueError as exc:
@@ -361,7 +383,9 @@ def initial_audit_metadata(root: Path, path: Path) -> dict[str, Any]:
     history = run_git(["log", "--format=%H", "--", str(relative)], root)
     if not history:
         raise ValueError(f"Closure audit has no initial Git history for canonical file: {relative}")
-    for commit_sha in history.splitlines():
+    commits = history.splitlines()
+
+    def read_committed_metadata(commit_sha: str) -> dict[str, Any]:
         proc = subprocess.run(
             ["git", "show", f"{commit_sha}:{relative}"],
             cwd=root,
@@ -370,11 +394,32 @@ def initial_audit_metadata(root: Path, path: Path) -> dict[str, Any]:
             stderr=subprocess.PIPE,
         )
         if proc.returncode != 0:
+            raise ValueError(f"Closure audit cannot read Git version {commit_sha} for canonical file: {relative}")
+        return parse_audit_text(proc.stdout, f"{commit_sha}:{relative}")
+
+    latest = read_committed_metadata(commits[0])
+    latest_errors = validate_schema_value(latest, audit_schema, f"latest prior audit for {relative}", references)
+    if latest_errors:
+        raise ValueError(f"Latest prior audit for canonical file {relative} is invalid: {'; '.join(latest_errors)}")
+    if latest.get("scope") != scope:
+        raise ValueError(f"latest prior audit scope {latest.get('scope')!r} does not match closure scope {scope!r}")
+
+    initial_found = latest.get("mode") == "initial"
+    for commit_sha in ([] if initial_found else commits[1:]):
+        try:
+            candidate = read_committed_metadata(commit_sha)
+        except ValueError:
             continue
-        metadata = parse_audit_text(proc.stdout, f"{commit_sha}:{relative}")
-        if metadata.get("mode") == "initial":
-            return metadata
-    raise ValueError(f"Closure audit has no initial Git version for canonical file: {relative}")
+        if candidate.get("mode") != "initial":
+            continue
+        if candidate.get("scope") != scope:
+            continue
+        if not validate_schema_value(candidate, audit_schema, f"initial audit for {relative}", references):
+            initial_found = True
+            break
+    if not initial_found:
+        raise ValueError(f"Closure audit has no valid initial Git version for canonical file: {relative}")
+    return latest
 
 
 def validate_schema_value(
@@ -1189,6 +1234,7 @@ def compute_next_action(
         and recorded_action.get("scope") == "integration"
         and recorded_action.get("mode") == "closure"
         and integration.get("status") == "remediation"
+        and canonical_audit_has_mode(root, domain, state, "integration", "closure", None, None)
     ):
         return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
     integration_audit_is_active = all_verified and integration.get("status") in {"audit", "closure"}
@@ -2368,20 +2414,13 @@ def audit_artifact_contract_errors(
         initial_metadata: dict[str, Any] | None = None
         if metadata.get("mode") == "closure":
             try:
-                candidate = initial_audit_metadata(root, path)
-                initial_schema_errors = validate_schema_value(
-                    candidate,
+                initial_metadata = prior_audit_metadata(
+                    root,
+                    path,
                     audit_schema,
-                    f"initial audit for {path.relative_to(d)}",
                     {"finding": finding_schema},
+                    scope,
                 )
-                errors.extend(initial_schema_errors)
-                if not initial_schema_errors:
-                    initial_metadata = candidate
-                    if candidate.get("scope") != scope:
-                        errors.append(
-                            f"initial audit scope {candidate.get('scope')!r} does not match closure scope {scope!r}"
-                        )
             except ValueError as exc:
                 errors.append(str(exc))
             closure_errors, _closure_by_id, active_ids = audit_closure_contract(metadata, initial_metadata)
@@ -2714,14 +2753,7 @@ def validate_audit_metadata(
         prior_metadata: dict[str, Any] | None = None
         try:
             audit_path = canonical_audit_path(root, domain, state, scope, phase, work_item)
-            candidate = initial_audit_metadata(root, audit_path)
-            prior_schema_errors = validate_schema_value(candidate, audit_schema, "initial audit", references)
-            if prior_schema_errors:
-                errors.extend(prior_schema_errors)
-            else:
-                prior_metadata = candidate
-                if candidate["scope"] != scope:
-                    errors.append(f"initial audit scope {candidate['scope']!r} does not match closure scope {scope!r}")
+            prior_metadata = prior_audit_metadata(root, audit_path, audit_schema, references, scope)
         except ValueError as exc:
             errors.append(str(exc))
         closure_errors, closure_by_id, active_ids = audit_closure_contract(metadata, prior_metadata)

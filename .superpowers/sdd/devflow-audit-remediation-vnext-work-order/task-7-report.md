@@ -679,3 +679,85 @@ plugins/devflow/scripts/devflow.py
 커밋 메시지: `fix(devflow): preserve integration closure priority`
 
 남은 우려 사항은 없다.
+
+## Fix round 5
+
+### 시작 상태와 assumptions
+
+- 작업일: 2026-09-04
+- branch: `main`
+- 시작 HEAD: `0e320e667f82b611ae3b0b30f262ae4682d2edea`
+- 시작 working tree에는 Task 8 review 반영 중인 `plugins/devflow/tests/test_devflow.py` dirty diff가 있었다.
+- 테스트 파일은 수정, stage, commit, revert하지 않았다.
+- recorded integration closure 우선은 canonical audit 파일이 실제 `mode: closure` metadata를 담은 apply 준비 상태일 때만 ready WORK보다 우선한다.
+- closure 검증 baseline은 같은 canonical audit 파일의 최신 committed audit snapshot이며, history 어딘가에는 schema-valid initial audit가 있어야 한다.
+- 최신 prior snapshot이 malformed이거나 closure scope와 다르면 더 오래된 initial로 fallback하지 않고 clean error로 거절한다.
+
+### RED
+
+Production 수정 전에 corrected Task 8 E2E 5개를 실행했다.
+
+```bash
+python3 -c 'import sys; sys.path.insert(0,"plugins/devflow/tests"); import test_devflow as t; names=["case_audit_remediation_full_lifecycle_without_findings","case_audit_remediation_full_lifecycle_with_remediation","case_audit_remediation_full_lifecycle_with_decision","case_audit_remediation_full_lifecycle_with_reopened_finding","case_delivery_lifecycle_regression_after_protocol_130"]; t.CASES=[getattr(t,n) for n in names]; raise SystemExit(t.main())'
+```
+
+결과는 `passed=12 failed=3`, exit 1이었다.
+
+- Decision flow는 decision resolve 후 새 `INT-I01` ready WORK를 만들었지만 stale recorded integration closure가 우선되어 status가 closure로 남고 render run이 exit 2였다.
+- Reopen flow는 first closure 적용 뒤 `INT-R02`를 완료하고 second closure를 적용할 때 최신 prior closure 대신 첫 initial만 baseline으로 찾아 `F-02` unknown과 blocker verdict error가 났다.
+
+### 구현
+
+- `compute_next_action`의 recorded integration closure 우선 조건에 canonical audit 파일의 `mode: closure` 구조 확인을 추가했다. 파일이 아직 initial metadata이면 새 ready WORK가 정상적으로 선택된다.
+- `initial_audit_metadata`를 `prior_audit_metadata`로 바꾸고 최신 committed snapshot을 closure baseline으로 반환하게 했다.
+- 최신 prior snapshot은 schema와 scope를 즉시 검증한다. 실패하면 더 오래된 initial로 fallback하지 않는다.
+- 같은 history 안에 schema-valid initial audit가 적어도 하나 있는지도 확인한다. Closure-only history는 계속 거절한다.
+- Audit apply와 canonical validate 모두 같은 `prior_audit_metadata` helper를 사용한다.
+- 새 schema field, dependency, sidecar, autonomous orchestration은 추가하지 않았다.
+
+### GREEN과 exact commands
+
+Corrected Task 8 E2E 5개 재실행 결과는 `passed=15 failed=0`, exit 0이었다.
+
+별도 edge probe는 다음 5개를 모두 통과했다.
+
+```text
+PASS stale recorded closure releases ready WORK
+PASS real closure metadata keeps recorded closure priority
+PASS closure-only history is rejected
+PASS malformed latest prior is rejected without fallback
+PASS first and second closure use latest prior snapshot
+```
+
+Task 7 focused regression 결과는 `passed=42 failed=0`, exit 0이었다.
+
+Task 4부터 6 focused regression 결과는 `passed=38 failed=0`, exit 0이었다.
+
+최종 syntax와 full suite:
+
+```bash
+python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+```
+
+결과는 py_compile exit 0, full suite 1회차와 2회차 모두 `passed=404 failed=0`, exit 0이었다.
+
+### Self-review
+
+- Unresolved decision과 blocked integration 우선순위는 기존 compute 순서 그대로 ready WORK보다 앞에 남겼다.
+- Phase closure recorded priority는 변경하지 않았다.
+- Malformed current closure metadata는 apply와 validate의 기존 metadata validation 경로에서 계속 clean error로 거절된다.
+- Closure-only history, malformed latest prior, first closure, second closure를 별도 probe로 확인했다.
+- 변경은 runtime과 이 보고서로 제한했고 Task 8 테스트 파일은 보존했다.
+
+### 변경 파일
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-7-report.md
+plugins/devflow/scripts/devflow.py
+```
+
+커밋 메시지: `fix(devflow): preserve repeated audit closure history`
+
+남은 우려 사항은 없다.
