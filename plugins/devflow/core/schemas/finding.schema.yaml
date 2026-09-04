@@ -1,17 +1,46 @@
 schema: devflow-finding-v1
+type: mapping
 required:
   - id
-  - scope
   - classification
   - severity
+  - severity_reason
   - axis
   - expected
   - actual
   - evidence
   - root_cause
   - disposition
-scope:
-  allowed: [plan, work, phase, integration]
+properties:
+  id: {type: string}
+  classification:
+    type: string
+    allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
+  severity:
+    type: string
+    allowed: [blocker, major, minor, nit]
+  severity_reason: {type: string}
+  axis: {type: string}
+  expected: {type: string}
+  actual: {type: string}
+  evidence:
+    type: list
+    min_items: 1
+    items: {type: string}
+  root_cause: {type: string}
+  disposition:
+    type: mapping
+    required: [action, work_ids, decision_ids]
+    properties:
+      action:
+        type: string
+        allowed: [remediation_work, evidence_work, documentation_work, decision, record_only, stop]
+      work_ids:
+        type: list
+        items: {type: string}
+      decision_ids:
+        type: list
+        items: {type: string}
 classification:
   allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
   disposition:
@@ -28,12 +57,3 @@ severity:
     major: Violates an approved specification or a repository-enforced rule. Fix inside this phase.
     minor: Behavior is correct but carries maintenance risk. May travel to the next phase.
     nit: Taste and readability. Closing it is optional.
-verdict:
-  allowed: [pass, conditional_pass, fail]
-  meaning:
-    pass: No blocker and no major finding.
-    conditional_pass: Only major findings, and each one names a specific fix.
-    fail: At least one blocker.
-  rule: >
-    Never write pass without evidence. Only a command that was actually executed, with its output,
-    counts as grounds for pass.

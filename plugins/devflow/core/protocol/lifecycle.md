@@ -55,6 +55,21 @@ Return to the human/Chat layer only for product-policy decisions, scope changes,
 
 `refresh_state()` owns those derived fields. Mutation commands update authoritative lifecycle state and then refresh the projection; status writes STATE only when that projection changed. Render first computes the expected action without writing, rejects any mismatch, and refreshes STATE only for an accepted request.
 
+## Audit apply
+
+`devflow audit apply` is the protocol 1.3 transition boundary for completed audits. It accepts only
+the exact computed scope, mode, phase, and WORK target, then reads the canonical audit Markdown named
+by STATE or WORK. The command validates its YAML front matter, verdict, links, lifecycle
+prerequisites, and closure coverage before any mutation. Invalid input exits with code `2` and leaves
+STATE, WORK, DECISIONS, and audit artifacts unchanged.
+
+On success, the command registers new unresolved decision IDs, updates the audited lifecycle scope,
+and refreshes derived fields through one atomic STATE write. Linked remediation remains ordinary
+WORK and becomes executable only after the outcome is applied. Existing protocol 1.2 and older
+`plan-review set`, `work review`, `phase set`, and `integration set` transitions remain readable.
+Protocol 1.3 and newer verified transitions must use `audit apply`, so the legacy commands cannot
+bypass metadata validation.
+
 ## Render guards
 
 `render` emits a packet only for the exact action computed from current STATE and WORK. `render plan`

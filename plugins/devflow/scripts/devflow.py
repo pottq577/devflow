@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -62,6 +63,86 @@ def load_schema(name: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise RuntimeError(f"Invalid DevFlow schema: {path}")
     return data
+
+
+class AuditMetadataLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate keys in audit front matter only."""
+
+
+def construct_unique_mapping(loader: AuditMetadataLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(
+                "while constructing audit front matter",
+                node.start_mark,
+                f"duplicate key: {key}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+AuditMetadataLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    construct_unique_mapping,
+)
+
+
+def parse_audit_metadata(path: Path) -> dict[str, Any]:
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        raise ValueError(f"Audit file must start with YAML front matter: {path}")
+    end = next((index for index, line in enumerate(lines[1:], start=1) if line.rstrip("\r\n") == "---"), None)
+    if end is None:
+        raise ValueError(f"Audit YAML front matter is not closed: {path}")
+    try:
+        metadata = yaml.load("".join(lines[1:end]), Loader=AuditMetadataLoader)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid audit YAML front matter: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError("Audit YAML front matter must be a mapping")
+    return metadata
+
+
+def validate_schema_value(
+    value: Any,
+    spec: dict[str, Any],
+    path: str,
+    references: dict[str, dict[str, Any]],
+) -> list[str]:
+    if "$ref" in spec:
+        target = references.get(str(spec["$ref"]))
+        return [f"{path}: unknown schema reference {spec['$ref']}"] if target is None else validate_schema_value(value, target, path, references)
+
+    errors: list[str] = []
+    expected_type = spec.get("type")
+    types = {"mapping": dict, "list": list, "string": str}
+    if expected_type in types and not isinstance(value, types[expected_type]):
+        return [f"{path} must be a {expected_type}"]
+    if isinstance(value, str) and not value.strip():
+        errors.append(f"{path} must not be blank")
+    if "const" in spec and value != spec["const"]:
+        errors.append(f"{path} must be {spec['const']!r}")
+    if "allowed" in spec and value not in spec["allowed"]:
+        errors.append(f"{path} must be one of: {', '.join(str(item) for item in spec['allowed'])}")
+
+    if isinstance(value, dict):
+        for field in spec.get("required", []) or []:
+            if field not in value:
+                errors.append(f"{path} missing required field: {field}")
+        for field, child in (spec.get("properties", {}) or {}).items():
+            if field in value:
+                errors.extend(validate_schema_value(value[field], child, f"{path}.{field}", references))
+    elif isinstance(value, list):
+        if len(value) < int(spec.get("min_items", 0)):
+            errors.append(f"{path} must contain at least {spec['min_items']} item(s)")
+        item_spec = spec.get("items")
+        if isinstance(item_spec, dict):
+            for index, item in enumerate(value):
+                errors.extend(validate_schema_value(item, item_spec, f"{path}[{index}]", references))
+    return errors
 
 
 STATE_SCHEMA = load_schema("state")
@@ -185,6 +266,11 @@ def effective_workflow_type(state: dict[str, Any]) -> str:
     return str(state["workflow_type"]) if "workflow_type" in state else "delivery"
 
 
+def requires_audit_apply(state: dict[str, Any]) -> bool:
+    match = re.fullmatch(r"(\d+)\.(\d+)\.\d+", str(state.get("protocol_version") or ""))
+    return bool(match and tuple(map(int, match.groups())) >= (1, 3))
+
+
 def raw_phase_key(state: dict[str, Any], key: str) -> str | None:
     for raw in (state.get("phases", {}) or {}):
         if phase_key(raw) == key:
@@ -255,19 +341,20 @@ def work_files(d: Path) -> list[Path]:
     return sorted(p for p in work.glob("*.yaml") if p.is_file()) if work.exists() else []
 
 
-def load_work_index(d: Path):
-    docs: dict[Path, dict[str, Any]] = {}
+def index_work_docs(docs: dict[Path, dict[str, Any]]):
     index: dict[str, tuple[Path, dict[str, Any]]] = {}
     duplicates: list[str] = []
-    for path in work_files(d):
-        doc = load_yaml(path, {}) or {}
-        docs[path] = doc
+    for path, doc in docs.items():
         for item in doc.get("items", []) or []:
             item_id = str(item.get("id", ""))
             if item_id in index:
                 duplicates.append(item_id)
             index[item_id] = (path, item)
     return docs, index, duplicates
+
+
+def load_work_index(d: Path):
+    return index_work_docs({path: load_yaml(path, {}) or {} for path in work_files(d)})
 
 
 def item_phase(path: Path, doc: dict[str, Any]) -> str:
@@ -443,7 +530,7 @@ def phase_verify_errors(root: Path, domain: str, state: dict[str, Any], phase_ke
 def integration_verify_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path, dict[str, Any]]) -> list[str]:
     phases = normalized_phases(state)
     errors = []
-    if not phases:
+    if not phases and effective_workflow_type(state) != "audit_remediation":
         errors.append("project has no phases to verify")
     unverified = sorted(key for key, phase in phases.items() if phase.get("status") != "verified")
     if unverified:
@@ -482,8 +569,8 @@ def choose_next(root: Path, domain: str, statuses: set[str] | None = None):
     docs, index, _ = load_work_index(d)
     phases = normalized_phases(state)
     unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
-    all_phases_verified = bool(phases) and all(
-        entry.get("status") == "verified" for entry in phases.values()
+    all_phases_verified = effective_workflow_type(state) == "audit_remediation" or (
+        bool(phases) and all(entry.get("status") == "verified" for entry in phases.values())
     )
 
     candidates = []
@@ -560,6 +647,31 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
     if plan_review.get("required") and plan_review.get("status") != "verified":
         return {"role": "auditor", "command": "audit", "scope": "plan", "mode": "initial", "phase": None, "work_item": None}
 
+    phases = normalized_phases(state)
+    pending_phase_audits = [key for key, phase in sorted(phases.items()) if phase.get("status") == "audit"]
+    if pending_phase_audits:
+        return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "initial", "phase": pending_phase_audits[0], "work_item": None}
+    recorded_action = state.get("next_action") or {}
+    recorded_phase = phase_key(recorded_action.get("phase")) if recorded_action.get("phase") is not None else None
+    if (
+        recorded_action.get("command") == "audit"
+        and recorded_action.get("scope") == "phase"
+        and recorded_action.get("mode") == "closure"
+        and recorded_phase in phases
+        and phases[recorded_phase].get("status") == "remediation"
+    ):
+        return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "closure", "phase": recorded_phase, "work_item": None}
+    integration = state.get("integration", {}) or {}
+    all_verified = bool(phases) and all(phase.get("status") == "verified" for phase in phases.values())
+    integration_audit_is_active = effective_workflow_type(state) == "audit_remediation" or (
+        all_verified and integration.get("status") in {"audit", "closure"}
+    )
+    if integration_audit_is_active:
+        if integration.get("status") in {"pending", "audit"}:
+            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
+        if integration.get("status") == "closure":
+            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+
     nxt = choose_next(root, domain, {"in_progress"})
     if nxt:
         phase, _, item = nxt
@@ -575,7 +687,6 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
         return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), "item_kind": item.get("kind")}
 
     docs, _, _ = load_work_index(d)
-    phases = normalized_phases(state)
     for key in sorted(phases):
         ps = phases[key]
         if ps.get("status") == "verified":
@@ -590,7 +701,6 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
             return {"role": "auditor", "command": "audit", "scope": "phase", "mode": mode, "phase": key, "work_item": None}
 
     all_verified = bool(phases) and all(p.get("status") == "verified" for p in phases.values())
-    integration = state.get("integration", {}) or {}
     istatus = integration.get("status", "pending")
     if all_verified:
         # An unresolved project decision must clear before any integration audit/closure.
@@ -669,9 +779,9 @@ def active_phase_for_action(root: Path, domain: str, state: dict[str, Any], acti
     return active[0] if len(active) == 1 else None
 
 
-def refresh_state(root: Path, domain: str) -> dict[str, Any]:
+def refresh_state(root: Path, domain: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
     path = state_path(root, domain)
-    state = load_yaml(path, {}) or {}
+    state = state if state is not None else load_yaml(path, {}) or {}
     state["target_sha"] = current_sha(root)
     state["next_action"] = compute_next_action(root, domain, state)
     state["project_status"] = project_status_for_action(state["next_action"])
@@ -837,6 +947,9 @@ def work_update(args: argparse.Namespace) -> int:
 
 def work_review(args: argparse.Namespace) -> int:
     root = repo_root()
+    state = load_yaml(state_path(root, args.domain), {}) or {}
+    if args.review_status == "verified" and requires_audit_apply(state):
+        return reject_transition(args.item, "be verified", ["protocol 1.3+ requires devflow audit apply"])
     try:
         path, doc, item = find_item(root, args.domain, args.item)
     except KeyError as e:
@@ -930,6 +1043,8 @@ def set_phase(args: argparse.Namespace) -> int:
         return reject_transition(f"phase {key}", "be created", creation_errors)
     if existing and existing.get("status") == "verified" and args.status != "verified":
         return reject_transition(f"phase {key}", "change", ["a verified phase cannot be reopened"])
+    if args.status == "verified" and requires_audit_apply(state):
+        return reject_transition(f"phase {key}", "be verified", ["protocol 1.3+ requires devflow audit apply"])
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
         errors = phase_verify_errors(root, args.domain, state, key, docs)
@@ -996,6 +1111,8 @@ def set_plan_review(args: argparse.Namespace) -> int:
     audit_file = pr["audit_file"]
     if args.status == "skipped" and required:
         return reject_transition("plan review", "be skipped", ["review is required"])
+    if args.status == "verified" and requires_audit_apply(state):
+        return reject_transition("plan review", "be verified", ["protocol 1.3+ requires devflow audit apply"])
     if args.status == "verified":
         d = domain_dir(root, args.domain)
         errors = []
@@ -1021,6 +1138,8 @@ def set_integration(args: argparse.Namespace) -> int:
     integ = dict(state.get("integration", {}) or {})
     if integ.get("status") == "verified" and args.status != "verified":
         return reject_transition("integration", "change", ["a verified integration cannot be reopened"])
+    if args.status == "verified" and requires_audit_apply(state):
+        return reject_transition("integration", "be verified", ["protocol 1.3+ requires devflow audit apply"])
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
         errors = integration_verify_errors(root, args.domain, state, docs)
@@ -1191,15 +1310,24 @@ def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: se
                 errors.append(f"{item_id}: transferred requirements not registered on {target_id}: {', '.join(sorted(missing))}")
 
 
-def collect_validation(root: Path, domain: str) -> tuple[list[str], list[str]]:
+def collect_validation(
+    root: Path,
+    domain: str,
+    *,
+    state_override: dict[str, Any] | None = None,
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+) -> tuple[list[str], list[str]]:
     """Structural findings for a domain, so state transitions can gate on them too."""
     d = domain_dir(root, domain)
     errors: list[str] = []
     warnings: list[str] = []
-    state = load_yaml(d / "STATE.yaml", {}) or {}
+    state = state_override if state_override is not None else load_yaml(d / "STATE.yaml", {}) or {}
     validate_state(state, d, errors, warnings)
 
     docs, index, duplicates = load_work_index(d)
+    if work_overrides:
+        docs.update(work_overrides)
+        docs, index, duplicates = index_work_docs(docs)
     for dup in duplicates:
         errors.append(f"Duplicate WORK id: {dup}")
     all_ids = set(index)
@@ -1275,6 +1403,259 @@ def validate(args: argparse.Namespace) -> int:
         print(f"ERROR: {error}")
     print(f"errors={len(errors)} warnings={len(warnings)} work_items={len(index)}")
     return 1 if errors else 0
+
+
+def canonical_audit_path(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    scope: str,
+    phase: str | None,
+    work_item: str | None,
+) -> Path:
+    d = domain_dir(root, domain)
+    if scope == "plan":
+        relative = effective_plan_review(state)["audit_file"]
+    elif scope == "work":
+        if work_item is None:
+            raise ValueError("Work audit apply requires --task <WORK-ID>")
+        _, _, item = find_item(root, domain, work_item)
+        relative = effective_review(item)["audit_file"]
+    elif scope == "phase":
+        if phase is None:
+            raise ValueError("Phase audit apply requires --phase <PHASE>")
+        key = phase_key(phase)
+        phase_state = normalized_phases(state).get(key)
+        if phase_state is None:
+            raise ValueError(f"Phase audit phase does not exist: {key}")
+        relative = phase_state.get("audit_file", f"audits/phase-{key}.md")
+    else:
+        relative = (state.get("integration") or {}).get("audit_file", "audits/integration.md")
+    path = (d / str(relative)).resolve()
+    try:
+        path.relative_to(d.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Canonical audit file escapes the domain directory: {relative}") from exc
+    return path
+
+
+def validate_audit_metadata(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    scope: str,
+    mode: str,
+    phase: str | None,
+    work_item: str | None,
+) -> list[str]:
+    audit_schema = load_schema("audit")
+    errors = validate_schema_value(metadata, audit_schema, "audit", {"finding": load_schema("finding")})
+    if errors:
+        return errors
+
+    if metadata["scope"] != scope:
+        errors.append(f"audit.scope must match requested scope {scope!r}")
+    if metadata["mode"] != mode:
+        errors.append(f"audit.mode must match requested mode {mode!r}")
+    if state.get("baseline_sha") and metadata["baseline_sha"] != state.get("baseline_sha"):
+        errors.append("audit.baseline_sha does not match STATE baseline_sha")
+    head = current_sha(root)
+    if head and metadata["target_sha"] != head:
+        errors.append("audit.target_sha does not match current HEAD")
+
+    findings = metadata["findings"]
+    finding_ids = [str(finding["id"]) for finding in findings]
+    for finding_id in sorted({finding_id for finding_id in finding_ids if finding_ids.count(finding_id) > 1}):
+        errors.append(f"duplicate audit finding id: {finding_id}")
+
+    closure = metadata.get("closure", []) or []
+    closure_by_id = {str(entry["finding_id"]): entry for entry in closure}
+    if len(closure_by_id) != len(closure):
+        errors.append("closure contains duplicate finding_id entries")
+    reopened_ids = {
+        str(reopened_id)
+        for entry in closure
+        for reopened_id in entry.get("reopened_as", []) or []
+    }
+    active_ids = set(finding_ids)
+    if mode == "closure":
+        prior_ids = set(finding_ids) - reopened_ids
+        missing = sorted(prior_ids - set(closure_by_id))
+        unknown = sorted(set(closure_by_id) - set(finding_ids))
+        if missing:
+            errors.append(f"closure does not cover prior findings: {', '.join(missing)}")
+        if unknown:
+            errors.append(f"closure references unknown findings: {', '.join(unknown)}")
+        active_ids = set(finding_ids) - {
+            finding_id
+            for finding_id, entry in closure_by_id.items()
+            if entry.get("outcome") in {"resolved", "accepted_risk", "reopened"}
+        }
+        active_ids.update(reopened_ids)
+    elif closure:
+        errors.append("initial audit closure must be empty")
+
+    severities = [str(finding["severity"]) for finding in findings if str(finding["id"]) in active_ids]
+    verdict = str(metadata["verdict"])
+    rubric = (audit_schema.get("verdict") or {}).get(verdict, {})
+    forbidden = sorted(set(severities) & set(rubric.get("forbidden_severities", []) or []))
+    required = set(rubric.get("required_severities", []) or [])
+    if forbidden:
+        errors.append(f"verdict {verdict} forbids finding severity: {', '.join(forbidden)}")
+    if required and not required.intersection(severities):
+        errors.append(f"verdict {verdict} requires finding severity: {', '.join(sorted(required))}")
+
+    d = domain_dir(root, domain)
+    _, work_index, _ = load_work_index(d)
+    decisions_text = (d / "DECISIONS.md").read_text(encoding="utf-8") if (d / "DECISIONS.md").exists() else ""
+    resolved_text = decisions_text.partition("## Resolved")[2]
+    finding_by_id = {str(finding["id"]): finding for finding in findings}
+    for finding in findings:
+        disposition = finding["disposition"]
+        for linked_work in disposition["work_ids"]:
+            if str(linked_work) not in work_index:
+                errors.append(f"{finding['id']}: linked WORK does not exist: {linked_work}")
+        for decision_id in disposition["decision_ids"]:
+            if not exact_id_pattern(str(decision_id)).search(decisions_text):
+                errors.append(f"{finding['id']}: linked decision does not exist in DECISIONS.md: {decision_id}")
+
+    if mode == "closure":
+        for finding_id, entry in closure_by_id.items():
+            finding = finding_by_id.get(finding_id)
+            if finding is None:
+                continue
+            outcome = entry["outcome"]
+            reopened_as = [str(value) for value in entry["reopened_as"]]
+            if outcome == "reopened":
+                if not reopened_as:
+                    errors.append(f"closure {finding_id}: reopened requires reopened_as")
+                for reopened_id in reopened_as:
+                    if reopened_id not in finding_by_id:
+                        errors.append(f"closure {finding_id}: reopened finding does not exist: {reopened_id}")
+            elif reopened_as:
+                errors.append(f"closure {finding_id}: reopened_as is only valid for outcome reopened")
+            if outcome == "accepted_risk":
+                decision_ids = [str(value) for value in finding["disposition"]["decision_ids"]]
+                resolved = [value for value in decision_ids if exact_id_pattern(value).search(resolved_text) and value not in (state.get("unresolved_decisions") or [])]
+                if not resolved:
+                    errors.append(f"closure {finding_id}: accepted_risk requires a resolved decision")
+            for linked_work in finding["disposition"]["work_ids"]:
+                target = work_index.get(str(linked_work))
+                if target and target[1].get("status") not in TERMINAL_STATUSES:
+                    errors.append(f"closure {finding_id}: remediation WORK {linked_work} is not terminal")
+                elif target and target[1].get("status") == "done" and not review_satisfied(target[1]):
+                    errors.append(f"closure {finding_id}: remediation WORK {linked_work} still requires review")
+    return errors
+
+
+def audit_apply(args: argparse.Namespace) -> int:
+    root = repo_root()
+    path = state_path(root, args.domain)
+    state = load_yaml(path, {}) or {}
+    expected = compute_next_action(root, args.domain, state)
+    requested, request_error = render_request(root, args, expected)
+    expected_request = {key: expected.get(key) for key in requested}
+    if request_error or requested != expected_request:
+        return reject_render(args.domain, requested, expected_request, request_error)
+
+    audit_path = canonical_audit_path(root, args.domain, state, args.scope, args.phase, args.task)
+    if not audit_path.exists():
+        return reject_transition("audit", "be applied", [f"canonical audit file not found: {audit_path}"])
+    try:
+        metadata = parse_audit_metadata(audit_path)
+    except ValueError as exc:
+        return reject_transition("audit", "be applied", [str(exc)])
+    errors = validate_audit_metadata(
+        root,
+        args.domain,
+        state,
+        metadata,
+        scope=args.scope,
+        mode=args.mode,
+        phase=args.phase,
+        work_item=args.task,
+    )
+    if errors:
+        return reject_transition("audit", "be applied", errors)
+
+    prospective = copy.deepcopy(state)
+    findings = metadata["findings"]
+    closure_ids = {str(entry["finding_id"]) for entry in (metadata.get("closure", []) or [])}
+    follow_up = findings if args.mode == "initial" else [finding for finding in findings if str(finding["id"]) not in closure_ids]
+    generated_work = list(dict.fromkeys(str(work_id) for finding in follow_up for work_id in finding["disposition"]["work_ids"]))
+    new_decisions = list(
+        dict.fromkeys(
+            str(decision_id)
+            for finding in follow_up
+            if finding["disposition"]["action"] == "decision"
+            for decision_id in finding["disposition"]["decision_ids"]
+        )
+    )
+    unresolved = list(dict.fromkeys([str(value) for value in prospective.get("unresolved_decisions", []) or []] + new_decisions))
+    prospective["unresolved_decisions"] = unresolved
+    closes_scope = metadata["verdict"] == "pass" and not generated_work and not new_decisions
+    work_overrides: dict[Path, dict[str, Any]] = {}
+
+    if args.scope == "plan":
+        review = effective_plan_review(prospective)
+        review["status"] = "verified" if closes_scope else "pending"
+        prospective["plan_review"] = review
+    elif args.scope == "work":
+        work_path, work_doc, _ = find_item(root, args.domain, str(args.task))
+        next_doc = copy.deepcopy(work_doc)
+        next_item_doc = next(item for item in next_doc.get("items", []) if str(item.get("id")) == str(args.task))
+        review = effective_review(next_item_doc)
+        if closes_scope:
+            review["status"] = "verified"
+        elif generated_work:
+            review["status"] = "remediation"
+            review["remediation_work_ids"] = generated_work
+        else:
+            review["status"] = "blocked"
+        next_item_doc["review"] = review
+        work_overrides[work_path] = next_doc
+    elif args.scope == "phase":
+        key = phase_key(args.phase)
+        raw = raw_phase_key(prospective, key)
+        prospective["phases"][raw if raw is not None else key]["status"] = "verified" if closes_scope else ("remediation" if generated_work else "blocked")
+    else:
+        integration = dict(prospective.get("integration") or {})
+        integration["status"] = "verified" if closes_scope else "remediation"
+        prospective["integration"] = integration
+    if args.mode == "closure" and not closes_scope:
+        prospective["next_action"] = {}
+
+    if closes_scope and args.scope == "plan" and not (domain_dir(root, args.domain) / "PLAN.md").exists():
+        errors.append(f"PLAN.md not found: {domain_dir(root, args.domain) / 'PLAN.md'}")
+    if closes_scope and args.scope == "phase":
+        docs, _, _ = load_work_index(domain_dir(root, args.domain))
+        errors.extend(phase_verify_errors(root, args.domain, prospective, phase_key(args.phase), docs))
+    if closes_scope and args.scope == "integration":
+        docs, _, _ = load_work_index(domain_dir(root, args.domain))
+        errors.extend(integration_verify_errors(root, args.domain, prospective, docs))
+    validation_errors, _ = collect_validation(
+        root,
+        args.domain,
+        state_override=prospective,
+        work_overrides=work_overrides,
+    )
+    errors.extend(f"validation: {error}" for error in validation_errors)
+    if errors:
+        return reject_transition("audit", "be applied", errors)
+
+    for work_path, work_doc in work_overrides.items():
+        dump_yaml(work_path, work_doc)
+    applied = refresh_state(root, args.domain, prospective)
+    next_action = applied.get("next_action") or {}
+    print(f"audit applied: {args.scope} {args.mode}")
+    print(f"verdict: {metadata['verdict']}")
+    print(f"findings: {len(findings)}")
+    print(f"generated WORK: {', '.join(generated_work) or '<none>'}")
+    print(f"unresolved_decisions: {', '.join(unresolved) or '<none>'}")
+    print(f"next_action: {next_action.get('command')}" + (f" {next_action.get('work_item')}" if next_action.get("work_item") else ""))
+    return 0
 
 
 def print_section(title: str, body: str) -> None:
@@ -1609,6 +1990,16 @@ def build_parser() -> argparse.ArgumentParser:
     dsub = sp.add_subparsers(dest="decision_command", required=True)
     for name in ["add", "resolve"]:
         s = dsub.add_parser(name); s.add_argument("domain"); s.add_argument("decision"); s.set_defaults(func=decision_update)
+
+    sp = sub.add_parser("audit")
+    asub = sp.add_subparsers(dest="audit_command", required=True)
+    s = asub.add_parser("apply")
+    s.add_argument("domain")
+    s.add_argument("--scope", choices=["plan", "work", "phase", "integration"], required=True)
+    s.add_argument("--task")
+    s.add_argument("--phase")
+    s.add_argument("--mode", choices=["initial", "closure"], default="initial")
+    s.set_defaults(func=audit_apply, render_command="audit")
 
     sp = sub.add_parser("render")
     rsub = sp.add_subparsers(dest="render_command", required=True)

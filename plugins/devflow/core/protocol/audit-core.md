@@ -179,9 +179,32 @@ Everything above, plus:
 - `SPEC_DRIFT`: authoritative sources conflict; stop affected execution until resolved.
 
 Every finding must state expected behavior, actual behavior, evidence, root cause or uncertainty,
-classification, severity, and disposition.
+classification, severity, a nonblank severity reason, and disposition.
 
-## 8. Severity and verdict
+## 8. Machine-readable audit outcome
+
+The canonical audit Markdown starts with YAML front matter conforming to
+`core/schemas/audit.schema.yaml`. It contains the audit scope and mode, verdict, immutable SHAs,
+executed verification, structured findings, and closure outcomes. The Markdown body remains the
+human-readable explanation. Do not create a YAML sidecar or another lifecycle artifact.
+
+After writing the audit, any linked WORK, and any decision records, apply the outcome with the exact
+current lifecycle target:
+
+```text
+devflow audit apply <domain> --scope plan --mode initial
+devflow audit apply <domain> --scope work --mode initial|closure --task <WORK-ID>
+devflow audit apply <domain> --scope phase --mode initial|closure --phase <PHASE>
+devflow audit apply <domain> --scope integration --mode initial|closure
+```
+
+The runtime reads only the canonical audit file recorded by STATE or WORK. It rejects malformed or
+duplicate-key front matter, schema and verdict mismatches, missing links, incomplete closure
+coverage, unfinished remediation, and any request that differs from the computed next action. It
+validates the prospective domain before writing lifecycle state. The auditor never edits STATE to
+apply an outcome.
+
+## 9. Severity and verdict
 
 | Severity | Meaning |
 | --- | --- |
@@ -199,7 +222,7 @@ classification, severity, and disposition.
 **Never write `pass` without evidence.** Only a command that was actually executed, with its
 output, is grounds for a pass.
 
-## 9. Review timing
+## 10. Review timing
 
 A closure audit after every single item costs more than it returns, and batching a whole phase lets
 defects stack on a wrong premise. Let risk decide. See `risk-policy.md`.

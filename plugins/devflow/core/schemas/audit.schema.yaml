@@ -1,0 +1,59 @@
+schema: devflow-audit-v1
+type: mapping
+required: [schema, scope, mode, verdict, baseline_sha, target_sha, verification, findings]
+properties:
+  schema:
+    type: string
+    const: devflow-audit-v1
+  scope:
+    type: string
+    allowed: [plan, work, phase, integration]
+  mode:
+    type: string
+    allowed: [initial, closure]
+  verdict:
+    type: string
+    allowed: [pass, conditional_pass, fail]
+  baseline_sha:
+    type: string
+  target_sha:
+    type: string
+  diff_range:
+    type: string
+  verification:
+    type: list
+    min_items: 1
+    items:
+      type: mapping
+      required: [command, result]
+      properties:
+        command: {type: string}
+        result: {type: string}
+  findings:
+    type: list
+    items: {$ref: finding}
+  closure:
+    type: list
+    items:
+      type: mapping
+      required: [finding_id, outcome, evidence, reopened_as]
+      properties:
+        finding_id: {type: string}
+        outcome:
+          type: string
+          allowed: [resolved, still_open, reopened, accepted_risk]
+        evidence:
+          type: list
+          min_items: 1
+          items: {type: string}
+        reopened_as:
+          type: list
+          items: {type: string}
+verdict:
+  pass:
+    forbidden_severities: [blocker, major]
+  conditional_pass:
+    required_severities: [major]
+    forbidden_severities: [blocker]
+  fail:
+    required_severities: [blocker]

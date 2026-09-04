@@ -47,8 +47,9 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
    transferred requirements in the receiving manifest, end-to-end state and data flows, transaction
    boundaries, migration ordering, and regression/evidence gaps.
 7. Write or update the single audit artifact under `audits/`. Work audits use
-   `audits/work/<WORK-ID>.md`; do not create separate review-plan or
-   handoff documents.
+   `audits/work/<WORK-ID>.md`; do not create separate review-plan or handoff documents. Start the
+   Markdown with YAML front matter conforming to `core/schemas/audit.schema.yaml`, and retain the
+   human-readable audit below it.
 8. Classify findings as `CONFIRMED`, `DECISION_REQUIRED`, `EVIDENCE_REQUIRED`, `REJECTED`,
    `DOCUMENTATION_DRIFT`, or `SPEC_DRIFT`. Assign a severity and reach a verdict of `pass`,
    `conditional_pass`, or `fail`.
@@ -57,11 +58,13 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 10. Create remediation WORK for confirmed and documentation findings, and evidence WORK for
     evidence-required findings. Give each generated item `context`, `premise_checks`, and `pitfalls`
     the same as any planned item. Build dependencies before severity ordering.
-11. Add unresolved decision IDs to STATE and document them in `DECISIONS.md`. Never guess the policy.
+11. Document unresolved decisions in `DECISIONS.md`. Never guess the policy. `audit apply` registers
+    their IDs in STATE after validating the complete outcome.
 12. Add durable traps you uncovered to `PITFALLS.md`.
-13. For work scope, record `devflow work review <domain> <WORK-ID> verified`,
-    `remediation --remediation-work <ID>`, or `blocked` after writing the audit artifact. Update
-    phase/integration state when applicable, run validation, then run status.
+13. After writing the audit artifact and linked WORK or decisions, run
+    `devflow audit apply <domain> --scope <scope> --mode <mode>` with `--task <WORK-ID>` or
+    `--phase <PHASE>` when required. Do not edit STATE or use a legacy verified transition to apply
+    the audit. Then run validation and status.
 
 ## Peer audit lenses
 

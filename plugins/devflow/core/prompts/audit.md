@@ -23,15 +23,20 @@ next action. Re-run `devflow status` instead of auditing another lifecycle posit
    commit, current HEAD, and its `audits/work/<WORK-ID>.md` artifact.
 6. Classify every finding using the DevFlow finding taxonomy. Assign severity, and reach a verdict
    of `pass`, `conditional_pass`, or `fail`.
-7. Never write `pass` without evidence. Only a command you actually executed, with its output, is
+7. Write the audit result as YAML front matter at the start of the single canonical audit Markdown.
+   Follow `audit.schema.yaml`, retain the human-readable explanation below it, and keep initial
+   findings in the file when recording closure outcomes.
+8. Never write `pass` without evidence. Only a command you actually executed, with its output, is
    grounds for a pass.
-8. Create remediation WORK directly for `CONFIRMED` and `DOCUMENTATION_DRIFT` findings, carrying
+9. Create remediation WORK directly for `CONFIRMED` and `DOCUMENTATION_DRIFT` findings, carrying
    `context`, `premise_checks`, and `pitfalls` the same as any planned item.
-9. Create evidence WORK for `EVIDENCE_REQUIRED` findings. No product-code changes.
-10. Record and block `DECISION_REQUIRED` and `SPEC_DRIFT` items instead of guessing.
-11. Respect dependency ordering when creating remediation. Dependency outranks severity.
+10. Create evidence WORK for `EVIDENCE_REQUIRED` findings. No product-code changes.
+11. Record decisions in `DECISIONS.md`, and block `DECISION_REQUIRED` and `SPEC_DRIFT` items instead
+    of guessing. Respect dependency ordering when creating remediation.
 12. Add durable traps you uncovered to `PITFALLS.md`.
-13. Update STATE and run validation.
+13. After the audit, WORK, and decision records are complete, run `devflow audit apply` with the exact
+    rendered scope, mode, phase, and WORK target. The runtime validates and updates STATE. Do not edit
+    STATE directly.
 
 Closure mode verifies previous findings and regressions; it does not repeat speculative planning.
 Reopen a finding when evidence disproves its closure.

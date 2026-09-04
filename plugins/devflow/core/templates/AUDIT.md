@@ -1,4 +1,22 @@
+---
+schema: devflow-audit-v1
+scope: integration
+mode: initial
+verdict: pass
+baseline_sha: replace-with-full-sha
+target_sha: replace-with-full-sha
+diff_range: current-head
+verification:
+  - command: replace-with-executed-command
+    result: replace-with-observed-result
+findings: []
+closure: []
+---
+
 # DevFlow Audit
+
+The YAML front matter is the machine-readable audit outcome. Keep the explanation below for human
+review, but make the front matter authoritative and run `devflow audit apply` after writing it.
 
 ## Metadata
 
@@ -48,6 +66,7 @@ Three sentences at most. What matched the plan, and what did not.
 - Root cause / uncertainty:
 - Disposition:
 - Generated work item:
+- Severity reason:
 
 ## Axis results
 
