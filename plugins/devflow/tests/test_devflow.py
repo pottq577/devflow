@@ -1094,6 +1094,113 @@ def case_decision_placeholder_options_are_invalid(root: Path) -> None:
     )
 
 
+def case_malformed_canonical_audit_cannot_authenticate_finding(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    valid_parent = audit_finding("F-01")
+    write_audit(d / "audits/plan.md", audit_metadata(d, scope="plan", findings=[valid_parent]))
+    malformed = {"findings": [{"id": "F-404"}]}
+    write_audit(d / "audits/integration.md", malformed)
+
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["integration"]["status"] = "remediation"
+    dump(d / "STATE.yaml", state_doc)
+    target = high_done(
+        "INT-TARGET",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    known_parent = item(
+        "INT-KNOWN",
+        kind="remediation",
+        status="cancelled",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    malformed_only = item(
+        "INT-MALFORMED-ONLY",
+        kind="remediation",
+        status="cancelled",
+        origin={"requirements": [], "findings": ["F-404"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", target, known_parent, malformed_only))
+    projected = devflow(root, "status", "billing")
+    write_audit(d / "audits/work/INT-TARGET.md", audit_metadata(d, scope="work", findings=[audit_finding("F-W01")]))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "work", "--task", "INT-TARGET", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "schema-invalid canonical audit findings cannot authenticate WORK origins",
+        projected.returncode == 0
+        and out.returncode == 2
+        and "INT-MALFORMED-ONLY" in out.stderr
+        and "F-404" in out.stderr
+        and "F-01" not in out.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{projected.stdout}{projected.stderr}{out.stdout}{out.stderr}",
+    )
+
+
+def case_decision_commonmark_indented_heading_boundary(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    initial_state = (d / "STATE.yaml").read_bytes()
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="A product policy choice is unresolved.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-303"]},
+    )
+    results = []
+    for spaces in [1, 2, 3]:
+        (d / "STATE.yaml").write_bytes(initial_state)
+        (d / "DECISIONS.md").write_text(
+            "# Decisions\n\n"
+            "## Open\n\n"
+            "### DEC-303 Retention policy\n"
+            "- Trigger: An audit found an unresolved policy.\n\n"
+            f"{' ' * spaces}### Notes\n"
+            "- Option A: Retain records for 30 days.\n"
+            "- Option B: Delete records immediately.\n\n"
+            "## Resolved\n",
+            encoding="utf-8",
+        )
+        write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+        before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+        after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        results.append((spaces, out, before == after))
+
+    (d / "STATE.yaml").write_bytes(initial_state)
+    (d / "DECISIONS.md").write_text(
+        "# Decisions\n\n"
+        "## Open\n\n"
+        "### DEC-303 Retention policy\n"
+        "- Trigger: An audit found an unresolved policy.\n\n"
+        "    ### Notes\n"
+        "- Option A: Retain records for 30 days.\n"
+        "- Option B: Delete records immediately.\n\n"
+        "## Resolved\n",
+        encoding="utf-8",
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+    code_block = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "CommonMark ATX headings with up to three leading spaces end decision records",
+        all(
+            out.returncode == 2
+            and "DEC-303" in out.stderr
+            and "option" in out.stderr.lower()
+            and unchanged
+            for _, out, unchanged in results
+        )
+        and code_block.returncode == 0,
+        "\n".join(
+            f"spaces={spaces} artifacts_unchanged={unchanged}\n{out.stdout}{out.stderr}"
+            for spaces, out, unchanged in results
+        )
+        + f"\nspaces=4\n{code_block.stdout}{code_block.stderr}",
+    )
+
+
 def case_audit_apply_failure_is_atomic(root: Path) -> None:
     d = audit_remediation_fixture(root)
     dump(d / "work/integration.yaml", work("integration", item("INT-I01")))
@@ -3197,6 +3304,8 @@ CASES = [
     case_work_audit_rejects_unlinked_unknown_findings_in_same_manifest,
     case_decision_record_stops_at_next_markdown_heading,
     case_decision_placeholder_options_are_invalid,
+    case_malformed_canonical_audit_cannot_authenticate_finding,
+    case_decision_commonmark_indented_heading_boundary,
     case_audit_apply_failure_is_atomic,
     case_audit_apply_updates_state_and_next_action,
     case_audit_closure_covers_every_prior_finding,

@@ -23,10 +23,11 @@ finding. After resolution, create WORK for only the selected path and carry the 
 `decision_dependencies`; unresolved dependencies cannot be `ready`.
 
 An open decision record is a `### DEC-*` heading under `## Open` with at least two nonblank
-`- Option ...:` fields. The record ends at the next Markdown heading. Bracketed template values,
-`TBD`, and `TODO` do not count as values. `validate` requires the open decision IDs and
-`STATE.yaml.unresolved_decisions` to match in both directions, and WORK start uses the open records
-as blockers even when STATE is inconsistent. A record under `## Resolved` requires a nonblank
+`- Option ...:` fields. The record ends at the next Markdown ATX heading, including a heading with
+up to three leading spaces. Four leading spaces form a code block, not a heading boundary.
+Bracketed template values, `TBD`, and `TODO` do not count as values. `validate` requires the open
+decision IDs and `STATE.yaml.unresolved_decisions` to match in both directions. WORK start uses the
+open records as blockers even when STATE is inconsistent. A record under `## Resolved` requires a nonblank
 `- Decision:` field.
 
 When a decision is resolved:

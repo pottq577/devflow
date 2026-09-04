@@ -1577,7 +1577,7 @@ def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]
     section = ""
     current: tuple[str, str, str, list[str]] | None = None
     for line in path.read_text(encoding="utf-8").splitlines():
-        markdown_heading = re.match(r"^(#{1,6})\s+(.*?)\s*$", line)
+        markdown_heading = re.match(r"^ {0,3}(#{1,6})\s+(.*?)\s*$", line)
         if markdown_heading:
             current = None
             level, heading = len(markdown_heading.group(1)), markdown_heading.group(2)
@@ -1962,6 +1962,8 @@ def known_canonical_finding_ids(
     d: Path,
     state: dict[str, Any],
     work_index: dict[str, tuple[Path, dict[str, Any]]],
+    audit_schema: dict[str, Any],
+    references: dict[str, dict[str, Any]],
 ) -> set[str]:
     relative_paths = {
         str(effective_plan_review(state)["audit_file"]),
@@ -1985,6 +1987,8 @@ def known_canonical_finding_ids(
         try:
             metadata = parse_audit_metadata(path)
         except (OSError, UnicodeError, ValueError):
+            continue
+        if validate_schema_value(metadata, audit_schema, "canonical audit", references):
             continue
         findings = metadata.get("findings", []) or []
         if not isinstance(findings, list):
@@ -2147,7 +2151,13 @@ def validate_audit_metadata(
     else:
         relevant_work_paths = set(work_docs)
 
-    known_finding_ids = set(finding_ids) | known_canonical_finding_ids(d, state, work_index)
+    known_finding_ids = set(finding_ids) | known_canonical_finding_ids(
+        d,
+        state,
+        work_index,
+        audit_schema,
+        references,
+    )
     for work_id, (work_path, work_item_doc) in work_index.items():
         if work_path not in relevant_work_paths and work_id not in linked_work_ids:
             continue

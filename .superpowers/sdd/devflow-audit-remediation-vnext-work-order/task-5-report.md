@@ -433,3 +433,112 @@ Fix round 2의 상세 RED, 구현, GREEN, full suite, self-review, exact command
 - 추가된 diff의 금지 문장부호 검색: 0건, `rg` exit 1
 - 최종 branch: `main`
 - tracked 변경 파일: report, decision protocol, runtime, tests 네 파일
+
+## Fix round 3
+
+### 시작 상태와 assumptions
+
+- 시작 branch는 `main`, tracked working tree는 clean이었다.
+- 시작 HEAD는 `faf01d5c39d6c3fa7210e22aaa98b33ef75c98da`였다.
+- canonical audit은 audit schema와 참조 finding schema의 구조 검증을 통과할 때만 known finding ID의 source가 될 수 있다고 해석했다.
+- malformed canonical audit 자체를 별도 cross-artifact 오류로 보고하는 Task 7 범위는 추가하지 않았다. 현재 apply가 해당 artifact의 finding ID를 신뢰하지 않는 최소 변경만 했다.
+- decision record의 Markdown ATX heading 경계는 CommonMark의 leading ASCII space 0칸부터 3칸까지이며 4칸은 code block으로 취급했다.
+- 자연어 finding 의미와 option의 정책적 적절성은 runtime에서 추론하지 않았다.
+
+### RED
+
+production 변경 전에 아래 회귀 테스트를 추가했다.
+
+- `case_malformed_canonical_audit_cannot_authenticate_finding`
+- `case_decision_commonmark_indented_heading_boundary`
+
+첫 테스트는 필수 audit field가 없고 `findings: [{id: F-404}]`만 있는 canonical audit이 unlinked WORK의 `F-404`를 self-authenticate하는 우회를 재현했다. 두 번째 테스트는 1칸, 2칸, 3칸 들여쓴 `### Notes` 아래 option을 이전 decision record가 흡수하는 우회를 각각 재현했다. 모든 invalid apply에서 실행 전후 domain 파일 bytes를 비교했다.
+
+production 변경 전 targeted 실행은 `passed=0 failed=2`, exit 1이었다. malformed canonical audit과 1칸부터 3칸까지의 heading 변형에서 audit apply가 exit 0으로 성공했고 artifact가 변경됐다. 4칸 들여쓴 code block positive path는 기존대로 성공했다.
+
+### 구현
+
+- `known_canonical_finding_ids`가 canonical audit metadata를 registry source로 사용하기 전에 기존 `validate_schema_value`와 이미 로드한 audit schema 및 finding schema reference로 구조 검증한다.
+- schema 검증 오류가 있는 canonical artifact의 finding ID는 known finding registry에 추가하지 않는다.
+- linkage 검증은 재귀 호출하지 않았고 current audit finding과 정상 canonical parent finding의 기존 scope 규칙을 유지했다.
+- decision parser의 ATX heading 정규식을 leading ASCII space 0칸부터 3칸까지 인식하도록 좁게 수정했다.
+- decision protocol에 0칸부터 3칸의 heading 경계와 4칸 code block 규칙을 동기화했다.
+
+### GREEN
+
+- 신규 Fix round 3 cases: `passed=2 failed=0`, exit 0
+- Task 5 전체 targeted cases: `passed=20 failed=0`, exit 0
+- Task 4 audit apply와 legacy lifecycle focused: `passed=23 failed=0`, exit 0
+- malformed canonical audit와 1칸부터 3칸 heading invalid apply에서 파일 bytes 불변을 확인했다.
+- 정상 canonical parent finding, current work audit finding, 4칸 code block positive path를 유지했다.
+
+### Full suite
+
+전체 suite를 두 번 실행했다. 두 실행 모두 `passed=316 failed=2`, exit 1이었다. 남은 실패는 Task 7 known RED 두 건과 정확히 일치한다.
+
+- `validate rejects a phase manifest absent from STATE`
+- `validate rejects placeholder delivery PRD and PLAN before execution`
+
+### Self-review
+
+- malformed canonical artifact는 finding ID source로만 배제되며 Task 7의 광범위 cross-artifact validator를 추가하지 않았다.
+- 기존 schema validator와 reference resolver를 재사용했고 새 dependency나 lifecycle artifact를 추가하지 않았다.
+- decision parser는 CommonMark ATX heading의 구조적 경계와 기존 placeholder 판정만 수행한다.
+- invalid apply는 mutation 전에 거절되며 새 테스트가 domain 전체 파일의 byte identity를 확인한다.
+- Task 6 WORK v2와 Task 7 severity 및 cross-artifact 계약은 구현하지 않았다.
+- 변경은 Task 5 허용 파일 중 runtime, tests, decision protocol, report 네 파일로 제한했다.
+
+### Exact commands와 exit
+
+```bash
+git branch --show-current
+git status --short
+git rev-parse HEAD
+```
+
+시작 결과: `main`, clean, `faf01d5c39d6c3fa7210e22aaa98b33ef75c98da`, 모두 exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task5_fix3_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_malformed_canonical_audit_cannot_authenticate_finding","case_decision_commonmark_indented_heading_boundary"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+production 변경 전 결과: `passed=0 failed=2`, exit 1. 구현 후 결과: `passed=2 failed=0`, exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task5_all_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_multi_finding_work_requires_aggregation_reason","case_multi_finding_work_accepts_coherent_explicit_aggregation","case_audit_work_links_are_bidirectional","case_decision_finding_cannot_generate_ready_work","case_decision_finding_requires_decision_id","case_evidence_finding_requires_evidence_work","case_documentation_drift_requires_documentation_work","case_work_cannot_reference_unknown_audit_finding","case_unlinked_work_cannot_reference_unknown_audit_finding","case_decision_apply_requires_actual_nonblank_options","case_decisions_state_and_work_dependencies_are_bidirectional","case_finding_schema_trust_anchor_requires_work_kind","case_work_audit_rejects_unlinked_unknown_findings_in_same_manifest","case_decision_record_stops_at_next_markdown_heading","case_decision_placeholder_options_are_invalid","case_malformed_canonical_audit_cannot_authenticate_finding","case_decision_commonmark_indented_heading_boundary"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+결과: `passed=20 failed=0`, exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task4_lifecycle_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_audit_closure_covers_every_prior_finding","case_audit_closure_reopens_finding","case_audit_remediation_lifecycle_reaches_closure_and_complete","case_audit_closure_uses_git_history_for_prior_findings","case_plan_audit_remediation_reaches_closure","case_lifecycle_walk","case_remediation_returns_to_work_closure_audit"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+결과: `passed=23 failed=0`, exit 0.
+
+```bash
+python3 plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+```
+
+결과: 두 번 모두 `passed=316 failed=2`, exit 1. Task 7 known RED 두 건만 남았다.
+
+```bash
+python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py
+git diff --check
+git status --short
+git branch --show-current
+git diff --name-only
+git diff -U0 | rg -n --pcre2 '^\+.*(?:\x{2014}|\x{2013}|\x{00B7}|\x{2026})'
+```
+
+최종 결과: py_compile과 `git diff --check`는 exit 0, branch는 `main`이다. tracked 변경은 아래 네 파일뿐이다. 추가된 diff의 금지 문장부호 검색은 출력이 없고 `rg` exit 1이다.
+
+### Commit file list
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-5-report.md
+plugins/devflow/core/protocol/decision-policy.md
+plugins/devflow/scripts/devflow.py
+plugins/devflow/tests/test_devflow.py
+```
