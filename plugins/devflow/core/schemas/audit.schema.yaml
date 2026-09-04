@@ -1,5 +1,13 @@
 schema: devflow-audit-v1
 type: mapping
+contract:
+  required_allowed:
+    - properties.scope
+    - properties.mode
+    - properties.verdict
+    - properties.closure.items.properties.outcome
+  references: [finding]
+  rubric: verdict
 required: [schema, scope, mode, verdict, baseline_sha, target_sha, verification, findings]
 properties:
   schema:

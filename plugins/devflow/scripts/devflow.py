@@ -114,15 +114,125 @@ def load_required_audit_schema(name: str) -> dict[str, Any]:
     schema = load_schema(name)
     if not schema:
         raise ValueError(f"Required {name} schema is missing or empty")
-    if (
-        schema.get("type") != "mapping"
-        or not isinstance(schema.get("required"), list)
-        or not schema["required"]
-        or not isinstance(schema.get("properties"), dict)
-        or not schema["properties"]
-    ):
-        raise ValueError(f"Required {name} schema has an invalid structure")
     return schema
+
+
+def nested_schema_value(schema: dict[str, Any], dotted_path: str) -> Any:
+    value: Any = schema
+    for segment in dotted_path.split("."):
+        if not isinstance(value, dict) or segment not in value:
+            return None
+        value = value[segment]
+    return value
+
+
+def schema_node_errors(
+    node: Any,
+    path: str,
+    references: dict[str, dict[str, Any]],
+    discovered_references: set[str],
+) -> list[str]:
+    if not isinstance(node, dict):
+        return [f"{path} must be a mapping"]
+    if "$ref" in node:
+        reference = node.get("$ref")
+        if not isinstance(reference, str) or not reference.strip():
+            return [f"{path}.$ref must be a nonblank string"]
+        discovered_references.add(reference)
+        return [] if reference in references else [f"{path} references unavailable schema {reference}"]
+
+    errors: list[str] = []
+    schema_type = node.get("type")
+    if schema_type not in {"mapping", "list", "string"}:
+        errors.append(f"{path}.type is invalid")
+    if "allowed" in node:
+        allowed = node["allowed"]
+        if not isinstance(allowed, list) or not allowed or any(not isinstance(value, str) or not value.strip() for value in allowed):
+            errors.append(f"{path}.allowed must be a non-empty list of nonblank strings")
+        elif len(set(allowed)) != len(allowed):
+            errors.append(f"{path}.allowed contains duplicate values")
+    if schema_type == "mapping":
+        required = node.get("required")
+        properties = node.get("properties")
+        if not isinstance(required, list) or not required or any(not isinstance(value, str) or not value.strip() for value in required):
+            errors.append(f"{path}.required must be a non-empty list of nonblank strings")
+        if not isinstance(properties, dict) or not properties:
+            errors.append(f"{path}.properties must be a non-empty mapping")
+            return errors
+        if isinstance(required, list):
+            missing = sorted(str(field) for field in required if field not in properties)
+            if missing:
+                errors.append(f"{path}.required fields lack properties: {', '.join(missing)}")
+        for field, child in properties.items():
+            errors.extend(schema_node_errors(child, f"{path}.properties.{field}", references, discovered_references))
+    elif schema_type == "list":
+        if not isinstance(node.get("items"), dict):
+            errors.append(f"{path}.items must be a mapping")
+        else:
+            errors.extend(schema_node_errors(node["items"], f"{path}.items", references, discovered_references))
+    return errors
+
+
+def audit_schema_contract_errors(
+    name: str,
+    schema: dict[str, Any],
+    references: dict[str, dict[str, Any]],
+) -> list[str]:
+    errors: list[str] = []
+    expected_identifier = f"devflow-{name}-v1"
+    if schema.get("schema") != expected_identifier:
+        errors.append(f"schema identifier must be {expected_identifier}")
+    identifier_const = nested_schema_value(schema, "properties.schema.const")
+    if identifier_const is not None and identifier_const != expected_identifier:
+        errors.append(f"properties.schema.const must be {expected_identifier}")
+
+    contract = schema.get("contract")
+    if not isinstance(contract, dict):
+        return errors + ["contract must be a mapping"]
+    required_allowed = contract.get("required_allowed")
+    if not isinstance(required_allowed, list) or not required_allowed:
+        errors.append("contract.required_allowed must be a non-empty list")
+        required_allowed = []
+    for dotted_path in required_allowed:
+        node = nested_schema_value(schema, str(dotted_path))
+        allowed = node.get("allowed") if isinstance(node, dict) else None
+        if not isinstance(allowed, list) or not allowed:
+            errors.append(f"{dotted_path}.allowed is required")
+
+    declared_references = contract.get("references")
+    if not isinstance(declared_references, list) or any(not isinstance(value, str) or not value.strip() for value in declared_references):
+        errors.append("contract.references must be a list of nonblank strings")
+        declared_references = []
+    discovered_references: set[str] = set()
+    errors.extend(schema_node_errors(schema, name, references, discovered_references))
+    if set(declared_references) != discovered_references:
+        errors.append("contract.references does not match schema references")
+
+    rubric_name = contract.get("rubric")
+    if rubric_name is not None:
+        rubric = schema.get(str(rubric_name))
+        allowed = nested_schema_value(schema, f"properties.{rubric_name}.allowed")
+        if not isinstance(rubric, dict) or not isinstance(allowed, list) or set(rubric) != set(allowed):
+            errors.append(f"{rubric_name} rubric must cover every allowed value exactly")
+        elif any(
+            not isinstance(rules, dict)
+            or not rules
+            or any(not isinstance(values, list) or not values for values in rules.values())
+            for rules in rubric.values()
+        ):
+            errors.append(f"{rubric_name} rubric rules must be non-empty collections")
+    return errors
+
+
+def load_audit_schemas() -> tuple[dict[str, Any], dict[str, Any]]:
+    audit_schema = load_required_audit_schema("audit")
+    finding_schema = load_required_audit_schema("finding")
+    references = {"finding": finding_schema}
+    for name, schema in [("audit", audit_schema), ("finding", finding_schema)]:
+        errors = audit_schema_contract_errors(name, schema, references)
+        if errors:
+            raise ValueError(f"Required {name} schema is invalid: {'; '.join(errors)}")
+    return audit_schema, finding_schema
 
 
 def initial_audit_metadata(root: Path, path: Path) -> dict[str, Any]:
@@ -196,6 +306,7 @@ PHASE_ENTRY_REQUIRED_FIELDS = STATE_SCHEMA["phase_entry"]["required"]
 PROJECT_STATUSES = set(STATE_SCHEMA["project_status"]["allowed"])
 PHASE_STATUSES = set(STATE_SCHEMA["phase_status"]["allowed"])
 INTEGRATION_STATUSES = set(STATE_SCHEMA["integration_status"]["allowed"])
+PLAN_REVIEW_STATUSES = set(STATE_SCHEMA["plan_review_status"]["allowed"])
 WORK_REQUIRED_ITEM_FIELDS = WORK_SCHEMA["required_item_fields"]
 WORK_STATUSES = set(WORK_SCHEMA["status"]["allowed"])
 TERMINAL_STATUSES = set(WORK_SCHEMA["terminal"])
@@ -236,26 +347,44 @@ def commit_yaml_transaction(documents: dict[Path, Any]) -> None:
         path: yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000)
         for path, data in documents.items()
     }
-    originals = {path: path.read_bytes() if path.exists() else None for path in documents}
+    backups: dict[Path, Path | None] = {}
+    try:
+        for path in documents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                backups[path] = None
+                continue
+            with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as backup:
+                backup.write(path.read_bytes())
+                backups[path] = Path(backup.name)
+    except Exception:
+        for backup_path in backups.values():
+            if backup_path is not None:
+                backup_path.unlink(missing_ok=True)
+        raise
     try:
         for path, content in rendered.items():
             atomic_write_text(path, content)
-    except Exception:
+    except Exception as commit_error:
         rollback_errors = []
-        for path, original in originals.items():
-            current = path.read_bytes() if path.exists() else None
-            if current == original:
-                continue
+        for path in reversed(documents):
+            backup_path = backups.get(path)
             try:
-                if original is None:
+                if backup_path is None:
                     path.unlink(missing_ok=True)
-                else:
-                    atomic_write_text(path, original.decode("utf-8"))
+                elif backup_path.exists():
+                    os.replace(backup_path, path)
             except Exception as exc:
                 rollback_errors.append(f"{path}: {exc}")
+        for backup_path in backups.values():
+            if backup_path is not None:
+                backup_path.unlink(missing_ok=True)
         if rollback_errors:
-            raise RuntimeError("Audit apply rollback failed: " + "; ".join(rollback_errors))
-        raise
+            raise RuntimeError("Audit apply rollback failed: " + "; ".join(rollback_errors)) from commit_error
+        raise commit_error
+    for backup_path in backups.values():
+        if backup_path is not None:
+            backup_path.unlink(missing_ok=True)
 
 
 def has_nonblank_string(values: Any) -> bool:
@@ -468,7 +597,7 @@ def effective_plan_review(state: dict[str, Any]) -> dict[str, Any]:
         "audit_file": raw.get("audit_file") or "audits/plan.md",
     }
     if "remediation_work_ids" in raw:
-        review["remediation_work_ids"] = list(raw.get("remediation_work_ids") or [])
+        review["remediation_work_ids"] = raw.get("remediation_work_ids")
     return review
 
 
@@ -561,7 +690,8 @@ def work_start_errors(state: dict[str, Any], path: Path, doc: dict[str, Any], it
 
     plan_review = effective_plan_review(state)
     plan_remediation = (
-        plan_review.get("status") == "pending"
+        plan_review.get("status") in {"pending", "remediation"}
+        and isinstance(plan_review.get("remediation_work_ids"), list)
         and str(item.get("id")) in plan_review.get("remediation_work_ids", [])
     )
     if plan_review.get("required") and plan_review.get("status") != "verified" and not plan_remediation:
@@ -772,9 +902,17 @@ def compute_next_action(
     work = work_files(d)
     workflow_type = effective_workflow_type(state)
     integration = state.get("integration", {}) or {}
+    phases = normalized_phases(state)
+    all_verified = bool(phases) and all(phase.get("status") == "verified" for phase in phases.values())
+    plan_review = effective_plan_review(state)
+    remediation_work_ids = plan_review.get("remediation_work_ids", [])
+    if not isinstance(remediation_work_ids, list):
+        raise ValueError("plan_review.remediation_work_ids must be a list")
+    if state.get("unresolved_decisions") and (workflow_type == "audit_remediation" or all_verified):
+        return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
+    if integration.get("status") == "blocked" and (workflow_type == "audit_remediation" or all_verified):
+        return {"role": "human", "command": "decision", "scope": "integration", "phase": None, "work_item": None}
     if workflow_type == "audit_remediation":
-        if state.get("unresolved_decisions"):
-            return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
         integration_status = integration.get("status", "audit")
         if integration_status in {"pending", "audit"}:
             return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
@@ -787,13 +925,13 @@ def compute_next_action(
     elif not work:
         return {"role": "architect", "command": "plan", "scope": "project", "phase": None, "work_item": None}
 
-    plan_review = effective_plan_review(state)
     if plan_review.get("required") and plan_review.get("status") != "verified":
-        if plan_review.get("status") == "pending" and plan_review.get("remediation_work_ids"):
+        if plan_review.get("status") == "blocked":
+            return {"role": "human", "command": "decision", "scope": "plan", "phase": None, "work_item": None}
+        if plan_review.get("status") in {"pending", "remediation"} and remediation_work_ids:
             return plan_remediation_action(root, domain, state, plan_review, work_overrides)
         return {"role": "auditor", "command": "audit", "scope": "plan", "mode": "initial", "phase": None, "work_item": None}
 
-    phases = normalized_phases(state)
     pending_phase_audits = [key for key, phase in sorted(phases.items()) if phase.get("status") == "audit"]
     if pending_phase_audits:
         return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "initial", "phase": pending_phase_audits[0], "work_item": None}
@@ -807,7 +945,6 @@ def compute_next_action(
         and phases[recorded_phase].get("status") == "remediation"
     ):
         return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "closure", "phase": recorded_phase, "work_item": None}
-    all_verified = bool(phases) and all(phase.get("status") == "verified" for phase in phases.values())
     integration_audit_is_active = all_verified and integration.get("status") in {"audit", "closure"}
     if integration_audit_is_active:
         if integration.get("status") in {"pending", "audit"}:
@@ -1368,6 +1505,27 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
     if state.get("risk_profile") not in RISK_LEVELS:
         errors.append(f"Invalid risk_profile: {state.get('risk_profile')}")
 
+    plan_review = state.get("plan_review")
+    if plan_review is not None:
+        if not isinstance(plan_review, dict):
+            errors.append("plan_review must be a mapping")
+        else:
+            if not isinstance(plan_review.get("required"), bool):
+                errors.append("plan_review.required must be boolean")
+            if plan_review.get("status") not in PLAN_REVIEW_STATUSES:
+                errors.append(f"Invalid plan_review.status: {plan_review.get('status')}")
+            if "audit_file" in plan_review and (
+                not isinstance(plan_review["audit_file"], str) or not plan_review["audit_file"].strip()
+            ):
+                errors.append("plan_review.audit_file must be a nonblank string")
+            remediation_ids = plan_review.get("remediation_work_ids", [])
+            if not isinstance(remediation_ids, list):
+                errors.append("plan_review.remediation_work_ids must be a list")
+            elif any(not isinstance(value, str) or not value.strip() for value in remediation_ids):
+                errors.append("plan_review.remediation_work_ids must contain nonblank strings")
+            elif plan_review.get("status") == "remediation" and not remediation_ids:
+                errors.append("plan_review.status=remediation requires remediation_work_ids")
+
     seen: dict[str, str] = {}
     for raw in (state.get("phases", {}) or {}):
         key = phase_key(raw)
@@ -1503,6 +1661,13 @@ def collect_validation(
     unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
     phases = normalized_phases(state)
 
+    plan_review = state.get("plan_review") if isinstance(state.get("plan_review"), dict) else {}
+    remediation_ids = plan_review.get("remediation_work_ids", [])
+    if isinstance(remediation_ids, list):
+        for remediation_id in remediation_ids:
+            if isinstance(remediation_id, str) and remediation_id.strip() and remediation_id not in all_ids:
+                errors.append(f"plan_review: unknown remediation WORK id {remediation_id}")
+
     for path, doc in docs.items():
         items = doc.get("items", []) or []
         if not isinstance(items, list):
@@ -1619,8 +1784,7 @@ def validate_audit_metadata(
     phase: str | None,
     work_item: str | None,
 ) -> list[str]:
-    audit_schema = load_required_audit_schema("audit")
-    finding_schema = load_required_audit_schema("finding")
+    audit_schema, finding_schema = load_audit_schemas()
     references = {"finding": finding_schema}
     errors = validate_schema_value(metadata, audit_schema, "audit", references)
     if errors:
@@ -1773,8 +1937,15 @@ def audit_apply(args: argparse.Namespace) -> int:
 
     prospective = copy.deepcopy(state)
     findings = metadata["findings"]
-    closure_ids = {str(entry["finding_id"]) for entry in (metadata.get("closure", []) or [])}
+    closure_entries = metadata.get("closure", []) or []
+    closure_ids = {str(entry["finding_id"]) for entry in closure_entries}
     follow_up = findings if args.mode == "initial" else [finding for finding in findings if str(finding["id"]) not in closure_ids]
+    still_open_ids = {str(entry["finding_id"]) for entry in closure_entries if entry["outcome"] == "still_open"}
+    has_stop = any(
+        finding["disposition"]["action"] == "stop"
+        for finding in findings
+        if args.mode == "initial" or str(finding["id"]) not in closure_ids or str(finding["id"]) in still_open_ids
+    )
     generated_work = list(dict.fromkeys(str(work_id) for finding in follow_up for work_id in finding["disposition"]["work_ids"]))
     new_decisions = list(
         dict.fromkeys(
@@ -1786,14 +1957,16 @@ def audit_apply(args: argparse.Namespace) -> int:
     )
     unresolved = list(dict.fromkeys([str(value) for value in prospective.get("unresolved_decisions", []) or []] + new_decisions))
     prospective["unresolved_decisions"] = unresolved
-    closes_scope = metadata["verdict"] == "pass" and not generated_work and not new_decisions
+    closes_scope = metadata["verdict"] == "pass" and not generated_work and not new_decisions and not has_stop
     work_overrides: dict[Path, dict[str, Any]] = {}
 
     if args.scope == "plan":
         review = effective_plan_review(prospective)
-        review["status"] = "verified" if closes_scope else "pending"
+        review["status"] = "verified" if closes_scope else ("blocked" if has_stop else ("remediation" if generated_work else "pending"))
         if generated_work:
             review["remediation_work_ids"] = generated_work
+        else:
+            review.pop("remediation_work_ids", None)
         prospective["plan_review"] = review
     elif args.scope == "work":
         work_path, work_doc, _ = find_item(root, args.domain, str(args.task))
@@ -1802,7 +1975,7 @@ def audit_apply(args: argparse.Namespace) -> int:
         review = effective_review(next_item_doc)
         if closes_scope:
             review["status"] = "verified"
-        elif generated_work:
+        elif generated_work and not has_stop:
             review["status"] = "remediation"
             review["remediation_work_ids"] = generated_work
         else:
@@ -1812,10 +1985,10 @@ def audit_apply(args: argparse.Namespace) -> int:
     elif args.scope == "phase":
         key = phase_key(args.phase)
         raw = raw_phase_key(prospective, key)
-        prospective["phases"][raw if raw is not None else key]["status"] = "verified" if closes_scope else ("remediation" if generated_work else "blocked")
+        prospective["phases"][raw if raw is not None else key]["status"] = "verified" if closes_scope else ("remediation" if generated_work and not has_stop else "blocked")
     else:
         integration = dict(prospective.get("integration") or {})
-        integration["status"] = "verified" if closes_scope else "remediation"
+        integration["status"] = "verified" if closes_scope else ("blocked" if has_stop else "remediation")
         prospective["integration"] = integration
     if args.mode == "closure" and not closes_scope:
         prospective["next_action"] = {}

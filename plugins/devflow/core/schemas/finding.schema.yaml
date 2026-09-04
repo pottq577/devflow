@@ -1,5 +1,11 @@
 schema: devflow-finding-v1
 type: mapping
+contract:
+  required_allowed:
+    - properties.classification
+    - properties.severity
+    - properties.disposition.properties.action
+  references: []
 required:
   - id
   - classification

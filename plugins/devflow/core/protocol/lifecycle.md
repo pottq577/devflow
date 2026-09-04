@@ -51,10 +51,15 @@ remediation. After all integration remediation WORK is terminal and every requir
 verified, the next action is integration closure. A verified integration reaches project complete
 even while its integration WORK manifest remains present.
 
-A required plan review remains `status: pending` and records `remediation_work_ids` after an initial
-audit that requires follow-up. While those IDs are present, only the linked remediation or evidence
-WORK may run. When those items and their required reviews are terminal, the next action is the plan
-closure audit. A passing closure marks the plan review verified and releases ordinary planned WORK.
+A required plan review uses `status: remediation` and records `remediation_work_ids` after an
+initial audit that requires follow-up. Legacy `pending` state without this field remains readable.
+While remediation is active, only the linked remediation or evidence WORK may run. When those items
+and their required reviews are terminal, the next action is the plan closure audit. A passing closure
+marks the plan review verified and releases ordinary planned WORK.
+
+An audit finding with `disposition.action: stop` blocks its audited plan, WORK, phase, or integration
+scope and projects a human decision. It never loops directly back to closure and never releases
+other remediation until the specification conflict is resolved and the scope is audited again.
 
 Independent low and medium WORK remains batch-reviewed in the phase audit. A work audit uses
 `--scope work --task <WORK-ID>` and `--mode initial|closure`; plan, phase, and integration audits
@@ -75,7 +80,9 @@ STATE, WORK, DECISIONS, and audit artifacts unchanged.
 
 On success, the command registers new unresolved decision IDs, updates the audited lifecycle scope,
 and computes derived fields against prospective STATE and WORK before writing. When both STATE and
-WORK change, write failure rolls every already-written file back to its original bytes. Linked
+WORK change, same-directory backups preserve the original bytes before commit; a commit writer
+failure restores replaced files through an independent rename path. This is process-local failure
+rollback, not crash recovery or concurrent-writer isolation. Linked
 remediation remains ordinary WORK and becomes executable only after the outcome is applied. Existing protocol 1.2 and older
 `plan-review set`, `work review`, `phase set`, and `integration set` transitions remain readable.
 Protocol 1.3 and newer verified transitions must use `audit apply`, so the legacy commands cannot

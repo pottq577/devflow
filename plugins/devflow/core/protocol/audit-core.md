@@ -209,6 +209,10 @@ finding needs one closure outcome. Findings present only in the current file are
 `reopened_as` may reference only those current-only IDs. Closure fails cleanly when the canonical
 file has no committed initial version.
 
+`disposition.action: stop` is an explicit lifecycle block. Applying it marks the audited scope
+blocked and makes the next action a human decision for plan, work, phase, and integration audits.
+It cannot be treated as an empty remediation set or projected back to the same closure audit.
+
 ## 9. Severity and verdict
 
 | Severity | Meaning |
