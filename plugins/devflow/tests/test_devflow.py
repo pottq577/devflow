@@ -206,6 +206,21 @@ def write_audit(path: Path, metadata: dict[str, Any]) -> None:
     path.write_text(f"---\n{front_matter}---\n\n# Audit\n", encoding="utf-8")
 
 
+def write_open_decision(path: Path, decision_id: str) -> None:
+    path.write_text(
+        "# Decisions\n\n"
+        "## Open\n\n"
+        f"### {decision_id} Retention policy\n"
+        "- Trigger: An audit found an unresolved product policy.\n"
+        "- Affected requirements/work: billing\n"
+        "- Option A: Retain records for 30 days.\n"
+        "- Option B: Delete records immediately.\n"
+        "- Impact: The selected option changes retention behavior.\n\n"
+        "## Resolved\n",
+        encoding="utf-8",
+    )
+
+
 def audit_remediation_fixture(root: Path) -> Path:
     devflow(root, "init", "billing", "--workflow", "audit-remediation")
     return root / "docs/domains/billing"
@@ -719,7 +734,7 @@ def case_audit_work_links_are_bidirectional(root: Path) -> None:
 
 def case_decision_finding_cannot_generate_ready_work(root: Path) -> None:
     d = audit_remediation_fixture(root)
-    (d / "DECISIONS.md").write_text("# Decisions\n\n## DEC-001\n\nChoose one product policy.\n", encoding="utf-8")
+    write_open_decision(d / "DECISIONS.md", "DEC-001")
     decision_work = item(
         "INT-I01",
         origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
@@ -839,6 +854,89 @@ def case_work_cannot_reference_unknown_audit_finding(root: Path) -> None:
         "WORK cannot reference a finding absent from its audit",
         out.returncode == 2 and "INT-R01" in out.stderr and "F-404" in out.stderr and "absent from audit" in out.stderr,
         out.stdout + out.stderr,
+    )
+
+
+def case_unlinked_work_cannot_reference_unknown_audit_finding(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    unlinked = item(
+        "INT-R404",
+        kind="remediation",
+        status="cancelled",
+        origin={"requirements": [], "findings": ["F-404"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", unlinked))
+    write_audit(d / "audits/integration.md", audit_metadata(d))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "unlinked terminal WORK cannot reference a finding absent from its audit",
+        out.returncode == 2
+        and "INT-R404" in out.stderr
+        and "F-404" in out.stderr
+        and "absent from audit" in out.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+
+def case_decision_apply_requires_actual_nonblank_options(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="A product policy choice is unresolved.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-001"]},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "decision apply rejects the DECISIONS template placeholder and blank options",
+        out.returncode == 2
+        and "DEC-001" in out.stderr
+        and "DECISIONS.md" in out.stderr
+        and "option" in out.stderr.lower()
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+
+def case_decisions_state_and_work_dependencies_are_bidirectional(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("A", decision_dependencies=["DEC-001"])))
+    write_open_decision(d / "DECISIONS.md", "DEC-001")
+    work_before = (d / "work/phase-01.yaml").read_bytes()
+
+    validated = devflow(root, "validate", "billing")
+    started = devflow(root, "work", "start", "billing", "A")
+    check(
+        "open DECISIONS records must be registered in STATE before validation or WORK start",
+        validated.returncode == 1
+        and "DEC-001" in validated.stdout
+        and "unresolved_decisions" in validated.stdout
+        and started.returncode == 2
+        and "DEC-001" in started.stderr
+        and (d / "work/phase-01.yaml").read_bytes() == work_before,
+        validated.stdout + validated.stderr + started.stdout + started.stderr,
+    )
+
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}, unresolved_decisions=["DEC-404"]))
+    (d / "DECISIONS.md").unlink()
+    validated = devflow(root, "validate", "billing")
+    check(
+        "STATE unresolved decisions require matching structured DECISIONS records",
+        validated.returncode == 1
+        and "DEC-404" in validated.stdout
+        and "DECISIONS.md" in validated.stdout,
+        validated.stdout + validated.stderr,
     )
 
 
@@ -1392,6 +1490,44 @@ def case_finding_schema_trust_anchor_rejects_removed_enum_contract(root: Path) -
     )
 
 
+def case_finding_schema_trust_anchor_requires_work_kind(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    fake_plugin = root / "fake-plugin-finding-work-kind"
+    shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+    schema_path = fake_plugin / "core/schemas/finding.schema.yaml"
+    schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    schema_doc["classification"]["disposition"]["CONFIRMED"].pop("work_kind")
+    dump(schema_path, schema_doc)
+    linked_work = item(
+        "INT-R01",
+        kind="implementation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", linked_work))
+    finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="major",
+        severity_reason="The confirmed defect requires remediation.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    runtime = load_runtime_module()
+
+    with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+        out = invoke_runtime(root, runtime, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "finding schema trust anchor requires work_kind for work dispositions",
+        out.returncode == 2
+        and "finding schema" in out.stderr.lower()
+        and "work_kind" in out.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+
 def case_audit_remediation_prioritizes_unresolved_decisions(root: Path) -> None:
     d = audit_remediation_fixture(root)
     remediation = item(
@@ -1414,6 +1550,7 @@ def case_audit_remediation_prioritizes_unresolved_decisions(root: Path) -> None:
         severity_reason="A product decision is unresolved.",
         disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-001"]},
     )
+    write_open_decision(d / "DECISIONS.md", "DEC-001")
     write_audit(
         d / "audits/integration.md",
         audit_metadata(d, verdict="conditional_pass", findings=[work_finding, decision_finding]),
@@ -2900,6 +3037,9 @@ CASES = [
     case_evidence_finding_requires_evidence_work,
     case_documentation_drift_requires_documentation_work,
     case_work_cannot_reference_unknown_audit_finding,
+    case_unlinked_work_cannot_reference_unknown_audit_finding,
+    case_decision_apply_requires_actual_nonblank_options,
+    case_decisions_state_and_work_dependencies_are_bidirectional,
     case_audit_apply_failure_is_atomic,
     case_audit_apply_updates_state_and_next_action,
     case_audit_closure_covers_every_prior_finding,
@@ -2913,6 +3053,7 @@ CASES = [
     case_audit_apply_rejects_corrupt_schema_contracts,
     case_audit_schema_trust_anchor_rejects_removed_verdict_contract,
     case_finding_schema_trust_anchor_rejects_removed_enum_contract,
+    case_finding_schema_trust_anchor_requires_work_kind,
     case_audit_remediation_prioritizes_unresolved_decisions,
     case_delivery_integration_prioritizes_unresolved_decisions,
     case_plan_review_remediation_metadata_is_validated,

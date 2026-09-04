@@ -177,6 +177,7 @@ def audit_schema_contract_errors(
     name: str,
     schema: dict[str, Any],
     references: dict[str, dict[str, Any]],
+    work_kinds: set[str],
 ) -> list[str]:
     anchors = {
         "audit": {
@@ -276,18 +277,31 @@ def audit_schema_contract_errors(
             or rule.get("action") not in allowed_actions
             or rule.get("work_ids") not in {"required", "empty"}
             or rule.get("decision_ids") not in {"required", "empty"}
+            or (
+                rule.get("work_ids") == "required"
+                and (not isinstance(rule.get("work_kind"), str) or rule.get("work_kind") not in work_kinds)
+            )
             for rule in dispositions.values()
         ):
-            errors.append("classification.disposition rules are invalid")
+            errors.append("classification.disposition rules are invalid, including required work_kind values")
     return errors
 
 
 def load_audit_schemas() -> tuple[dict[str, Any], dict[str, Any]]:
     audit_schema = load_required_audit_schema("audit")
     finding_schema = load_required_audit_schema("finding")
+    work_schema = load_required_audit_schema("work")
+    allowed_work_kinds = nested_schema_value(work_schema, "kind.allowed")
+    if (
+        not isinstance(allowed_work_kinds, list)
+        or not allowed_work_kinds
+        or any(not isinstance(value, str) or not value.strip() for value in allowed_work_kinds)
+    ):
+        raise ValueError("Required work schema is invalid: kind.allowed must be a non-empty list of nonblank strings")
+    work_kinds = set(allowed_work_kinds)
     references = {"finding": finding_schema}
     for name, schema in [("audit", audit_schema), ("finding", finding_schema)]:
-        errors = audit_schema_contract_errors(name, schema, references)
+        errors = audit_schema_contract_errors(name, schema, references, work_kinds)
         if errors:
             raise ValueError(f"Required {name} schema is invalid: {'; '.join(errors)}")
     return audit_schema, finding_schema
@@ -731,12 +745,21 @@ def decision_blockers(item: dict[str, Any], unresolved: set[str]) -> list[str]:
     return [f"unresolved decision {decision}" for decision in item.get("decision_dependencies", []) or [] if str(decision) in unresolved]
 
 
-def work_start_errors(state: dict[str, Any], path: Path, doc: dict[str, Any], item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
+def work_start_errors(
+    state: dict[str, Any],
+    d: Path,
+    path: Path,
+    doc: dict[str, Any],
+    item: dict[str, Any],
+    index: dict[str, tuple[Path, dict[str, Any]]],
+) -> list[str]:
     errors = []
     if item.get("status") != "ready":
         errors.append(f"status must be ready, not {item.get('status')}")
     errors.extend(dependency_blockers(item, index))
-    unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []}
+    decision_errors, open_decisions = decision_state_errors(state, d)
+    errors.extend(decision_errors)
+    unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []} | open_decisions
     errors.extend(decision_blockers(item, unresolved))
 
     phase = item_phase(path, doc)
@@ -1268,8 +1291,9 @@ def work_update(args: argparse.Namespace) -> int:
         return 2
     if args.work_command == "start":
         state = load_yaml(state_path(root, args.domain), {}) or {}
-        _, index, _ = load_work_index(domain_dir(root, args.domain))
-        errors = work_start_errors(state, path, doc, item, index)
+        d = domain_dir(root, args.domain)
+        _, index, _ = load_work_index(d)
+        errors = work_start_errors(state, d, path, doc, item, index)
         if errors:
             return reject_transition(args.item, "start", errors)
         item["status"] = "in_progress"
@@ -1536,6 +1560,86 @@ def decision_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]]:
+    if not path.exists():
+        return set(), set(), []
+
+    records: list[tuple[str, str, str, list[str]]] = []
+    section = ""
+    current: tuple[str, str, str, list[str]] | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        section_match = re.match(r"^##\s+(Open|Resolved)\s*$", line, re.I)
+        if section_match:
+            section = section_match.group(1).lower()
+            current = None
+            continue
+        heading_match = re.match(r"^###\s+(DEC-[A-Z0-9][A-Z0-9-]*)(?:\s+(.*))?$", line, re.I)
+        if heading_match and section in {"open", "resolved"}:
+            current = (section, heading_match.group(1), (heading_match.group(2) or "").strip(), [])
+            records.append(current)
+            continue
+        if current is not None:
+            current[3].append(line)
+
+    open_ids: set[str] = set()
+    resolved_ids: set[str] = set()
+    errors: list[str] = []
+    seen: set[str] = set()
+    for record_section, decision_id, title, lines in records:
+        if decision_id.upper() == "DEC-XXX" or "[Question]" in title or "[Decision]" in title:
+            continue
+        if decision_id in seen:
+            errors.append(f"DECISIONS.md contains duplicate decision id: {decision_id}")
+            continue
+        seen.add(decision_id)
+        if record_section == "open":
+            options = []
+            for line in lines:
+                option_match = re.match(r"^\s*-\s*Option(?:\s+[^:]+)?:\s*(.*?)\s*$", line, re.I)
+                if option_match:
+                    value = option_match.group(1).strip()
+                    if value and not (value.startswith("[") and value.endswith("]")):
+                        options.append(value)
+            if len(options) < 2:
+                errors.append(f"DECISIONS.md open decision {decision_id} requires at least two nonblank options")
+            else:
+                open_ids.add(decision_id)
+        else:
+            choices = []
+            for line in lines:
+                decision_match = re.match(r"^\s*-\s*Decision:\s*(.*?)\s*$", line, re.I)
+                if decision_match:
+                    value = decision_match.group(1).strip()
+                    if value and not (value.startswith("[") and value.endswith("]")):
+                        choices.append(value)
+            if not choices:
+                errors.append(f"DECISIONS.md resolved decision {decision_id} requires a nonblank Decision field")
+            else:
+                resolved_ids.add(decision_id)
+    return open_ids, resolved_ids, errors
+
+
+def decision_state_errors(state: dict[str, Any], d: Path) -> tuple[list[str], set[str]]:
+    raw_unresolved = state.get("unresolved_decisions", []) or []
+    if not isinstance(raw_unresolved, list):
+        return ["STATE.unresolved_decisions must be a list"], set()
+    unresolved = {str(value) for value in raw_unresolved if isinstance(value, str) and value.strip()}
+    errors = []
+    if len(unresolved) != len(raw_unresolved):
+        errors.append("STATE.unresolved_decisions must contain unique nonblank strings")
+
+    decisions_path = d / "DECISIONS.md"
+    open_ids, _resolved_ids, document_errors = decision_document_records(decisions_path)
+    errors.extend(document_errors)
+    if unresolved and not decisions_path.exists():
+        errors.append("DECISIONS.md is required when STATE.unresolved_decisions is nonempty")
+    for decision_id in sorted(unresolved - open_ids):
+        errors.append(f"STATE.unresolved_decisions references no valid open DECISIONS.md record: {decision_id}")
+    for decision_id in sorted(open_ids - unresolved):
+        errors.append(f"DECISIONS.md open decision is missing from STATE.unresolved_decisions: {decision_id}")
+    return errors, open_ids
+
+
 def validate_protocol_version(state: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
     """The version was recorded but never read, so an artifact from any protocol validated."""
     if "protocol_version" not in state:
@@ -1718,6 +1822,8 @@ def collect_validation(
     warnings: list[str] = []
     state = state_override if state_override is not None else load_yaml(d / "STATE.yaml", {}) or {}
     validate_state(state, d, errors, warnings)
+    decision_errors, open_decisions = decision_state_errors(state, d)
+    errors.extend(decision_errors)
 
     docs, index, duplicates = load_work_index(d)
     if work_overrides:
@@ -1726,7 +1832,7 @@ def collect_validation(
     for dup in duplicates:
         errors.append(f"Duplicate WORK id: {dup}")
     all_ids = set(index)
-    unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
+    unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or []) | open_decisions
     phases = normalized_phases(state)
 
     plan_review = state.get("plan_review") if isinstance(state.get("plan_review"), dict) else {}
@@ -1931,9 +2037,9 @@ def validate_audit_metadata(
         errors.append(f"verdict {verdict} requires finding severity: {', '.join(sorted(required))}")
 
     d = domain_dir(root, domain)
-    _, work_index, _ = load_work_index(d)
-    decisions_text = (d / "DECISIONS.md").read_text(encoding="utf-8") if (d / "DECISIONS.md").exists() else ""
-    resolved_text = decisions_text.partition("## Resolved")[2]
+    work_docs, work_index, _ = load_work_index(d)
+    open_decisions, resolved_decisions, decision_errors = decision_document_records(d / "DECISIONS.md")
+    errors.extend(decision_errors)
     finding_by_id = {str(finding["id"]): finding for finding in findings}
     disposition_contracts = finding_schema["classification"]["disposition"]
     for finding in findings:
@@ -1965,26 +2071,47 @@ def validate_audit_metadata(
                 errors.append(
                     f"{finding['id']}: linked WORK {linked_work} origin.findings does not include {finding['id']}"
                 )
-            unknown_findings = sorted(set(work_findings) - set(finding_ids))
-            if unknown_findings:
-                errors.append(
-                    f"{linked_work}: origin.findings references finding absent from audit: {', '.join(unknown_findings)}"
-                )
             expected_kind = contract.get("work_kind")
             if expected_kind and work_item_doc.get("kind") != expected_kind:
                 errors.append(
                     f"{finding['id']}: linked WORK {linked_work} must use kind {expected_kind}, not {work_item_doc.get('kind')}"
                 )
         for decision_id in disposition["decision_ids"]:
-            if not exact_id_pattern(str(decision_id)).search(decisions_text):
-                errors.append(f"{finding['id']}: linked decision does not exist in DECISIONS.md: {decision_id}")
+            if str(decision_id) not in open_decisions:
+                errors.append(
+                    f"{finding['id']}: linked decision {decision_id} must be an open DECISIONS.md record with at least two nonblank options"
+                )
 
-    for work_id, (_, work_item_doc) in work_index.items():
+    linked_work_ids = {
+        str(work_id)
+        for finding in findings
+        for work_id in finding["disposition"]["work_ids"]
+    }
+    if scope == "integration":
+        relevant_work_paths = {d / (state.get("integration") or {}).get("work_file", "work/integration.yaml")}
+    elif scope == "phase" and phase is not None:
+        phase_state = normalized_phases(state).get(phase_key(phase), {})
+        relevant_work_paths = {d / phase_state.get("work_file", f"work/phase-{phase_key(phase)}.yaml")}
+    elif scope == "work":
+        # The reviewed WORK carries origins from its parent audit. Only WORK explicitly linked by
+        # this work audit belongs to this audit's finding namespace.
+        relevant_work_paths = set()
+    else:
+        relevant_work_paths = set(work_docs)
+
+    for work_id, (work_path, work_item_doc) in work_index.items():
+        if work_path not in relevant_work_paths and work_id not in linked_work_ids:
+            continue
         work_origin = work_item_doc.get("origin") or {}
         work_findings = {
             str(value)
             for value in (work_origin.get("findings", []) or [])
         } if isinstance(work_origin, dict) else set()
+        unknown_findings = sorted(work_findings - set(finding_ids))
+        if unknown_findings:
+            errors.append(
+                f"{work_id}: origin.findings references finding absent from audit: {', '.join(unknown_findings)}"
+            )
         for finding_id in sorted(work_findings & set(finding_ids)):
             finding = finding_by_id[finding_id]
             disposition = finding["disposition"]
@@ -2010,7 +2137,7 @@ def validate_audit_metadata(
                 errors.append(f"closure {finding_id}: reopened_as is only valid for outcome reopened")
             if outcome == "accepted_risk":
                 decision_ids = [str(value) for value in finding["disposition"]["decision_ids"]]
-                resolved = [value for value in decision_ids if exact_id_pattern(value).search(resolved_text) and value not in (state.get("unresolved_decisions") or [])]
+                resolved = [value for value in decision_ids if value in resolved_decisions and value not in (state.get("unresolved_decisions") or [])]
                 if not resolved:
                     errors.append(f"closure {finding_id}: accepted_risk requires a resolved decision")
             for linked_work in finding["disposition"]["work_ids"]:

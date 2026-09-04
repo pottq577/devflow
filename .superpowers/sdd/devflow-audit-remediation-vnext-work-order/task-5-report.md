@@ -204,3 +204,116 @@ plugins/devflow/skills/audit/SKILL.md
 plugins/devflow/skills/plan/SKILL.md
 plugins/devflow/tests/test_devflow.py
 ```
+
+## 10. Fix round 1
+
+### 시작 상태
+
+- 작업일: 2026-09-04
+- branch: `main`
+- 시작 HEAD: `ec1c9168719b198310fe15329c876f8d1c9a81ce`
+- 시작 tracked working tree: clean
+- branch와 worktree 및 subagent를 만들지 않았다.
+
+### Assumptions
+
+- `DECISIONS.md` template의 `## Open`, `## Resolved`, `### DEC-*`, `- Option A:`, `- Decision:` 구조를 machine-readable 최소 계약으로 사용했다.
+- open decision은 두 개 이상의 nonblank option이 있어야 실제 선택지를 가진 기록이다. placeholder 문구는 실제 기록으로 인정하지 않는다.
+- `STATE.unresolved_decisions`와 유효한 open decision ID 집합은 양방향으로 일치해야 한다.
+- phase와 integration audit의 relevant WORK는 각각 STATE가 가리키는 scope manifest 전체다. plan audit는 모든 WORK manifest를 대상으로 한다.
+- work audit 대상 WORK의 `origin.findings`는 부모 audit에서 온 정보이므로 현재 work audit의 finding namespace로 오인하지 않는다. work audit에서는 현재 audit가 명시적으로 링크한 WORK를 검사한다.
+- decision이나 finding 자연어의 의미 동등성은 추론하지 않고 heading, ID, labeled field, 구조적 링크만 검사한다.
+
+### RED
+
+production 변경 전에 다음 회귀 case를 추가했다.
+
+- `case_unlinked_work_cannot_reference_unknown_audit_finding`
+- `case_decision_apply_requires_actual_nonblank_options`
+- `case_decisions_state_and_work_dependencies_are_bidirectional`
+- `case_finding_schema_trust_anchor_requires_work_kind`
+
+회귀 case 실행은 `passed=0 failed=5`, exit 1이었다. 기존 runtime은 unlinked cancelled WORK의 `F-404`, template placeholder decision, DECISIONS와 STATE 양방향 불일치, STATE 누락을 이용한 WORK start, finding schema에서 제거된 `work_kind`를 모두 허용했다. 잘못 성공한 audit apply와 WORK start가 파일을 변경했기 때문에 atomicity assertion도 실패했다.
+
+### 구현
+
+- audit scope의 relevant WORK manifest 전체와 명시적 linked WORK를 검사해 audit에 없는 finding ID를 거절했다.
+- work audit 대상의 부모 finding origin은 현재 work audit finding으로 해석하지 않도록 scope 경계를 유지했다.
+- stdlib 정규식 기반의 작은 DECISIONS parser를 추가했다. `## Open`의 `### DEC-*` record는 nonblank option 두 개 이상을 요구하고, `## Resolved` record는 nonblank `Decision` field를 요구한다.
+- audit apply는 유효한 open decision record만 `DECISION_REQUIRED`의 target으로 인정한다.
+- `validate`는 valid open record와 `STATE.unresolved_decisions`의 정확한 양방향 일치를 검사한다.
+- WORK start는 STATE가 잘못 비어 있어도 valid open decision을 blocker로 사용하고 파일을 변경하기 전에 거절한다.
+- finding schema trust anchor는 `work_ids: required` rule마다 `work_kind`가 존재하고 WORK schema의 `kind.allowed` 값 중 하나인지 검사한다. 허용 kind를 runtime에 중복 정의하지 않았다.
+- `decision-policy.md`에 parser가 소비하는 구조와 validate의 양방향 계약을 기록했다.
+
+### GREEN과 회귀
+
+- 신규 adversarial case: `passed=5 failed=0`, exit 0
+- 기존 Task 5 named case와 신규 case 통합: `passed=14 failed=0`, exit 0
+- Task 4 audit apply와 legacy lifecycle focused: `passed=51 failed=0`, exit 0
+- 첫 full suite에서 `passed=308 failed=4`를 확인했다. Task 7 known RED 두 건 외에 work audit 대상의 부모 finding을 현재 audit finding으로 잘못 비교한 lifecycle 회귀 두 건이 추가됐다.
+- scope 경계를 수정한 뒤 full suite 최종 실행 두 번은 각각 `passed=310 failed=2`, exit 1이었다.
+- 최종 실패는 Task 7 known RED인 `validate rejects a phase manifest absent from STATE`, `validate rejects placeholder delivery PRD and PLAN before execution` 두 건뿐이다.
+
+### Self-review
+
+- invalid audit apply는 prospective STATE 계산과 YAML transaction 전에 거절되며 신규 테스트가 domain 파일의 byte identity를 확인한다.
+- invalid WORK start도 WORK 파일을 변경하지 않는 것을 확인했다.
+- DECISIONS parser는 옵션 내용의 의미나 선택의 적절성을 판단하지 않는다.
+- 기존 Task 4 closure lifecycle을 재실행해 parent finding origin이 유지되는 정상 work audit을 보존했다.
+- Task 6 WORK v2와 Task 7 severity 및 cross-artifact 계약은 구현하지 않았다.
+- 새 dependency와 새 lifecycle artifact를 추가하지 않았다.
+- production 변경은 Task 5 brief 허용 파일에만 있다.
+
+### Exact commands와 exit
+
+```bash
+git branch --show-current
+git status --short
+git rev-parse HEAD
+```
+
+결과: `main`, clean, `ec1c9168719b198310fe15329c876f8d1c9a81ce`, 모두 exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task5_fix_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_unlinked_work_cannot_reference_unknown_audit_finding","case_decision_apply_requires_actual_nonblank_options","case_decisions_state_and_work_dependencies_are_bidirectional","case_finding_schema_trust_anchor_requires_work_kind"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+production 변경 전 결과: `passed=0 failed=5`, exit 1. 구현 후 결과: `passed=5 failed=0`, exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("task5_all_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_multi_finding_work_requires_aggregation_reason","case_multi_finding_work_accepts_coherent_explicit_aggregation","case_audit_work_links_are_bidirectional","case_decision_finding_cannot_generate_ready_work","case_decision_finding_requires_decision_id","case_evidence_finding_requires_evidence_work","case_documentation_drift_requires_documentation_work","case_work_cannot_reference_unknown_audit_finding","case_unlinked_work_cannot_reference_unknown_audit_finding","case_decision_apply_requires_actual_nonblank_options","case_decisions_state_and_work_dependencies_are_bidirectional","case_finding_schema_trust_anchor_requires_work_kind"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+결과: `passed=14 failed=0`, exit 0.
+
+```bash
+python3 -c 'import importlib.util, pathlib, shutil, sys; p=pathlib.Path("plugins/devflow/tests/test_devflow.py").resolve(); s=importlib.util.spec_from_file_location("targeted_tests", p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); names=["case_audit_apply_rejects_missing_front_matter","case_audit_apply_rejects_malformed_front_matter","case_audit_apply_rejects_duplicate_yaml_keys","case_audit_apply_requires_exact_next_action","case_audit_apply_validates_verdict_against_findings","case_audit_apply_validates_finding_links","case_audit_apply_failure_is_atomic","case_audit_apply_updates_state_and_next_action","case_audit_closure_covers_every_prior_finding","case_audit_closure_reopens_finding","case_audit_remediation_lifecycle_reaches_closure_and_complete","case_audit_apply_rolls_back_work_when_state_write_fails","case_audit_apply_rollback_survives_atomic_writer_failure","case_audit_closure_uses_git_history_for_prior_findings","case_plan_audit_remediation_reaches_closure","case_audit_apply_requires_schema_files","case_audit_apply_rejects_corrupt_schema_contracts","case_audit_schema_trust_anchor_rejects_removed_verdict_contract","case_finding_schema_trust_anchor_rejects_removed_enum_contract","case_finding_schema_trust_anchor_requires_work_kind","case_audit_remediation_prioritizes_unresolved_decisions","case_legacy_120_domain_defaults_to_delivery","case_lifecycle_walk","case_high_risk_dependency_is_gated","case_medium_dependency_keeps_old_behavior","case_remediation_returns_to_work_closure_audit","case_start_rejects_unresolved_decision"]; [(lambda r,n: (print("\n"+n), getattr(m,n)(r), shutil.rmtree(r, ignore_errors=True)))(m.new_repo(), n) for n in names]; print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}"); [print("FAILED: "+x) for x in m.FAILED]; sys.exit(1 if m.FAILED else 0)'
+```
+
+결과: `passed=51 failed=0`, exit 0.
+
+```bash
+python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+```
+
+최종 py_compile은 exit 0이다. 최종 full suite 두 번은 각각 `passed=310 failed=2`, exit 1이며 Task 7 known RED만 남았다.
+
+```bash
+git diff --check
+git status --short
+git branch --show-current
+git diff --name-only
+```
+
+결과: py_compile과 `git diff --check`는 exit 0, branch는 `main`이다. tracked 변경은 아래 네 파일뿐이며 추가된 diff의 금지 문장부호 검색 결과는 0건이었다.
+
+### Commit file list
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-5-report.md
+plugins/devflow/core/protocol/decision-policy.md
+plugins/devflow/scripts/devflow.py
+plugins/devflow/tests/test_devflow.py
+```

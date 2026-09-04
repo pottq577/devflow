@@ -22,6 +22,12 @@ A `DECISION_REQUIRED` audit finding must use `disposition.action: decision`, lis
 finding. After resolution, create WORK for only the selected path and carry the decision ID in
 `decision_dependencies`; unresolved dependencies cannot be `ready`.
 
+An open decision record is a `### DEC-*` heading under `## Open` with at least two nonblank
+`- Option ...:` fields. Template placeholders are not decision records. `validate` requires the
+open decision IDs and `STATE.yaml.unresolved_decisions` to match in both directions, and WORK start
+uses the open records as blockers even when STATE is inconsistent. A record under `## Resolved`
+requires a nonblank `- Decision:` field.
+
 When a decision is resolved:
 
 1. record the chosen option and rationale in `DECISIONS.md`,
