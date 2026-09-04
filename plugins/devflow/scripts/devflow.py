@@ -1184,6 +1184,13 @@ def compute_next_action(
         and phases[recorded_phase].get("status") == "remediation"
     ):
         return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "closure", "phase": recorded_phase, "work_item": None}
+    if (
+        recorded_action.get("command") == "audit"
+        and recorded_action.get("scope") == "integration"
+        and recorded_action.get("mode") == "closure"
+        and integration.get("status") == "remediation"
+    ):
+        return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
     integration_audit_is_active = all_verified and integration.get("status") in {"audit", "closure"}
     if integration_audit_is_active:
         if integration.get("status") in {"pending", "audit"}:

@@ -615,3 +615,67 @@ plugins/devflow/tests/test_devflow.py
 커밋 메시지: `fix(devflow): reject malformed lifecycle evidence`
 
 남은 우려 사항은 없다.
+
+## Fix round 4
+
+### 시작 상태와 assumptions
+
+- 작업일: 2026-09-04
+- branch: `main`
+- 시작 HEAD: `0341d52805e21f8ae783720224a860eac0e554b6`
+- 시작 working tree에는 Task 8 구현자의 `plugins/devflow/tests/test_devflow.py` 404 insertions만 있었다.
+- 테스트 파일은 수정, stage, commit, revert하지 않는다.
+- Closure 감사를 render한 뒤 감사자가 새 finding과 ready WORK를 함께 작성하는 순서를 지원한다.
+- 기록된 action은 `audit`, `integration`, `closure`가 모두 일치하고 integration status가 `remediation`일 때만 우선한다.
+- 계약 충돌과 막힌 사항은 없었다.
+
+### RED
+
+Production 수정 전에 Task 8의 5개 E2E를 실행했다.
+
+```bash
+python3 -c 'import sys; sys.path.insert(0,"plugins/devflow/tests"); import test_devflow as t; names=["case_audit_remediation_full_lifecycle_without_findings","case_audit_remediation_full_lifecycle_with_remediation","case_audit_remediation_full_lifecycle_with_decision","case_audit_remediation_full_lifecycle_with_reopened_finding","case_delivery_lifecycle_regression_after_protocol_130"]; t.CASES=[getattr(t,n) for n in names]; raise SystemExit(t.main())'
+```
+
+결과는 `passed=13 failed=1`, exit 1이었다. `case_audit_remediation_full_lifecycle_with_reopened_finding`의 첫 번째 closure apply만 실패했다. STATE에는 integration closure가 이미 기록됐지만, 새 `INT-R02` ready WORK를 작성한 뒤 `compute_next_action` 재계산이 `run INT-R02`를 반환해 apply guard가 requested closure를 exit 2로 거절했다.
+
+### 구현
+
+- `compute_next_action` 내 기존 phase closure 기록 우선 규칙 바로 옆에 integration closure의 같은 패턴을 추가했다.
+- `command: audit`, `scope: integration`, `mode: closure`, `integration.status: remediation`만 확인해 stale action이 다른 lifecycle을 우회하지 못하게 했다.
+- Closure apply가 reopened finding을 적용하면 기존 prospective reset이 recorded action을 제거하고, 다음 action은 `run INT-R02`로 재계산된다.
+- 새 STATE field, schema 변경, dependency, 별도 helper는 추가하지 않았다.
+
+### GREEN과 exact commands
+
+Task 8 E2E를 같은 명령으로 재실행한 결과는 `passed=14 failed=0`, exit 0이었다.
+
+Task 7 원본과 Fix round 1부터 3까지의 focused regression 19개 case 결과는 `passed=42 failed=0`, exit 0이었다.
+
+Task 4부터 6의 focused regression 24개 case 결과는 `passed=38 failed=0`, exit 0이었다.
+
+```bash
+python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+```
+
+결과는 py_compile exit 0, full suite 1회차와 2회차 모두 `passed=403 failed=0`, exit 0이었다.
+
+### Self-review
+
+- Closure 작성 전 runtime이 기록한 exact integration closure만 ready WORK보다 우선한다.
+- Closure apply 후에는 prospective projection이 기록된 closure를 비우므로 새 remediation WORK가 바로 실행 대상이 된다.
+- No-finding, remediation, decision, delivery와 Task 4부터 7의 audit lifecycle 회귀를 실행했다.
+- 변경은 runtime과 이 보고서로 제한했고 Task 8 테스트 파일은 보존했다.
+
+### 변경 파일
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-7-report.md
+plugins/devflow/scripts/devflow.py
+```
+
+커밋 메시지: `fix(devflow): preserve integration closure priority`
+
+남은 우려 사항은 없다.
