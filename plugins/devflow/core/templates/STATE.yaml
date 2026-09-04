@@ -1,4 +1,5 @@
 protocol_version: "1.2.0"
+workflow_type: delivery
 domain: example
 risk_profile: medium
 extension: default

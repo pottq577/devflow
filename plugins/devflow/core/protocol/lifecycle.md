@@ -9,6 +9,12 @@ DevFlow exposes four operations:
 
 ## Lifecycle
 
+`STATE.yaml` records `workflow_type: delivery|audit_remediation`. Existing STATE without this field
+reads as `delivery` without a migration write. New domains select the workflow with
+`devflow init <domain> --workflow delivery|audit-remediation`.
+
+The delivery workflow keeps the phase-based lifecycle:
+
 ```text
 PRD
  -> plan
@@ -24,6 +30,17 @@ PRD
  -> next phase
  -> integration initial audit
  -> integration remediation
+ -> integration closure audit
+ -> integration verified
+ -> project complete
+```
+
+The audit/remediation workflow starts without fake phases:
+
+```text
+integration initial audit
+ -> decision resolution and/or integration remediation WORK
+ -> required WORK-level review
  -> integration closure audit
  -> integration verified
  -> project complete

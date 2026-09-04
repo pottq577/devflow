@@ -10,14 +10,18 @@ required:
   - unresolved_decisions
   - next_action
 optional:
+  workflow_type: Workflow type, one of delivery or audit_remediation. Missing legacy values read as delivery.
   extension: Name of the audit extension to load. Resolved from .devflow/extensions/<name>.md first, then the plugin's core/extensions/<name>.md, then default.
   plan_review:
     required: Whether plan review must be verified before WORK begins.
     status: Plan review status, one of pending, verified, or skipped.
     audit_file: Plan audit artifact path. Defaults to audits/plan.md for legacy STATE.
 backward_compatibility:
+  legacy_workflow_type: Existing STATE without workflow_type reads as delivery without a migration write.
   legacy_plan_review_audit_file: Existing plan_review without audit_file reads as audits/plan.md.
   migration: No migration command is required; runtime normalization preserves readability.
+workflow_type:
+  allowed: [delivery, audit_remediation]
 project_status:
   allowed: [planning, plan_review, phase_execution, work_audit, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, complete, blocked]
 phase_status:

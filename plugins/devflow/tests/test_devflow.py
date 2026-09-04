@@ -194,6 +194,121 @@ def case_init_creates_artifacts(root: Path) -> None:
     check("high risk requires a plan review", doc["plan_review"] == {"required": True, "status": "pending", "audit_file": "audits/plan.md"}, repr(doc.get("plan_review")))
 
 
+def case_audit_remediation_init_projects_integration_audit(root: Path) -> None:
+    out = devflow(root, "init", "billing", "--risk", "high", "--workflow", "audit-remediation")
+    state_file = root / "docs/domains/billing/STATE.yaml"
+    state_doc = yaml.safe_load(state_file.read_text()) if state_file.exists() else {}
+    check(
+        "audit remediation init starts with a phase-free integration initial audit",
+        out.returncode == 0
+        and state_doc.get("workflow_type") == "audit_remediation"
+        and state_doc.get("project_status") == "integration_audit"
+        and state_doc.get("phases") == {}
+        and state_doc.get("plan_review") == {
+            "required": False,
+            "status": "skipped",
+            "audit_file": "audits/plan.md",
+        }
+        and (state_doc.get("integration") or {}).get("status") == "audit"
+        and state_doc.get("next_action") == {
+            "role": "auditor",
+            "command": "audit",
+            "scope": "integration",
+            "mode": "initial",
+            "phase": None,
+            "work_item": None,
+        },
+        out.stdout + out.stderr + repr(state_doc),
+    )
+
+
+def case_audit_remediation_init_uses_mode_specific_templates(root: Path) -> None:
+    out = devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    domain = root / "docs/domains/billing"
+    prd = (domain / "PRD.md").read_text() if (domain / "PRD.md").exists() else ""
+    plan = (domain / "PLAN.md").read_text() if (domain / "PLAN.md").exists() else ""
+    prd_sections = [
+        "# Audit Scope Contract",
+        "## Audit target",
+        "## User-verified flows",
+        "## In scope",
+        "## Out of scope",
+        "## Authoritative requirements and policies",
+        "## Success criteria",
+        "## Open decisions",
+    ]
+    plan_sections = [
+        "# Audit and Remediation PLAN",
+        "## Metadata",
+        "## Repository reconnaissance",
+        "## Audit axes",
+        "## Evidence plan",
+        "## Finding disposition strategy",
+        "## Remediation topology",
+        "## Closure criteria",
+    ]
+    check(
+        "audit remediation init writes the mode-specific PRD and PLAN contracts",
+        out.returncode == 0
+        and all(section in prd for section in prd_sections)
+        and all(section in plan for section in plan_sections),
+        out.stdout + out.stderr + prd + plan,
+    )
+
+
+def case_legacy_120_domain_defaults_to_delivery(root: Path) -> None:
+    devflow(root, "init", "billing")
+    state_file = root / "docs/domains/billing/STATE.yaml"
+    legacy = yaml.safe_load(state_file.read_text())
+    legacy.pop("workflow_type", None)
+    dump(state_file, legacy)
+    before = state_file.read_text()
+    out = devflow(root, "status", "billing", "--json")
+    reported = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(
+        "legacy protocol 1.2.0 STATE reads as delivery without a migration write",
+        reported.get("workflow_type") == "delivery" and state_file.read_text() == before,
+        out.stdout + out.stderr + state_file.read_text(),
+    )
+
+
+def case_init_reports_runtime_and_domain_paths(root: Path) -> None:
+    out = devflow(root, "init", "billing")
+    check(
+        "init reports workflow, runtime config, domains root, and domain directory",
+        out.returncode == 0
+        and all(
+            line in out.stdout
+            for line in [
+                "workflow_type: delivery",
+                "runtime_config: .devflow/config.yaml",
+                "domains_root: docs/domains",
+                "domain_dir: docs/domains/billing",
+            ]
+        ),
+        out.stdout + out.stderr,
+    )
+
+
+def case_status_reports_workflow_and_domain_paths(root: Path) -> None:
+    devflow(root, "init", "billing")
+    out = devflow(root, "status", "billing")
+    check(
+        "status reports workflow, runtime config, domains root, and domain directory",
+        out.returncode == 0
+        and all(
+            line in out.stdout
+            for line in [
+                "workflow_type: delivery",
+                "runtime_config: .devflow/config.yaml",
+                "domains_root: docs/domains",
+                "domain_dir: docs/domains/billing",
+            ]
+        ),
+        out.stdout + out.stderr,
+    )
+
+
 def case_delivery_render_rejects_out_of_sequence_integration_audit(root: Path) -> None:
     broken_delivery_fixture(root)
     out = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
@@ -1465,6 +1580,11 @@ CASES = [
     case_fixtures_are_valid_yaml,
     case_timeout_diagnostics,
     case_init_creates_artifacts,
+    case_audit_remediation_init_projects_integration_audit,
+    case_audit_remediation_init_uses_mode_specific_templates,
+    case_legacy_120_domain_defaults_to_delivery,
+    case_init_reports_runtime_and_domain_paths,
+    case_status_reports_workflow_and_domain_paths,
     case_delivery_render_rejects_out_of_sequence_integration_audit,
     case_validate_rejects_orphan_phase_manifest,
     case_validate_rejects_placeholder_delivery_contract_before_execution,

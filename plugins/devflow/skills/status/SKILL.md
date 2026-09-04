@@ -25,8 +25,8 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 ## Workflow
 
 1. Run `devflow status <domain>`. It reports lifecycle position, blocked work, the computed next
-   action, the phase diff range when one is pinned, and the documents that action needs as
-   `next.input` lines.
+   action, workflow type, runtime config, domains root, domain directory, the phase diff range when
+   one is pinned, and the documents that action needs as `next.input` lines.
 2. When detailed machine state is needed, run `devflow status <domain> --json`.
 3. When the next executable work contract is needed, run `devflow next <domain>`.
 4. Read the domain's `PITFALLS.md` before acting on the next action. `status` reports where the work

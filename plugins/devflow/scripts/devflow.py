@@ -67,6 +67,7 @@ def load_schema(name: str) -> dict[str, Any]:
 STATE_SCHEMA = load_schema("state")
 WORK_SCHEMA = load_schema("work")
 STATE_REQUIRED_FIELDS = STATE_SCHEMA["required"]
+WORKFLOW_TYPES = set(STATE_SCHEMA["workflow_type"]["allowed"])
 PHASE_ENTRY_REQUIRED_FIELDS = STATE_SCHEMA["phase_entry"]["required"]
 PROJECT_STATUSES = set(STATE_SCHEMA["project_status"]["allowed"])
 PHASE_STATUSES = set(STATE_SCHEMA["phase_status"]["allowed"])
@@ -179,6 +180,11 @@ def normalized_phases(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def effective_workflow_type(state: dict[str, Any]) -> str:
+    """Return the legacy-compatible workflow type without mutating STATE."""
+    return str(state["workflow_type"]) if "workflow_type" in state else "delivery"
+
+
 def raw_phase_key(state: dict[str, Any], key: str) -> str | None:
     for raw in (state.get("phases", {}) or {}):
         if phase_key(raw) == key:
@@ -190,6 +196,7 @@ def init_domain(args: argparse.Namespace) -> int:
     root = repo_root()
     ensure_runtime(root)
     d = domain_dir(root, args.domain)
+    workflow_type = args.workflow.replace("-", "_")
     d.mkdir(parents=True, exist_ok=True)
     (d / "work").mkdir(exist_ok=True)
     (d / "audits").mkdir(exist_ok=True)
@@ -203,29 +210,41 @@ def init_domain(args: argparse.Namespace) -> int:
         if not prd.exists() or args.force:
             prd.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     elif not prd.exists():
-        prd.write_text(read_template("PRD.md"), encoding="utf-8")
+        template = "PRD.audit-remediation.md" if workflow_type == "audit_remediation" else "PRD.md"
+        prd.write_text(read_template(template), encoding="utf-8")
 
-    for name in ["PLAN.md", "DECISIONS.md", "PITFALLS.md"]:
+    templates = {
+        "PLAN.md": "PLAN.audit-remediation.md" if workflow_type == "audit_remediation" else "PLAN.md",
+        "DECISIONS.md": "DECISIONS.md",
+        "PITFALLS.md": "PITFALLS.md",
+    }
+    for name, template in templates.items():
         target = d / name
         if not target.exists():
-            target.write_text(read_template(name), encoding="utf-8")
+            target.write_text(read_template(template), encoding="utf-8")
 
     state = load_yaml(state_path(root, args.domain), {}) or {}
     state.setdefault("protocol_version", PROTOCOL_VERSION)
+    state.setdefault("workflow_type", workflow_type)
     state["domain"] = args.domain
     state.setdefault("risk_profile", args.risk)
     state.setdefault("extension", args.extension)
-    state.setdefault("project_status", "planning")
+    state.setdefault("project_status", "integration_audit" if workflow_type == "audit_remediation" else "planning")
     state.setdefault("baseline_sha", current_sha(root))
     state.setdefault("target_sha", current_sha(root))
     state.setdefault("active_phase", None)
-    state.setdefault("plan_review", {"required": args.risk in HIGH_RISK, "status": "pending" if args.risk in HIGH_RISK else "skipped", "audit_file": "audits/plan.md"})
+    plan_review_required = workflow_type == "delivery" and args.risk in HIGH_RISK
+    state.setdefault("plan_review", {"required": plan_review_required, "status": "pending" if plan_review_required else "skipped", "audit_file": "audits/plan.md"})
     state.setdefault("phases", {})
-    state.setdefault("integration", {"status": "pending", "work_file": "work/integration.yaml", "audit_file": "audits/integration.md"})
+    state.setdefault("integration", {"status": "audit" if workflow_type == "audit_remediation" else "pending", "work_file": "work/integration.yaml", "audit_file": "audits/integration.md"})
     state.setdefault("unresolved_decisions", [])
-    state.setdefault("next_action", {"role": "architect", "command": "plan", "scope": "project", "phase": None, "work_item": None})
+    state.setdefault("next_action", {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None} if workflow_type == "audit_remediation" else {"role": "architect", "command": "plan", "scope": "project", "phase": None, "work_item": None})
     dump_yaml(state_path(root, args.domain), state)
     print(f"Initialized DevFlow domain: {d.relative_to(root)}")
+    print(f"workflow_type: {effective_workflow_type(state)}")
+    print("runtime_config: .devflow/config.yaml")
+    print(f"domains_root: {runtime_config(root)['domains_root']}")
+    print(f"domain_dir: {d.relative_to(root)}")
     print(f"baseline_sha: {short_sha(state.get('baseline_sha'))}")
     print(f"extension: {resolve_extension(root, state)}")
     return 0
@@ -525,6 +544,16 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
     d = domain_dir(root, domain)
     work = work_files(d)
     if not work:
+        if effective_workflow_type(state) == "audit_remediation":
+            if state.get("unresolved_decisions"):
+                return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
+            integration_status = (state.get("integration") or {}).get("status", "audit")
+            if integration_status in {"pending", "audit"}:
+                return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
+            if integration_status == "closure":
+                return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+            if integration_status == "verified":
+                return {"role": "none", "command": "complete", "scope": "project", "phase": None, "work_item": None}
         return {"role": "architect", "command": "plan", "scope": "project", "phase": None, "work_item": None}
 
     plan_review = effective_plan_review(state)
@@ -688,11 +717,22 @@ def print_status(args: argparse.Namespace) -> int:
         print(f"Domain not initialized: {args.domain}", file=sys.stderr)
         return 2
     state = refresh_state(root, args.domain)
+    cfg = runtime_config(root)
+    d = domain_dir(root, args.domain)
     if args.json:
-        print(json.dumps(state, ensure_ascii=False, indent=2))
+        report = dict(state)
+        report.setdefault("workflow_type", effective_workflow_type(state))
+        report["runtime_config"] = ".devflow/config.yaml"
+        report["domains_root"] = cfg["domains_root"]
+        report["domain_dir"] = str(d.relative_to(root))
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     action = state.get("next_action", {}) or {}
     print(f"domain: {state.get('domain')}")
+    print(f"workflow_type: {effective_workflow_type(state)}")
+    print("runtime_config: .devflow/config.yaml")
+    print(f"domains_root: {cfg['domains_root']}")
+    print(f"domain_dir: {d.relative_to(root)}")
     print(f"project_status: {state.get('project_status')}")
     print(f"risk_profile: {state.get('risk_profile')}")
     print(f"baseline_sha: {short_sha(state.get('baseline_sha'))}")
@@ -1033,6 +1073,8 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
         if field not in state:
             errors.append(f"STATE missing field: {field}")
     validate_protocol_version(state, errors, warnings)
+    if effective_workflow_type(state) not in WORKFLOW_TYPES:
+        errors.append(f"Invalid workflow_type: {state.get('workflow_type')}")
     if state.get("project_status") not in PROJECT_STATUSES:
         errors.append(f"Invalid project_status: {state.get('project_status')}")
     if state.get("risk_profile") not in RISK_LEVELS:
@@ -1466,6 +1508,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("init")
     sp.add_argument("domain")
     sp.add_argument("--risk", choices=sorted(RISK_LEVELS), default="medium")
+    sp.add_argument("--workflow", choices=["delivery", "audit-remediation"], default="delivery")
     sp.add_argument("--extension", default="default")
     sp.add_argument("--prd")
     sp.add_argument("--force", action="store_true")
