@@ -2210,6 +2210,72 @@ def case_audit_remediation_full_lifecycle_without_findings(root: Path) -> None:
     )
 
 
+def case_malformed_closure_metadata_does_not_hide_ready_work(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    ready = v2_item("INT-I01")
+    dump(d / "work/integration.yaml", work_v2("integration", ready))
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["integration"]["status"] = "remediation"
+    state_doc["next_action"] = {
+        "role": "auditor",
+        "command": "audit",
+        "scope": "integration",
+        "mode": "closure",
+        "phase": None,
+        "work_item": None,
+    }
+    dump(d / "STATE.yaml", state_doc)
+    (d / "audits").mkdir(parents=True, exist_ok=True)
+    (d / "audits/integration.md").write_text("---\nmode: closure\n---\n\n# Invalid closure\n", encoding="utf-8")
+
+    status = devflow(root, "status", "billing", "--json")
+    reported = json.loads(status.stdout) if status.returncode == 0 else {}
+    check(
+        "schema-invalid closure metadata cannot hide ready integration WORK",
+        status.returncode == 0
+        and reported.get("next_action", {}).get("command") == "run"
+        and reported.get("next_action", {}).get("work_item") == "INT-I01",
+        status.stdout + status.stderr,
+    )
+
+
+def case_latest_prior_audit_rejects_duplicate_finding_ids(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["integration"]["status"] = "remediation"
+    state_doc["next_action"] = {
+        "role": "auditor",
+        "command": "audit",
+        "scope": "integration",
+        "mode": "closure",
+        "phase": None,
+        "work_item": None,
+    }
+    dump(d / "STATE.yaml", state_doc)
+    finding = audit_finding("F-01")
+    closure = [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["verified"], "reopened_as": []}]
+
+    write_audit(d / "audits/integration.md", audit_metadata(d, findings=[finding]))
+    commit_paths(root, "record valid initial audit", d / "audits/integration.md")
+    devflow(root, "status", "billing")
+    write_audit(
+        d / "audits/integration.md",
+        audit_metadata(d, mode="closure", findings=[finding, copy.deepcopy(finding)], closure=closure),
+    )
+    commit_paths(root, "record invalid duplicate prior audit", d / "audits/integration.md")
+    devflow(root, "status", "billing")
+    write_audit(d / "audits/integration.md", audit_metadata(d, mode="closure", findings=[finding], closure=closure))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    applied = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "latest committed prior audit rejects duplicate finding IDs atomically",
+        applied.returncode == 2 and "duplicate" in applied.stderr.lower() and before == after,
+        applied.stdout + applied.stderr,
+    )
+
+
 def case_audit_remediation_full_lifecycle_with_remediation(root: Path) -> None:
     initialized = devflow(root, "init", "billing", "--workflow", "audit-remediation")
     d = root / "docs/domains/billing"
@@ -2338,6 +2404,19 @@ def case_audit_remediation_full_lifecycle_with_decision(root: Path) -> None:
         "- Rationale: The selected policy satisfies the approved requirement.\n",
         encoding="utf-8",
     )
+    resolved = devflow(root, "decision", "resolve", "billing", "DEC-001")
+    after_resolution = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    validated_resolution = devflow(root, "validate", "billing")
+    check(
+        "full decision lifecycle resolves the decision before creating WORK",
+        resolved.returncode == 0
+        and after_resolution["unresolved_decisions"] == []
+        and validated_resolution.returncode == 0
+        and not (d / "work/integration.yaml").exists()
+        and "Decision: Retain records for 30 days." in (d / "DECISIONS.md").read_text(encoding="utf-8"),
+        resolved.stdout + resolved.stderr + validated_resolution.stdout + validated_resolution.stderr + repr(after_resolution),
+    )
+
     selected = v2_item(
         "INT-I01",
         acceptance=[{"id": "AC-INT-I01-01", "criterion": "Records are retained for exactly 30 days."}],
@@ -2346,19 +2425,17 @@ def case_audit_remediation_full_lifecycle_with_decision(root: Path) -> None:
     selected["objective"] = "Implement the selected 30-day retention path."
     selected["decision_dependencies"] = ["DEC-001"]
     dump(d / "work/integration.yaml", work_v2("integration", selected))
-    resolved = devflow(root, "decision", "resolve", "billing", "DEC-001")
-    after_resolution = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    ready_status = devflow(root, "status", "billing", "--json")
     persisted = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
     check(
         "full decision lifecycle releases one concrete selected-path WORK v2",
-        resolved.returncode == 0
-        and after_resolution["unresolved_decisions"] == []
-        and after_resolution["next_action"]["command"] == "run"
-        and after_resolution["next_action"]["work_item"] == "INT-I01"
+        ready_status.returncode == 0
+        and json.loads(ready_status.stdout)["next_action"]["command"] == "run"
+        and json.loads(ready_status.stdout)["next_action"]["work_item"] == "INT-I01"
         and persisted["version"] == 2
         and persisted["items"][0]["decision_dependencies"] == ["DEC-001"]
-        and "Decision: Retain records for 30 days." in (d / "DECISIONS.md").read_text(encoding="utf-8"),
-        resolved.stdout + resolved.stderr + repr(after_resolution) + repr(persisted),
+        and persisted["items"][0]["status"] == "ready",
+        ready_status.stdout + ready_status.stderr + repr(persisted),
     )
 
     rendered_run = devflow(root, "render", "run", "billing", "--task", "INT-I01")
@@ -2446,12 +2523,6 @@ def case_audit_remediation_full_lifecycle_with_reopened_finding(root: Path) -> N
     )
 
     commit_paths(root, "record reopened closure", d / "audits/integration.md")
-    devflow(root, "status", "billing")
-    write_audit(
-        d / "audits/integration.md",
-        audit_metadata(d, verdict="fail", findings=[first_finding, reopened_finding]),
-    )
-    commit_paths(root, "record reopened initial audit", d / "audits/integration.md")
     started_second = devflow(root, "work", "start", "billing", "INT-R02")
     done_second = devflow(root, "work", "done", "billing", "INT-R02", "--command", "true -> passed")
     rendered_second_closure = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "closure")
@@ -2479,7 +2550,7 @@ def case_audit_remediation_full_lifecycle_with_reopened_finding(root: Path) -> N
         and completed["next_action"]["command"] == "complete"
         and json.loads(status.stdout)["project_status"] == "complete"
         and devflow(root, "validate", "billing").returncode == 0,
-        started_second.stdout + started_second.stderr + done_second.stdout + done_second.stderr + rendered_second_closure.stdout + rendered_second_closure.stderr + applied_second_closure.stdout + applied_second_closure.stderr + status.stdout + status.stderr + repr(completed),
+        applied_second_closure.stdout + applied_second_closure.stderr + started_second.stdout + started_second.stderr + done_second.stdout + done_second.stderr + rendered_second_closure.stdout + rendered_second_closure.stderr + status.stdout + status.stderr + repr(completed),
     )
 
 
@@ -4841,6 +4912,8 @@ CASES = [
     case_audit_closure_covers_every_prior_finding,
     case_audit_closure_reopens_finding,
     case_audit_remediation_lifecycle_reaches_closure_and_complete,
+    case_malformed_closure_metadata_does_not_hide_ready_work,
+    case_latest_prior_audit_rejects_duplicate_finding_ids,
     case_audit_remediation_full_lifecycle_without_findings,
     case_audit_remediation_full_lifecycle_with_remediation,
     case_audit_remediation_full_lifecycle_with_decision,
