@@ -192,7 +192,7 @@ def audit_schema_contract_errors(
             "rubric": "verdict",
         },
         "finding": {
-            "root_keys": {"schema", "type", "contract", "required", "properties"},
+            "root_keys": {"schema", "type", "contract", "required", "properties", "classification"},
             "contract_keys": {"required_allowed", "references"},
             "required_allowed": {
                 "properties.classification",
@@ -263,6 +263,22 @@ def audit_schema_contract_errors(
             for rules in rubric.values()
         ):
             errors.append(f"{rubric_name} rubric rules must be non-empty collections")
+    if name == "finding":
+        classifications = nested_schema_value(schema, "properties.classification.allowed")
+        dispositions = nested_schema_value(schema, "classification.disposition")
+        allowed_actions = nested_schema_value(schema, "properties.disposition.properties.action.allowed")
+        if not isinstance(classifications, list) or not isinstance(dispositions, dict) or set(dispositions) != set(classifications):
+            errors.append("classification.disposition must cover every allowed classification exactly")
+        elif not isinstance(allowed_actions, list):
+            errors.append("properties.disposition.properties.action.allowed is required")
+        elif any(
+            not isinstance(rule, dict)
+            or rule.get("action") not in allowed_actions
+            or rule.get("work_ids") not in {"required", "empty"}
+            or rule.get("decision_ids") not in {"required", "empty"}
+            for rule in dispositions.values()
+        ):
+            errors.append("classification.disposition rules are invalid")
     return errors
 
 
@@ -355,6 +371,8 @@ TERMINAL_STATUSES = set(WORK_SCHEMA["terminal"])
 KINDS = set(WORK_SCHEMA["kind"]["allowed"])
 RISK_LEVELS = set(WORK_SCHEMA["risk_level"]["allowed"])
 REVIEW_STATUSES = set(WORK_SCHEMA.get("review_status", {}).get("allowed", ["skipped", "pending", "remediation", "blocked", "verified"]))
+FINDING_TRACEABILITY_KINDS = set(WORK_SCHEMA["finding_traceability"]["required_for_kinds"])
+AGGREGATION_REASON_THRESHOLD = int(WORK_SCHEMA["finding_traceability"]["aggregation_reason_required_when_findings_at_least"])
 
 
 def atomic_write_text(path: Path, content: str) -> None:
@@ -1606,6 +1624,14 @@ def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: se
         errors.append(f"{item_id}: invalid status {status}")
     if level not in RISK_LEVELS:
         errors.append(f"{item_id}: invalid risk.level {level}")
+    origin = item.get("origin") or {}
+    findings = origin.get("findings", []) if isinstance(origin, dict) else []
+    if kind in FINDING_TRACEABILITY_KINDS and not has_nonblank_string(findings):
+        errors.append(f"{item_id}: kind={kind} requires nonempty origin.findings")
+    if isinstance(findings, list) and len(findings) >= AGGREGATION_REASON_THRESHOLD:
+        aggregation_reason = origin.get("aggregation_reason")
+        if not isinstance(aggregation_reason, str) or not aggregation_reason.strip():
+            errors.append(f"{item_id}: multiple origin.findings require nonblank origin.aggregation_reason")
     if not (item.get("acceptance") or []):
         errors.append(f"{item_id}: acceptance must not be empty")
     if not has_nonblank_string((item.get("verification") or {}).get("commands")):
@@ -1909,14 +1935,63 @@ def validate_audit_metadata(
     decisions_text = (d / "DECISIONS.md").read_text(encoding="utf-8") if (d / "DECISIONS.md").exists() else ""
     resolved_text = decisions_text.partition("## Resolved")[2]
     finding_by_id = {str(finding["id"]): finding for finding in findings}
+    disposition_contracts = finding_schema["classification"]["disposition"]
     for finding in findings:
         disposition = finding["disposition"]
+        classification = str(finding["classification"])
+        contract = disposition_contracts[classification]
+        if disposition["action"] != contract["action"]:
+            errors.append(
+                f"{finding['id']}: {classification} requires disposition.action={contract['action']}"
+            )
+        for field in ["work_ids", "decision_ids"]:
+            values = disposition[field]
+            if contract[field] == "required" and not values:
+                errors.append(f"{finding['id']}: {classification} requires at least one {field}")
+            elif contract[field] == "empty" and values:
+                errors.append(f"{finding['id']}: {classification} requires empty {field}")
         for linked_work in disposition["work_ids"]:
-            if str(linked_work) not in work_index:
+            target = work_index.get(str(linked_work))
+            if target is None:
                 errors.append(f"{finding['id']}: linked WORK does not exist: {linked_work}")
+                continue
+            work_item_doc = target[1]
+            work_origin = work_item_doc.get("origin") or {}
+            work_findings = [
+                str(value)
+                for value in (work_origin.get("findings", []) or [])
+            ] if isinstance(work_origin, dict) else []
+            if str(finding["id"]) not in work_findings:
+                errors.append(
+                    f"{finding['id']}: linked WORK {linked_work} origin.findings does not include {finding['id']}"
+                )
+            unknown_findings = sorted(set(work_findings) - set(finding_ids))
+            if unknown_findings:
+                errors.append(
+                    f"{linked_work}: origin.findings references finding absent from audit: {', '.join(unknown_findings)}"
+                )
+            expected_kind = contract.get("work_kind")
+            if expected_kind and work_item_doc.get("kind") != expected_kind:
+                errors.append(
+                    f"{finding['id']}: linked WORK {linked_work} must use kind {expected_kind}, not {work_item_doc.get('kind')}"
+                )
         for decision_id in disposition["decision_ids"]:
             if not exact_id_pattern(str(decision_id)).search(decisions_text):
                 errors.append(f"{finding['id']}: linked decision does not exist in DECISIONS.md: {decision_id}")
+
+    for work_id, (_, work_item_doc) in work_index.items():
+        work_origin = work_item_doc.get("origin") or {}
+        work_findings = {
+            str(value)
+            for value in (work_origin.get("findings", []) or [])
+        } if isinstance(work_origin, dict) else set()
+        for finding_id in sorted(work_findings & set(finding_ids)):
+            finding = finding_by_id[finding_id]
+            disposition = finding["disposition"]
+            if work_id not in {str(value) for value in disposition["work_ids"]}:
+                errors.append(f"{work_id}: origin.findings includes {finding_id}, but its audit disposition does not link this WORK")
+            if finding["classification"] == "DECISION_REQUIRED" and work_item_doc.get("status") == "ready":
+                errors.append(f"{finding_id}: DECISION_REQUIRED finding cannot generate ready WORK {work_id}")
 
     if mode == "closure":
         for finding_id, entry in closure_by_id.items():

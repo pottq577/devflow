@@ -50,12 +50,12 @@ properties:
 classification:
   allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
   disposition:
-    CONFIRMED: create remediation WORK
-    DECISION_REQUIRED: record the decision, block dependent WORK, create no code change
-    EVIDENCE_REQUIRED: create evidence WORK, never product-code changes
-    REJECTED: keep the audit record only
-    DOCUMENTATION_DRIFT: create documentation WORK
-    SPEC_DRIFT: stop affected execution until the conflict is resolved
+    CONFIRMED: {action: remediation_work, work_kind: remediation, work_ids: required, decision_ids: empty}
+    DECISION_REQUIRED: {action: decision, work_ids: empty, decision_ids: required}
+    EVIDENCE_REQUIRED: {action: evidence_work, work_kind: evidence, work_ids: required, decision_ids: empty}
+    REJECTED: {action: record_only, work_ids: empty, decision_ids: empty}
+    DOCUMENTATION_DRIFT: {action: documentation_work, work_kind: documentation, work_ids: required, decision_ids: empty}
+    SPEC_DRIFT: {action: stop, work_ids: empty, decision_ids: empty}
 severity:
   allowed: [blocker, major, minor, nit]
   meaning:

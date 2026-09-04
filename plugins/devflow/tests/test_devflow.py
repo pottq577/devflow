@@ -640,6 +640,208 @@ def case_audit_apply_validates_finding_links(root: Path) -> None:
     )
 
 
+def case_multi_finding_work_requires_aggregation_reason(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    combined = item(
+        "P01-R01",
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-01", "F-02"], "plan_items": []},
+    )
+    dump(d / "work/phase-01.yaml", work("01", combined))
+
+    out = devflow(root, "validate", "billing")
+    check(
+        "multi-finding WORK requires an explicit aggregation reason",
+        out.returncode == 1 and "origin.aggregation_reason" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_multi_finding_work_accepts_coherent_explicit_aggregation(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    combined = item(
+        "P01-R01",
+        kind="remediation",
+        origin={
+            "requirements": [],
+            "findings": ["F-01", "F-02"],
+            "plan_items": [],
+            "aggregation_reason": "Both findings share one root cause, change boundary, and verification set.",
+        },
+    )
+    dump(d / "work/phase-01.yaml", work("01", combined))
+
+    out = devflow(root, "validate", "billing")
+    check(
+        "multi-finding WORK accepts a nonblank explicit aggregation reason",
+        out.returncode == 0,
+        out.stdout + out.stderr,
+    )
+
+
+def case_audit_work_links_are_bidirectional(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    remediation = item(
+        "INT-R01",
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-02"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", remediation))
+    finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="major",
+        severity_reason="The confirmed defect requires remediation.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+
+    rejected = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "audit finding to WORK link requires the reciprocal WORK origin link",
+        rejected.returncode == 2 and "INT-R01" in rejected.stderr and "F-01" in rejected.stderr and "origin.findings" in rejected.stderr,
+        rejected.stdout + rejected.stderr,
+    )
+
+    remediation["origin"]["findings"] = ["F-01"]
+    dump(d / "work/integration.yaml", work("integration", remediation))
+    accepted = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "reciprocal audit finding and WORK origin links are accepted",
+        accepted.returncode == 0,
+        accepted.stdout + accepted.stderr,
+    )
+
+
+def case_decision_finding_cannot_generate_ready_work(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    (d / "DECISIONS.md").write_text("# Decisions\n\n## DEC-001\n\nChoose one product policy.\n", encoding="utf-8")
+    decision_work = item(
+        "INT-I01",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+        decision_dependencies=["DEC-001"],
+    )
+    dump(d / "work/integration.yaml", work("integration", decision_work))
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="A product policy choice is unresolved.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-001"]},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "decision-required finding cannot generate ready WORK",
+        out.returncode == 2 and "DECISION_REQUIRED" in out.stderr and "INT-I01" in out.stderr and "ready" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+
+def case_decision_finding_requires_decision_id(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="A product policy choice is unresolved.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "decision-required finding requires a decision id",
+        out.returncode == 2 and "DECISION_REQUIRED" in out.stderr and "decision_ids" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+
+def case_evidence_finding_requires_evidence_work(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    wrong_kind = item(
+        "INT-E01",
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", wrong_kind))
+    finding = audit_finding(
+        "F-01",
+        classification="EVIDENCE_REQUIRED",
+        severity="major",
+        severity_reason="Repository evidence is incomplete.",
+        disposition={"action": "evidence_work", "work_ids": ["INT-E01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "evidence-required finding requires evidence WORK",
+        out.returncode == 2 and "INT-E01" in out.stderr and "kind evidence" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+
+def case_documentation_drift_requires_documentation_work(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    wrong_kind = item(
+        "INT-D01",
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", wrong_kind))
+    finding = audit_finding(
+        "F-01",
+        classification="DOCUMENTATION_DRIFT",
+        severity="major",
+        severity_reason="Current documentation contradicts verified behavior.",
+        disposition={"action": "documentation_work", "work_ids": ["INT-D01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "documentation drift requires documentation WORK",
+        out.returncode == 2 and "INT-D01" in out.stderr and "kind documentation" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+
+def case_work_cannot_reference_unknown_audit_finding(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    remediation = item(
+        "INT-R01",
+        kind="remediation",
+        origin={
+            "requirements": [],
+            "findings": ["F-01", "F-404"],
+            "plan_items": [],
+            "aggregation_reason": "The two finding IDs are claimed to share one remediation boundary.",
+        },
+    )
+    dump(d / "work/integration.yaml", work("integration", remediation))
+    finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="major",
+        severity_reason="The confirmed defect requires remediation.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "WORK cannot reference a finding absent from its audit",
+        out.returncode == 2 and "INT-R01" in out.stderr and "F-404" in out.stderr and "absent from audit" in out.stderr,
+        out.stdout + out.stderr,
+    )
+
+
 def case_audit_apply_failure_is_atomic(root: Path) -> None:
     d = audit_remediation_fixture(root)
     dump(d / "work/integration.yaml", work("integration", item("INT-I01")))
@@ -1254,7 +1456,11 @@ def case_delivery_integration_prioritizes_unresolved_decisions(root: Path) -> No
 def case_plan_review_remediation_metadata_is_validated(root: Path) -> None:
     devflow(root, "init", "billing", "--risk", "high")
     d = root / "docs/domains/billing"
-    dump(d / "work/phase-01.yaml", work("01", item("P01-R01", kind="documentation")))
+    dump(d / "work/phase-01.yaml", work("01", item(
+        "P01-R01",
+        kind="documentation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )))
     state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
     state_doc["phases"] = {"01": phase("executing", "01")}
     state_doc["plan_review"].update(status="remediation", remediation_work_ids=7)
@@ -1313,8 +1519,7 @@ def case_spec_drift_stop_blocks_every_audit_scope(root: Path) -> None:
 
     devflow(root, "init", "plan-stop", "--risk", "high")
     plan_dir = root / "docs/domains/plan-stop"
-    plan_work = item("P01-R01", kind="documentation", status="done")
-    plan_work["origin"]["findings"] = ["F-01"]
+    plan_work = item("P01-R01", status="done", commands=["true -> passed"])
     dump(plan_dir / "work/phase-01.yaml", work("01", plan_work))
     write_audit(plan_dir / "audits/plan.md", audit_metadata(plan_dir, scope="plan", verdict="conditional_pass", findings=[prior]))
     commit_paths(root, "record initial plan stop audit", plan_dir / "audits/plan.md")
@@ -1335,8 +1540,7 @@ def case_spec_drift_stop_blocks_every_audit_scope(root: Path) -> None:
         "audit_file": "audits/work/P01-I01.md",
         "remediation_work_ids": ["P01-R01"],
     }
-    remediation = item("P01-R01", kind="documentation", status="done")
-    remediation["origin"]["findings"] = ["F-01"]
+    remediation = item("P01-R01", status="done", commands=["true -> passed"])
     dump(work_dir / "work/phase-01.yaml", work("01", reviewed, remediation))
     work_state = yaml.safe_load((work_dir / "STATE.yaml").read_text(encoding="utf-8"))
     work_state["phases"] = {"01": phase("executing", "01")}
@@ -1349,7 +1553,11 @@ def case_spec_drift_stop_blocks_every_audit_scope(root: Path) -> None:
 
     devflow(root, "init", "phase-stop")
     phase_dir = root / "docs/domains/phase-stop"
-    dump(phase_dir / "work/phase-01.yaml", work("01", item("P01-R01", kind="documentation", status="done")))
+    dump(phase_dir / "work/phase-01.yaml", work("01", item(
+        "P01-R01",
+        status="done",
+        commands=["true -> passed"],
+    )))
     phase_state = yaml.safe_load((phase_dir / "STATE.yaml").read_text(encoding="utf-8"))
     phase_state["phases"] = {"01": phase("remediation", "01")}
     dump(phase_dir / "STATE.yaml", phase_state)
@@ -1516,7 +1724,12 @@ def case_evidence_required(root: Path) -> None:
     out = devflow(root, "validate", "billing").stdout
     check("validate rejects done with empty evidence.commands", "done without evidence.commands" in out, out)
 
-    dump(d / "work/phase-01.yaml", work("01", item("P01-I03", status="done", kind="documentation")))
+    dump(d / "work/phase-01.yaml", work("01", item(
+        "P01-I03",
+        status="done",
+        kind="documentation",
+        origin={"requirements": [], "findings": ["F-DOC-001"], "plan_items": []},
+    )))
     out = devflow(root, "validate", "billing").stdout
     check("documentation items are exempt from evidence.commands", "done without evidence.commands" not in out, out)
 
@@ -1734,7 +1947,13 @@ UNRELATED_PLAN_P09_99
         review={"required": True, "status": "remediation", "audit_file": "audits/work/P01-I01.md", "remediation_work_ids": ["REM-I01"]},
     )
     reviewed["evidence"]["commands"] = ["true -> context evidence"]
-    remediation = item("REM-I01", kind="remediation", status="done", commands=["true -> remediation evidence"])
+    remediation = item(
+        "REM-I01",
+        kind="remediation",
+        status="done",
+        commands=["true -> remediation evidence"],
+        origin={"requirements": [], "findings": ["F-REM-001"], "plan_items": []},
+    )
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work("01", reviewed, remediation))
     (d / "work/phase-02.yaml").unlink()
@@ -2673,6 +2892,14 @@ CASES = [
     case_audit_apply_requires_exact_next_action,
     case_audit_apply_validates_verdict_against_findings,
     case_audit_apply_validates_finding_links,
+    case_multi_finding_work_requires_aggregation_reason,
+    case_multi_finding_work_accepts_coherent_explicit_aggregation,
+    case_audit_work_links_are_bidirectional,
+    case_decision_finding_cannot_generate_ready_work,
+    case_decision_finding_requires_decision_id,
+    case_evidence_finding_requires_evidence_work,
+    case_documentation_drift_requires_documentation_work,
+    case_work_cannot_reference_unknown_audit_finding,
     case_audit_apply_failure_is_atomic,
     case_audit_apply_updates_state_and_next_action,
     case_audit_closure_covers_every_prior_finding,

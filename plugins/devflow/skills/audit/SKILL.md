@@ -55,13 +55,18 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
    `conditional_pass`, or `fail`.
 9. **Never record `pass` without evidence.** Only a command you actually executed, with its output,
    is grounds for a pass.
-10. Create remediation WORK for confirmed and documentation findings, and evidence WORK for
-    evidence-required findings. Give each generated item `context`, `premise_checks`, and `pitfalls`
-    the same as any planned item. Build dependencies before severity ordering.
-11. Document unresolved decisions in `DECISIONS.md`. Never guess the policy. `audit apply` registers
+10. Create remediation WORK for confirmed findings, documentation WORK for documentation findings,
+    and evidence WORK for evidence-required findings. Give each generated item `context`, `premise_checks`, and `pitfalls`
+    the same as any planned item. Link every item and finding in both directions. Default to one
+    finding per WORK; when root cause, change and rollback boundary, and verification are shared,
+    explain the aggregation in `origin.aggregation_reason`. Build dependencies before severity ordering.
+11. Preserve the finding's expected event and outcome in WORK objective and acceptance. Do not infer
+    or substitute a different meaning. Re-read generated WORK and record coverage in the audit body.
+12. Document unresolved decisions in `DECISIONS.md`. Never guess the policy or create ready code WORK
+    before resolution. `audit apply` registers
     their IDs in STATE after validating the complete outcome.
-12. Add durable traps you uncovered to `PITFALLS.md`.
-13. After writing the audit artifact and linked WORK or decisions, run
+13. Add durable traps you uncovered to `PITFALLS.md`.
+14. After writing the audit artifact and linked WORK or decisions, run
     `devflow audit apply <domain> --scope <scope> --mode <mode>` with `--task <WORK-ID>` or
     `--phase <PHASE>` when required. Do not edit STATE or use a legacy verified transition to apply
     the audit. Commit the initial canonical audit before a later closure so the runtime can identify

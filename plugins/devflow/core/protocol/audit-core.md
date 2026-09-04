@@ -181,6 +181,19 @@ Everything above, plus:
 Every finding must state expected behavior, actual behavior, evidence, root cause or uncertainty,
 classification, severity, a nonblank severity reason, and disposition.
 
+Finding disposition is structural. `CONFIRMED`, `EVIDENCE_REQUIRED`, and `DOCUMENTATION_DRIFT`
+link respectively to `remediation`, `evidence`, and `documentation` WORK. Each linked WORK carries
+the finding ID in `origin.findings`, and each such origin link is listed in the finding's
+`disposition.work_ids`. Two or more findings may share one WORK only when
+`origin.aggregation_reason` states why they share one root cause, change and rollback boundary, and
+verification set. The runtime validates the links and the presence of this rationale. It does not
+infer semantic equivalence from prose.
+
+`DECISION_REQUIRED` uses `disposition.action: decision`, has one or more `decision_ids`, and has no
+`work_ids`. Record each ID and its options in `DECISIONS.md` before applying the audit. Audit apply
+registers it in `STATE.unresolved_decisions`; do not create ready implementation WORK from the
+finding before the decision is resolved.
+
 ## 8. Machine-readable audit outcome
 
 The canonical audit Markdown starts with YAML front matter conforming to
@@ -199,9 +212,9 @@ devflow audit apply <domain> --scope integration --mode initial|closure
 ```
 
 The runtime reads only the canonical audit file recorded by STATE or WORK. It rejects malformed or
-duplicate-key front matter, schema and verdict mismatches, missing links, incomplete closure
-coverage, unfinished remediation, and any request that differs from the computed next action. It
-validates the prospective domain before writing lifecycle state. The auditor never edits STATE to
+duplicate-key front matter, schema and verdict mismatches, missing or one-way finding links,
+incomplete closure coverage, unfinished remediation, and any request that differs from the computed
+next action. It validates the prospective domain before writing lifecycle state. The auditor never edits STATE to
 apply an outcome.
 
 Closure coverage comes from the canonical file's committed initial Git version. Every initial

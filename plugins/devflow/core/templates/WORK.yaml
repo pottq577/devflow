@@ -8,6 +8,7 @@ items:
       requirements: [REQ-001]
       findings: []
       plan_items: [P01-01]
+      aggregation_reason: null
     objective: Replace with one verifiable change objective.
 
     # Repository facts the Architect verified while planning. The Executor trusts these

@@ -22,12 +22,16 @@ of rendering or executing another lifecycle action.
    onto execution, where there is less context to spend.
 8. Build explicit dependencies and requirement traceability. Register a transferred requirement in
    the receiving phase through `transfer.to`.
-9. Set phase entries with zero-padded keys, and pin each phase's diff range with
+9. Preserve finding semantics when turning an audit finding into WORK. Keep the expected event and
+   outcome in objective and acceptance. Link both directions through the audit disposition and
+   `origin.findings`; explain any multi-finding WORK in `origin.aggregation_reason`.
+10. Set phase entries with zero-padded keys, and pin each phase's diff range with
    `devflow phase ref` once its branch exists.
-10. Record unresolved human decisions in `DECISIONS.md` and STATE.
-11. Add domain traps you discovered to `PITFALLS.md`.
-12. Run DevFlow validation and correct structural errors.
-13. Set STATE so `status` can compute the next action.
+11. Record unresolved human decisions in `DECISIONS.md` and STATE. Do not create ready code-changing
+    WORK until the decision is resolved.
+12. Add domain traps you discovered to `PITFALLS.md`.
+13. Run DevFlow validation and correct structural errors.
+14. Set STATE so `status` can compute the next action.
 
 For a high-risk domain, leave plan review pending until its initial plan audit is verified. The
 runtime reports the next action but does not autonomously orchestrate execution or review.

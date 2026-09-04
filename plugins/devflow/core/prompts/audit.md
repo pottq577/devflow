@@ -28,13 +28,20 @@ next action. Re-run `devflow status` instead of auditing another lifecycle posit
    findings in the file when recording closure outcomes.
 8. Never write `pass` without evidence. Only a command you actually executed, with its output, is
    grounds for a pass.
-9. Create remediation WORK directly for `CONFIRMED` and `DOCUMENTATION_DRIFT` findings, carrying
-   `context`, `premise_checks`, and `pitfalls` the same as any planned item.
+9. Create remediation WORK for `CONFIRMED` findings and documentation WORK for
+   `DOCUMENTATION_DRIFT` findings, carrying `context`, `premise_checks`, and `pitfalls` the same as
+   any planned item.
 10. Create evidence WORK for `EVIDENCE_REQUIRED` findings. No product-code changes.
-11. Record decisions in `DECISIONS.md`, and block `DECISION_REQUIRED` and `SPEC_DRIFT` items instead
+11. Give each generated WORK the reciprocal finding IDs in `origin.findings`. Default to one finding
+    per WORK. Aggregate only findings with the same root cause, change and rollback boundary, and
+    verification set, and state that reason in `origin.aggregation_reason`.
+12. Preserve each finding's expected event and outcome in WORK objective and acceptance. Do not
+    narrow it or substitute a different event. Reclassify the finding or resolve a decision first
+    when the meaning must change. Re-read generated WORK and record finding coverage in the audit body.
+13. Record decisions in `DECISIONS.md`, and block `DECISION_REQUIRED` and `SPEC_DRIFT` items instead
     of guessing. Respect dependency ordering when creating remediation.
-12. Add durable traps you uncovered to `PITFALLS.md`.
-13. After the audit, WORK, and decision records are complete, run `devflow audit apply` with the exact
+14. Add durable traps you uncovered to `PITFALLS.md`.
+15. After the audit, WORK, and decision records are complete, run `devflow audit apply` with the exact
     rendered scope, mode, phase, and WORK target. The runtime validates and updates STATE. Do not edit
     STATE directly.
 

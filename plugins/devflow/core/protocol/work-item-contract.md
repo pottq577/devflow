@@ -87,6 +87,26 @@ transfer:
 - General implementation and remediation use the same schema. Distinguish them with `kind` and
   `origin.findings`.
 
+## Finding traceability
+
+`remediation`, `evidence`, and `documentation` WORK require nonempty `origin.findings`. One finding
+per WORK is the default. When one WORK covers two or more findings, add a nonblank
+`origin.aggregation_reason` explaining the shared root cause, change and rollback boundary, and
+verification set. The audit disposition and WORK origin links must match in both directions.
+Unknown finding and WORK IDs are invalid.
+
+The finding classification fixes the generated WORK kind:
+
+| Finding classification | Disposition action | WORK kind |
+| --- | --- | --- |
+| `CONFIRMED` | `remediation_work` | `remediation` |
+| `EVIDENCE_REQUIRED` | `evidence_work` | `evidence` |
+| `DOCUMENTATION_DRIFT` | `documentation_work` | `documentation` |
+
+`DECISION_REQUIRED` creates no WORK while unresolved. Its decision IDs are recorded in
+`DECISIONS.md` and registered in STATE by audit apply. A later WORK for the selected path records
+the resolved ID in `decision_dependencies`.
+
 ## Completion
 
 `done` requires evidence, not assertion. `validate` and `devflow work done` both refuse a completion

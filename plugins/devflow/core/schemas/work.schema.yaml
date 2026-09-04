@@ -15,6 +15,7 @@ required_item_fields:
   - status
   - evidence
 optional_item_fields:
+  origin.aggregation_reason: Required nonblank rationale when origin.findings contains two or more ids.
   context: Repository facts the Architect already verified, so the Executor does not re-derive them. Expected for high and critical risk.
   premise_checks: Facts to re-confirm at current HEAD before editing anything. Mandatory for high and critical risk.
   pitfalls: Known failure modes for this specific change. Each entry names what breaks and why.
@@ -25,6 +26,9 @@ optional_item_fields:
 backward_compatibility:
   legacy_review: Existing WORK without review remains readable; high/critical done WORK defaults to pending required review.
   migration: No migration command is required; runtime normalization preserves readability.
+finding_traceability:
+  required_for_kinds: [remediation, evidence, documentation]
+  aggregation_reason_required_when_findings_at_least: 2
 kind:
   allowed: [implementation, remediation, evidence, documentation, migration, test]
 status:
@@ -35,6 +39,8 @@ risk_level:
 review_status:
   allowed: [skipped, pending, remediation, blocked, verified]
 enforced_by_validate:
+  - remediation, evidence, and documentation require nonempty origin.findings
+  - multiple origin.findings require a nonblank origin.aggregation_reason
   - acceptance and verification.commands must not be empty
   - dependencies must resolve, and the dependency graph must be acyclic
   - a ready item must not depend on an unresolved decision

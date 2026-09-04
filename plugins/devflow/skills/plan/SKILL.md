@@ -43,15 +43,19 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
    execution, where there is less context to spend.
 7. Populate STATE phase entries with zero-padded keys (`"01"`, not `"1"`) and explicit dependencies.
    Register a transferred requirement in the receiving phase and link it with `transfer.to`.
-8. Once a phase's branch exists, pin its range:
+8. For audit-derived WORK, preserve each finding's expected event and outcome in objective and
+   acceptance. Link audit disposition and `origin.findings` in both directions. Default to one
+   finding per WORK; explain a shared root cause, change and rollback boundary, and verification set
+   in `origin.aggregation_reason` when aggregation is necessary.
+9. Once a phase's branch exists, pin its range:
    `devflow phase ref <domain> <phase> --base <ref> --head <ref>`. It verifies ancestry and refuses
-   rather than producing a stale 3-dot range.
-9. Put product/policy questions in `DECISIONS.md` and add their IDs to
-   `STATE.yaml.unresolved_decisions`.
-10. Record durable domain traps you discovered in `PITFALLS.md`.
-11. For high/critical risk, keep `plan_review.required: true` and `plan_review.status: pending`;
+    rather than producing a stale 3-dot range.
+10. Put product/policy questions in `DECISIONS.md` and add their IDs to
+   `STATE.yaml.unresolved_decisions`. Do not create ready code-changing WORK before resolution.
+11. Record durable domain traps you discovered in `PITFALLS.md`.
+12. For high/critical risk, keep `plan_review.required: true` and `plan_review.status: pending`;
     otherwise mark it `skipped`. A high-risk plan initial audit verifies this gate before WORK begins.
-12. Run `devflow validate <domain>`. Fix structural errors before reporting completion.
+13. Run `devflow validate <domain>`. Fix structural errors before reporting completion.
 
 ## Boundaries
 
