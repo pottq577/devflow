@@ -27,9 +27,10 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 
 1. Determine the domain name and PRD path. If the domain is not initialized, run
    `devflow init <domain> --prd <path> --risk <level> [--extension <name>]`.
-2. Run `devflow render plan <domain>`. The packet inlines the authority rules, lifecycle, WORK item
-   contract, decision policy, and the domain's `PITFALLS.md`. Follow it; there is no separate
-   reference file to open.
+2. Confirm `devflow status <domain>` reports `plan`, then run `devflow render plan <domain>`.
+   Render rejects any other lifecycle position. The packet inlines the authority rules, lifecycle,
+   WORK item contract, decision policy, and the domain's `PITFALLS.md`. Follow it; there is no
+   separate reference file to open.
 3. Inspect repository rules (`AGENTS.md`, `CLAUDE.md`, CI/lint/test configuration), current git
    status, git history when relevant, and the actual implementation surfaces.
 4. Write `docs/domains/<domain>/PLAN.md` using the plan template. Record the immutable baseline SHA.

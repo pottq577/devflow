@@ -25,9 +25,9 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 ## Workflow
 
 1. Run `devflow status <domain>` and confirm the next action is `run`.
-2. Run `devflow render run <domain>`, or pass `--task <ID>` when the user explicitly selected a
-   ready item. The packet inlines the selected item, the authority rules, the WORK item contract,
-   the risk policy, and the domain's `PITFALLS.md`.
+2. Run `devflow render run <domain>`, or pass the exact reported WORK id with `--task <ID>`.
+   Render rejects a different ready item. The packet inlines the selected item, the authority
+   rules, the WORK item contract, the risk policy, and the domain's `PITFALLS.md`.
 3. Read the item's `context` and `pitfalls`, then read `PITFALLS.md`. These exist so you do not
    rediscover what the Architect already paid for.
 4. **Work through `premise_checks` against current HEAD before editing anything.** Each entry names

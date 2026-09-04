@@ -314,7 +314,65 @@ def case_delivery_render_rejects_out_of_sequence_integration_audit(root: Path) -
     out = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
     check(
         "delivery render rejects an integration audit while plan review is pending",
-        out.returncode == 2 and "audit_scope: integration" not in out.stdout,
+        out.returncode == 2
+        and not out.stdout
+        and all(token in out.stderr for token in ["requested", "expected", "devflow status billing"]),
+        out.stdout + out.stderr,
+    )
+
+
+def case_render_run_rejects_non_next_work_item(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01"), item("P01-I02")))
+
+    out = devflow(root, "render", "run", "billing", "--task", "P01-I02")
+    check(
+        "render run accepts only the computed next WORK item",
+        out.returncode == 2
+        and not out.stdout
+        and all(token in out.stderr for token in ["requested", "expected", "P01-I01", "P01-I02", "devflow status billing"]),
+        out.stdout + out.stderr,
+    )
+
+
+def case_render_audit_requires_exact_scope_mode_and_target(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", high_done("P01-I01"), item("P01-I02")))
+
+    requests = [
+        ("wrong scope", ["--scope", "phase", "--phase", "01"]),
+        ("wrong mode", ["--scope", "work", "--task", "P01-I01", "--mode", "closure"]),
+        ("wrong phase", ["--scope", "work", "--task", "P01-I01", "--phase", "02"]),
+        ("wrong WORK", ["--scope", "work", "--task", "P01-I02"]),
+    ]
+    for label, request in requests:
+        out = devflow(root, "render", "audit", "billing", *request)
+        check(
+            f"render audit rejects {label}",
+            out.returncode == 2
+            and not out.stdout
+            and all(token in out.stderr for token in ["requested", "expected", "devflow status billing"]),
+            out.stdout + out.stderr,
+        )
+
+    out = devflow(root, "render", "audit", "billing", "--scope", "work", "--task", "P01-I01")
+    check(
+        "render audit accepts the exact computed scope, mode, phase, and WORK",
+        out.returncode == 0 and "work_item: P01-I01" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_audit_remediation_allows_initial_integration_render(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    out = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "audit remediation allows its initial integration render",
+        out.returncode == 0 and "audit_scope: integration" in out.stdout and "audit_mode: initial" in out.stdout,
         out.stdout + out.stderr,
     )
 
@@ -347,6 +405,18 @@ def case_render_guard_does_not_mutate_artifacts(root: Path) -> None:
     check(
         "rejected render leaves domain artifacts unchanged",
         out.returncode == 2 and before == after,
+        f"returncode={out.returncode}\nartifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", high_done("P01-I01")))
+    devflow(root, "status", "billing")
+    before = {str(path.relative_to(d)): None if path.is_dir() else path.read_bytes() for path in d.rglob("*")}
+    out = devflow(root, "render", "audit", "billing", "--scope", "work", "--task", "P01-I01")
+    after = {str(path.relative_to(d)): None if path.is_dir() else path.read_bytes() for path in d.rglob("*")}
+    check(
+        "accepted render leaves stable domain artifacts unchanged",
+        out.returncode == 0 and before == after and not (d / "audits/work").exists(),
         f"returncode={out.returncode}\nartifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
     )
 
@@ -617,17 +687,21 @@ def case_render_assembles_prompt(root: Path) -> None:
     check("render run inlines PITFALLS", "UNIQUE_PITFALL_MARKER" in out, out[:600])
     check("render run does not inline the audit core", "AUDIT core" not in out, out[:600])
 
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01", status="done", commands=["true -> ok"])))
     out = devflow(root, "render", "audit", "billing", "--scope", "phase", "--phase", "01").stdout
     check("render audit inlines the audit core axes", "Code-level design and contract correctness" in out, out[:600])
     check("render audit inlines the merge-base rule", "merge-base --is-ancestor" in out, out[:600])
     check("render audit reports an unset diff range explicitly", "diff_range: <unset" in out, out[:600])
     check("render audit inlines an extension", "Default domain audit extension" in out, out[:600])
 
+    dump(d / "work/phase-01.yaml", work("01", high_done("P01-I01")))
     work_out = devflow(root, "render", "audit", "billing", "--scope", "work", "--task", "P01-I01").stdout
     check("render work audit inlines the selected WORK YAML", "work_item: P01-I01" in work_out and "objective for P01-I01" in work_out, work_out[:1200])
     check("render work audit reports evidence and expected artifact", "work_verification_evidence:" in work_out and "audits/work/P01-I01.md" in work_out, work_out[:1200])
-    check("render work audit lazily creates its artifact directory", (d / "audits/work").is_dir())
+    check("render work audit does not create its artifact directory", not (d / "audits/work").exists())
 
+    (d / "work/phase-01.yaml").unlink()
+    dump(d / "STATE.yaml", state({}))
     plan_out = devflow(root, "render", "plan", "billing").stdout
     check("render plan inlines the lifecycle", "DevFlow lifecycle" in plan_out, plan_out[:600])
 
@@ -657,9 +731,11 @@ UNRELATED_PLAN_P09_99
 """, encoding="utf-8")
     dump(d / "STATE.yaml", state({"01": phase("executing", "01"), "02": phase("planned", "02")}))
     selected = item("P01-I01", commands=["true -> context evidence"], origin={"requirements": ["REQ-021"], "findings": [], "plan_items": ["P03-02"]})
+    unrelated = item("P02-I01", objective="UNRELATED_PHASE_WORK_BODY")
+    integration_item = item("INT-I01", objective="UNIQUE_INTEGRATION_WORK_BODY")
     dump(d / "work/phase-01.yaml", work("01", selected))
-    dump(d / "work/phase-02.yaml", work("02", item("P02-I01", objective="UNRELATED_PHASE_WORK_BODY")))
-    dump(d / "work/integration.yaml", work("integration", item("INT-I01", objective="UNIQUE_INTEGRATION_WORK_BODY")))
+    dump(d / "work/phase-02.yaml", work("02", unrelated))
+    dump(d / "work/integration.yaml", work("integration", integration_item))
 
     run = devflow(root, "render", "run", "billing", "--task", "P01-I01").stdout
     check("render run includes matching PRD section and nested details", "UNIQUE_REQ_021" in run and "UNIQUE_REQ_021_DETAILS" in run, run)
@@ -668,19 +744,48 @@ UNRELATED_PLAN_P09_99
     check("render run excludes unrelated PLAN section", "UNRELATED_PLAN_P09_99" not in run, run)
     check("render run keeps full selected WORK item", "P01-I01" in run and "objective for P01-I01" in run, run)
 
+    for path in (d / "work").glob("*.yaml"):
+        path.unlink()
+    dump(d / "STATE.yaml", state({}))
     plan = devflow(root, "render", "plan", "billing").stdout
     check("render plan includes full approved PRD", "UNIQUE_REQ_021" in plan and "UNRELATED_REQ_999" in plan, plan)
 
+    selected["status"] = "done"
+    unrelated["status"] = "cancelled"
+    integration_item["status"] = "cancelled"
+    dump(d / "STATE.yaml", state({"01": phase("audit", "01"), "02": phase("planned", "02")}))
+    dump(d / "work/phase-01.yaml", work("01", selected))
+    dump(d / "work/phase-02.yaml", work("02", unrelated))
+    dump(d / "work/integration.yaml", work("integration", integration_item))
     phase_out = devflow(root, "render", "audit", "billing", "--scope", "phase", "--phase", "01").stdout
     check("phase audit includes selected phase WORK", "P01-I01" in phase_out, phase_out)
     check("phase audit does not inline unrelated phase WORK", "UNRELATED_PHASE_WORK_BODY" not in phase_out, phase_out)
 
     (d / "audits/work").mkdir(parents=True)
     (d / "audits/work/P01-I01.md").write_text("UNIQUE_WORK_CLOSURE_AUDIT\n", encoding="utf-8")
+    reviewed = high_done(
+        "P01-I01",
+        origin={"requirements": ["REQ-021"], "findings": [], "plan_items": ["P03-02"]},
+        review={"required": True, "status": "remediation", "audit_file": "audits/work/P01-I01.md", "remediation_work_ids": ["REM-I01"]},
+    )
+    reviewed["evidence"]["commands"] = ["true -> context evidence"]
+    remediation = item("REM-I01", kind="remediation", status="done", commands=["true -> remediation evidence"])
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", reviewed, remediation))
+    (d / "work/phase-02.yaml").unlink()
+    (d / "work/integration.yaml").unlink()
     work_audit = devflow(root, "render", "audit", "billing", "--scope", "work", "--task", "P01-I01", "--mode", "closure").stdout
     check("work audit includes matching origin context and evidence", "UNIQUE_REQ_021" in work_audit and "UNIQUE_PLAN_P03_02" in work_audit and "true -> context evidence" in work_audit, work_audit)
     check("closure work audit includes its existing audit file", "UNIQUE_WORK_CLOSURE_AUDIT" in work_audit, work_audit)
 
+    selected["risk"] = {"level": "medium", "axes": []}
+    selected["status"] = "done"
+    unrelated["status"] = "done"
+    integration_item["status"] = "done"
+    dump(d / "STATE.yaml", state({"01": phase("verified", "01"), "02": phase("verified", "02")}))
+    dump(d / "work/phase-01.yaml", work("01", selected))
+    dump(d / "work/phase-02.yaml", work("02", unrelated))
+    dump(d / "work/integration.yaml", work("integration", integration_item))
     integration = devflow(root, "render", "audit", "billing", "--scope", "integration").stdout
     check("integration render includes PLAN and phase manifest paths", "UNIQUE_PLAN_P03_02" in integration and "work/phase-01.yaml" in integration and "work/phase-02.yaml" in integration, integration)
     check("integration render includes its WORK without phase WORK bodies", "UNIQUE_INTEGRATION_WORK_BODY" in integration and "UNRELATED_PHASE_WORK_BODY" not in integration, integration)
@@ -711,21 +816,25 @@ def case_audit_scopes_use_their_own_artifacts(root: Path) -> None:
     check("plan audit uses plan audit artifact", plan.returncode == 0 and "audits/plan.md" in plan.stdout and "audits/integration.md" not in plan.stdout, plan.stdout + plan.stderr)
 
     missing_work = devflow(root, "render", "audit", "billing", "--scope", "work")
-    check("work audit requires task", missing_work.returncode != 0 and "requires --task" in missing_work.stderr, missing_work.stdout + missing_work.stderr)
+    check("work audit requires the next WORK target", missing_work.returncode == 2 and not missing_work.stdout and "expected" in missing_work.stderr, missing_work.stdout + missing_work.stderr)
 
     missing_phase = devflow(root, "render", "audit", "billing", "--scope", "phase")
-    check("phase audit requires phase", missing_phase.returncode != 0 and "requires --phase" in missing_phase.stderr, missing_phase.stdout + missing_phase.stderr)
+    check("phase audit requires the next phase target", missing_phase.returncode == 2 and not missing_phase.stdout and "expected" in missing_phase.stderr, missing_phase.stdout + missing_phase.stderr)
 
+    dump(d / "STATE.yaml", state({"01": phase_doc}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01", status="done", commands=["true -> ok"])))
     known_phase = devflow(root, "render", "audit", "billing", "--scope", "phase", "--phase", "01")
     check("phase audit uses normalized phase artifacts", known_phase.returncode == 0 and "work/phase-01.yaml" in known_phase.stdout and "audits/phase-01.md" in known_phase.stdout, known_phase.stdout + known_phase.stderr)
 
     unknown_phase = devflow(root, "render", "audit", "billing", "--scope", "phase", "--phase", "02")
-    check("phase audit rejects unknown phase", unknown_phase.returncode != 0 and "does not exist" in unknown_phase.stderr, unknown_phase.stdout + unknown_phase.stderr)
+    check("phase audit rejects a non-next phase", unknown_phase.returncode == 2 and not unknown_phase.stdout and '"phase": "01"' in unknown_phase.stderr, unknown_phase.stdout + unknown_phase.stderr)
 
+    dump(d / "STATE.yaml", state({"01": phase("verified", "01")}))
     integration = devflow(root, "render", "audit", "billing", "--scope", "integration")
     check("integration audit uses integration artifact", integration.returncode == 0 and "audits/integration.md" in integration.stdout, integration.stdout + integration.stderr)
 
     (d / "audits/plan.md").write_text("# plan audit\n")
+    dump(d / "STATE.yaml", state({"01": phase_doc}, plan_review=legacy_plan_review))
     verified = devflow(root, "plan-review", "set", "billing", "verified")
     check("legacy plan review verifies with its default artifact", verified.returncode == 0, verified.stdout + verified.stderr)
 
@@ -733,7 +842,8 @@ def case_audit_scopes_use_their_own_artifacts(root: Path) -> None:
 def case_extension_resolution(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
-    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}, extension="billing.example"))
+    dump(d / "STATE.yaml", state({"01": phase("verified", "01")}, extension="billing.example"))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01", status="done", commands=["true -> ok"])))
     out = devflow(root, "render", "audit", "billing", "--scope", "integration").stdout
     check("named bundled extension is resolved", "Billing extension example" in out, out[:600])
 
@@ -743,7 +853,7 @@ def case_extension_resolution(root: Path) -> None:
     out = devflow(root, "render", "audit", "billing", "--scope", "integration").stdout
     check("project-local extension outranks the bundled one", "PROJECT_EXTENSION_MARKER" in out, out[:600])
 
-    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}, extension="does-not-exist"))
+    dump(d / "STATE.yaml", state({"01": phase("verified", "01")}, extension="does-not-exist"))
     out = devflow(root, "render", "audit", "billing", "--scope", "integration").stdout
     check("unknown extension falls back to default", "Default domain audit extension" in out, out[:600])
 
@@ -1569,9 +1679,9 @@ def case_lifecycle_runs_without_peer_plugins(root: Path) -> None:
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
 
-    rendered = devflow(root, "render", "plan", "billing")
+    rendered = devflow(root, "render", "run", "billing")
     validated = devflow(root, "validate", "billing")
-    for name, proc in [("render plan", rendered), ("validate", validated)]:
+    for name, proc in [("render run", rendered), ("validate", validated)]:
         check(f"{name} succeeds without peer plugins", proc.returncode == 0, proc.stdout + proc.stderr)
         check(f"{name} reports no peer dependency error", "Superpowers" not in proc.stderr and "Ponytail" not in proc.stderr, proc.stderr)
 
@@ -1586,6 +1696,9 @@ CASES = [
     case_init_reports_runtime_and_domain_paths,
     case_status_reports_workflow_and_domain_paths,
     case_delivery_render_rejects_out_of_sequence_integration_audit,
+    case_render_run_rejects_non_next_work_item,
+    case_render_audit_requires_exact_scope_mode_and_target,
+    case_audit_remediation_allows_initial_integration_render,
     case_validate_rejects_orphan_phase_manifest,
     case_validate_rejects_placeholder_delivery_contract_before_execution,
     case_render_guard_does_not_mutate_artifacts,

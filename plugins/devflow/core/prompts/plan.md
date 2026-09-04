@@ -3,6 +3,9 @@
 Operate in Architect mode. The protocol documents and the domain's accumulated pitfalls are
 appended below; everything you need is in this packet.
 
+This packet is emitted only when `plan` is the computed next action. Re-run `devflow status` instead
+of rendering or executing another lifecycle action.
+
 1. Read the approved PRD, the repository-enforced rules, and `PITFALLS.md`.
 2. Record the immutable git baseline SHA.
 3. Explore the current codebase before proposing implementation details. Never infer repository

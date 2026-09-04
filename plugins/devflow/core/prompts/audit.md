@@ -3,6 +3,9 @@
 Operate in Auditor mode with an independent mindset. The audit core, the resolved domain extension,
 and the domain's pitfalls are appended below.
 
+This packet is emitted only for the exact audit scope, mode, phase, and WORK target in the computed
+next action. Re-run `devflow status` instead of auditing another lifecycle position.
+
 1. **Pin the range first.** Baseline SHA, target SHA, diff range. If `diff_range` is unset, run
    `devflow phase ref` before reading anything. Confirm the base really is an ancestor of the head:
    a stacked branch cut from a work commit resolves to a stale merge base and reports hundreds of

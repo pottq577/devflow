@@ -3,6 +3,9 @@
 Operate in Executor mode. Execute exactly one selected WORK item. The item, the protocol documents,
 and the domain's pitfalls are appended below.
 
+This packet is emitted only for the exact WORK item in the computed next action. Re-run
+`devflow status` instead of selecting a different ready item.
+
 1. Read the selected WORK contract, its `context`, its `pitfalls`, and the linked PRD/PLAN sections.
    Read `PITFALLS.md` before touching anything.
 2. **Work through `premise_checks` against current HEAD before editing.** Each entry names a fact to

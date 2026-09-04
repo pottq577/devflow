@@ -1360,10 +1360,50 @@ def render_closure_audit(title: str, path: Path, mode: str) -> None:
         render_markdown_file(title, path)
 
 
+def render_request(root: Path, args: argparse.Namespace, expected: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    role = args.render_command
+    if role == "plan":
+        return {"command": role}, None
+    if role == "run":
+        item_id = args.task or (expected.get("work_item") if expected.get("command") == "run" else None)
+        if args.task:
+            try:
+                find_item(root, args.domain, args.task)
+            except KeyError:
+                return {"command": role, "work_item": item_id}, f"Unknown WORK item: {args.task}"
+        return {"command": role, "work_item": item_id}, None
+
+    phase = phase_key(args.phase) if args.phase else None
+    if args.scope == "work" and args.task:
+        try:
+            path, doc, _ = find_item(root, args.domain, args.task)
+        except KeyError:
+            request = {"command": role, "scope": args.scope, "mode": args.mode, "phase": phase, "work_item": args.task}
+            return request, f"Unknown WORK item: {args.task}"
+        if phase is None:
+            item_phase_key = item_phase(path, doc)
+            phase = None if item_phase_key == "integration" else item_phase_key
+    return {"command": role, "scope": args.scope, "mode": args.mode, "phase": phase, "work_item": args.task}, None
+
+
+def reject_render(domain: str, requested: dict[str, Any], expected: dict[str, Any], reason: str | None = None) -> int:
+    print(f"DevFlow error: {reason or 'render request does not match the lifecycle next action'}", file=sys.stderr)
+    print(f"requested: {json.dumps(requested, sort_keys=True)}", file=sys.stderr)
+    print(f"expected: {json.dumps(expected, sort_keys=True)}", file=sys.stderr)
+    print(f"Run 'devflow status {domain}' to inspect the current next action.", file=sys.stderr)
+    return 2
+
+
 def render(args: argparse.Namespace) -> int:
     root = repo_root()
     d = domain_dir(root, args.domain)
     role = args.render_command
+    state = load_yaml(state_path(root, args.domain), {}) or {}
+    expected = compute_next_action(root, args.domain, state)
+    requested, error = render_request(root, args, expected)
+    expected_request = {key: expected.get(key) for key in requested}
+    if error or requested != expected_request:
+        return reject_render(args.domain, requested, expected_request, error)
     state = refresh_state(root, args.domain)
 
     print((plugin_root() / "core" / "prompts" / f"{role}.md").read_text(encoding="utf-8").rstrip())
@@ -1399,7 +1439,6 @@ def render(args: argparse.Namespace) -> int:
             path, doc, item = find_item(root, args.domain, args.task)
             review = effective_review(item)
             audit_path = d / review["audit_file"]
-            audit_path.parent.mkdir(parents=True, exist_ok=True)
             print(f"- work_item: {item.get('id')}")
             print(f"- work_phase: {item_phase(path, doc)}")
             print(f"- work_risk: {(item.get('risk') or {}).get('level')}")

@@ -53,7 +53,19 @@ but it does not autonomously execute, audit, remediate, or orchestrate those act
 
 Return to the human/Chat layer only for product-policy decisions, scope changes, conflicting requirements, or deliberately requested third-party review.
 
-`refresh_state()` owns those derived fields. Mutation commands update authoritative lifecycle state and then refresh the projection; status and render write STATE only when that projection changed.
+`refresh_state()` owns those derived fields. Mutation commands update authoritative lifecycle state and then refresh the projection; status writes STATE only when that projection changed. Render first computes the expected action without writing, rejects any mismatch, and refreshes STATE only for an accepted request.
+
+## Render guards
+
+`render` emits a packet only for the exact action computed from current STATE and WORK. `render plan`
+requires the next command to be `plan`. `render run` requires `run` and the exact next WORK id.
+`render audit` requires the exact scope, mode, phase, and WORK id, with absent targets compared as
+null. Phase numbers are normalized before comparison, and a work audit derives its phase from the
+selected WORK when `--phase` is omitted.
+
+A mismatch exits with code `2`, writes no packet to stdout, and reports both requested and expected
+actions on stderr with a `devflow status <domain>` hint. Render does not create audit directories or
+other lifecycle artifacts. An accepted render retains the existing derived STATE write contract.
 
 ## Peer skill composition
 

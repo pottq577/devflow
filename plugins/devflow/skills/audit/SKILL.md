@@ -24,11 +24,12 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 
 ## Workflow
 
-1. Determine `scope=plan|work|phase|integration` and `mode=initial|closure`. Work scope requires
-   `--task <WORK-ID>`. A work initial audit gates high/critical dependents, and a work closure audit
-   verifies its remediation. Phase and integration each have initial and closure audits; a high-risk
-   plan review is initial before WORK begins. Use a fresh high-reasoning
-   session whenever practical.
+1. Run `devflow status <domain>` and use its exact `scope=plan|work|phase|integration`,
+   `mode=initial|closure`, phase, and WORK id. Work scope requires `--task <WORK-ID>`. Render rejects
+   any other lifecycle position. A work initial audit gates high/critical dependents, and a work
+   closure audit verifies its remediation. Phase and integration each have initial and closure
+   audits; a high-risk plan review is initial before WORK begins. Use a fresh high-reasoning session
+   whenever practical.
 2. **Pin the range before reading code.** If the phase has no `diff_range`, run
    `devflow phase ref <domain> <phase> --base <ref> --head <ref>`. It verifies that the base is an
    ancestor of the head and refuses otherwise, because a stacked branch cut from a work commit makes
