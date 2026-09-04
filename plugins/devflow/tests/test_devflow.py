@@ -224,6 +224,13 @@ def write_audit(path: Path, metadata: dict[str, Any]) -> None:
     path.write_text(f"---\n{front_matter}---\n\n# Audit\n", encoding="utf-8")
 
 
+def read_audit(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise ValueError(f"audit front matter missing: {path}")
+    return yaml.safe_load(text.split("---", 2)[1])
+
+
 def write_open_decision(path: Path, decision_id: str) -> None:
     path.write_text(
         "# Decisions\n\n"
@@ -2159,6 +2166,398 @@ def case_audit_remediation_lifecycle_reaches_closure_and_complete(root: Path) ->
         and completed["project_status"] == "complete"
         and completed["next_action"].get("command") == "complete",
         closed.stdout + closed.stderr + repr(completed),
+    )
+
+
+def case_audit_remediation_full_lifecycle_without_findings(root: Path) -> None:
+    initialized = devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
+    initial_state = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    rendered = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "full no-finding lifecycle renders only the initial integration audit",
+        initialized.returncode == 0
+        and rendered.returncode == 0
+        and initial_state["integration"]["status"] == "audit"
+        and initial_state["next_action"]["scope"] == "integration"
+        and initial_state["next_action"]["mode"] == "initial"
+        and not (d / "work/integration.yaml").exists()
+        and "# Decisions" in (d / "DECISIONS.md").read_text(encoding="utf-8")
+        and initial_state["unresolved_decisions"] == [],
+        initialized.stdout + initialized.stderr + rendered.stdout + rendered.stderr + repr(initial_state),
+    )
+
+    write_audit(d / "audits/integration.md", audit_metadata(d))
+    applied = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    status = devflow(root, "status", "billing", "--json")
+    completed = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    audit_doc = read_audit(d / "audits/integration.md")
+    reported = json.loads(status.stdout) if status.returncode == 0 else {}
+    check(
+        "full no-finding lifecycle persists a passing audit and completes",
+        applied.returncode == 0
+        and status.returncode == 0
+        and audit_doc["mode"] == "initial"
+        and audit_doc["verdict"] == "pass"
+        and audit_doc["findings"] == []
+        and completed["integration"]["status"] == "verified"
+        and completed["project_status"] == "complete"
+        and completed["next_action"]["command"] == "complete"
+        and reported["next_action"]["command"] == "complete"
+        and devflow(root, "validate", "billing").returncode == 0,
+        applied.stdout + applied.stderr + status.stdout + status.stderr + repr(completed),
+    )
+
+
+def case_audit_remediation_full_lifecycle_with_remediation(root: Path) -> None:
+    initialized = devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
+    remediation = v2_item("INT-R01")
+    remediation.update(
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+        risk={"level": "high", "axes": ["correctness"]},
+        premise_checks=["Confirm F-01 still reproduces at current HEAD."],
+    )
+    dump(d / "work/integration.yaml", work_v2("integration", remediation))
+    finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="blocker",
+        severity_reason="The integration defect blocks release.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    rendered_initial = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="fail", findings=[finding]))
+    applied_initial = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after_initial = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    work_doc = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
+    check(
+        "full remediation lifecycle releases traced WORK v2 after initial audit",
+        initialized.returncode == 0
+        and rendered_initial.returncode == 0
+        and applied_initial.returncode == 0
+        and after_initial["integration"]["status"] == "remediation"
+        and after_initial["next_action"]["command"] == "run"
+        and after_initial["next_action"]["work_item"] == "INT-R01"
+        and work_doc["version"] == 2
+        and work_doc["items"][0]["origin"]["findings"] == ["F-01"],
+        rendered_initial.stdout + rendered_initial.stderr + applied_initial.stdout + applied_initial.stderr + repr(after_initial),
+    )
+    commit_paths(root, "record initial integration audit", d / "audits/integration.md")
+
+    rendered_run = devflow(root, "render", "run", "billing", "--task", "INT-R01")
+    started = devflow(root, "work", "start", "billing", "INT-R01")
+    running_state = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    done = devflow(root, "work", "done", "billing", "INT-R01", "--command", "true -> passed")
+    after_done = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "full remediation lifecycle executes WORK and enters required work audit",
+        rendered_run.returncode == 0
+        and started.returncode == 0
+        and running_state["next_action"]["command"] == "run"
+        and running_state["next_action"]["work_item"] == "INT-R01"
+        and done.returncode == 0
+        and after_done["next_action"]["command"] == "audit"
+        and after_done["next_action"]["scope"] == "work"
+        and after_done["next_action"]["mode"] == "initial",
+        rendered_run.stdout + rendered_run.stderr + started.stdout + started.stderr + done.stdout + done.stderr + repr(after_done),
+    )
+
+    rendered_work_audit = devflow(root, "render", "audit", "billing", "--scope", "work", "--task", "INT-R01", "--mode", "initial")
+    write_audit(d / "audits/work/INT-R01.md", audit_metadata(d, scope="work"))
+    applied_work_audit = devflow(root, "audit", "apply", "billing", "--scope", "work", "--task", "INT-R01", "--mode", "initial")
+    after_work_audit = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    persisted_work = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))["items"][0]
+    check(
+        "full remediation lifecycle verifies required work audit before integration closure",
+        rendered_work_audit.returncode == 0
+        and applied_work_audit.returncode == 0
+        and read_audit(d / "audits/work/INT-R01.md")["scope"] == "work"
+        and persisted_work["status"] == "done"
+        and persisted_work["review"]["status"] == "verified"
+        and after_work_audit["next_action"]["scope"] == "integration"
+        and after_work_audit["next_action"]["mode"] == "closure",
+        rendered_work_audit.stdout + rendered_work_audit.stderr + applied_work_audit.stdout + applied_work_audit.stderr + repr(after_work_audit),
+    )
+
+    rendered_closure = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "closure")
+    closure = [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["regression passed"], "reopened_as": []}]
+    write_audit(d / "audits/integration.md", audit_metadata(d, mode="closure", findings=[finding], closure=closure))
+    applied_closure = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    status = devflow(root, "status", "billing", "--json")
+    completed = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "full remediation lifecycle applies closure and completes",
+        rendered_closure.returncode == 0
+        and applied_closure.returncode == 0
+        and read_audit(d / "audits/integration.md")["closure"] == closure
+        and completed["integration"]["status"] == "verified"
+        and completed["next_action"]["command"] == "complete"
+        and json.loads(status.stdout)["project_status"] == "complete"
+        and devflow(root, "validate", "billing").returncode == 0,
+        rendered_closure.stdout + rendered_closure.stderr + applied_closure.stdout + applied_closure.stderr + status.stdout + status.stderr + repr(completed),
+    )
+
+
+def case_audit_remediation_full_lifecycle_with_decision(root: Path) -> None:
+    initialized = devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
+    write_open_decision(d / "DECISIONS.md", "DEC-001")
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="The retention behavior requires a product decision.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-001"]},
+    )
+    rendered_initial = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+    applied_initial = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    waiting = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "full decision lifecycle records an unresolved decision before creating WORK",
+        initialized.returncode == 0
+        and rendered_initial.returncode == 0
+        and applied_initial.returncode == 0
+        and waiting["unresolved_decisions"] == ["DEC-001"]
+        and waiting["next_action"]["role"] == "human"
+        and waiting["next_action"]["command"] == "decision"
+        and not (d / "work/integration.yaml").exists()
+        and "### DEC-001" in (d / "DECISIONS.md").read_text(encoding="utf-8"),
+        rendered_initial.stdout + rendered_initial.stderr + applied_initial.stdout + applied_initial.stderr + repr(waiting),
+    )
+
+    (d / "DECISIONS.md").write_text(
+        "# Decisions\n\n## Open\n\n## Resolved\n\n"
+        "### DEC-001 Retention policy\n"
+        "- Decision: Retain records for 30 days.\n"
+        "- Rationale: The selected policy satisfies the approved requirement.\n",
+        encoding="utf-8",
+    )
+    selected = v2_item(
+        "INT-I01",
+        acceptance=[{"id": "AC-INT-I01-01", "criterion": "Records are retained for exactly 30 days."}],
+        commands=[{"id": "V-INT-I01-01", "command": "true", "covers": ["AC-INT-I01-01"]}],
+    )
+    selected["objective"] = "Implement the selected 30-day retention path."
+    selected["decision_dependencies"] = ["DEC-001"]
+    dump(d / "work/integration.yaml", work_v2("integration", selected))
+    resolved = devflow(root, "decision", "resolve", "billing", "DEC-001")
+    after_resolution = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    persisted = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
+    check(
+        "full decision lifecycle releases one concrete selected-path WORK v2",
+        resolved.returncode == 0
+        and after_resolution["unresolved_decisions"] == []
+        and after_resolution["next_action"]["command"] == "run"
+        and after_resolution["next_action"]["work_item"] == "INT-I01"
+        and persisted["version"] == 2
+        and persisted["items"][0]["decision_dependencies"] == ["DEC-001"]
+        and "Decision: Retain records for 30 days." in (d / "DECISIONS.md").read_text(encoding="utf-8"),
+        resolved.stdout + resolved.stderr + repr(after_resolution) + repr(persisted),
+    )
+
+    rendered_run = devflow(root, "render", "run", "billing", "--task", "INT-I01")
+    started = devflow(root, "work", "start", "billing", "INT-I01")
+    done = devflow(root, "work", "done", "billing", "INT-I01", "--command", "true -> passed")
+    status = devflow(root, "status", "billing", "--json")
+    after_work = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    rendered_closure = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "closure")
+    check(
+        "full decision lifecycle continues through selected WORK to integration closure",
+        rendered_run.returncode == 0
+        and started.returncode == 0
+        and done.returncode == 0
+        and status.returncode == 0
+        and after_work["integration"]["status"] == "remediation"
+        and after_work["next_action"]["scope"] == "integration"
+        and after_work["next_action"]["mode"] == "closure"
+        and yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))["items"][0]["status"] == "done"
+        and read_audit(d / "audits/integration.md")["findings"][0]["disposition"]["decision_ids"] == ["DEC-001"]
+        and rendered_closure.returncode == 0
+        and devflow(root, "validate", "billing").returncode == 0,
+        rendered_run.stdout + rendered_run.stderr + started.stdout + started.stderr + done.stdout + done.stderr + status.stdout + status.stderr + rendered_closure.stdout + rendered_closure.stderr + repr(after_work),
+    )
+
+
+def case_audit_remediation_full_lifecycle_with_reopened_finding(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
+    first_work = v2_item("INT-R01")
+    first_work.update(kind="remediation", origin={"requirements": [], "findings": ["F-01"], "plan_items": []})
+    dump(d / "work/integration.yaml", work_v2("integration", first_work))
+    first_finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="blocker",
+        severity_reason="The first defect can corrupt persisted state.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    rendered_initial = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="fail", findings=[first_finding]))
+    applied_initial = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    commit_paths(root, "record first initial audit", d / "audits/integration.md")
+    started_first = devflow(root, "work", "start", "billing", "INT-R01")
+    done_first = devflow(root, "work", "done", "billing", "INT-R01", "--command", "true -> passed")
+    rendered_first_closure = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "closure")
+
+    second_work = v2_item("INT-R02")
+    second_work.update(kind="remediation", origin={"requirements": [], "findings": ["F-02"], "plan_items": []})
+    integration_work = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
+    integration_work["items"].append(second_work)
+    dump(d / "work/integration.yaml", integration_work)
+    reopened_finding = audit_finding(
+        "F-02",
+        classification="CONFIRMED",
+        severity="blocker",
+        severity_reason="The reopened defect still corrupts persisted state.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R02"], "decision_ids": []},
+    )
+    first_closure = [{"finding_id": "F-01", "outcome": "reopened", "evidence": ["regression still fails"], "reopened_as": ["F-02"]}]
+    write_audit(
+        d / "audits/integration.md",
+        audit_metadata(d, mode="closure", verdict="fail", findings=[first_finding, reopened_finding], closure=first_closure),
+    )
+    applied_first_closure = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    reopened_state = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    reopened_work = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
+    check(
+        "full reopen lifecycle returns to traced integration remediation",
+        rendered_initial.returncode == 0
+        and applied_initial.returncode == 0
+        and started_first.returncode == 0
+        and done_first.returncode == 0
+        and rendered_first_closure.returncode == 0
+        and applied_first_closure.returncode == 0
+        and read_audit(d / "audits/integration.md")["closure"] == first_closure
+        and reopened_state["integration"]["status"] == "remediation"
+        and reopened_state["next_action"]["work_item"] == "INT-R02"
+        and reopened_work["version"] == 2
+        and {entry["id"]: entry["origin"]["findings"] for entry in reopened_work["items"]} == {
+            "INT-R01": ["F-01"],
+            "INT-R02": ["F-02"],
+        },
+        applied_first_closure.stdout + applied_first_closure.stderr + repr(reopened_state) + repr(reopened_work),
+    )
+
+    commit_paths(root, "record reopened closure", d / "audits/integration.md")
+    devflow(root, "status", "billing")
+    write_audit(
+        d / "audits/integration.md",
+        audit_metadata(d, verdict="fail", findings=[first_finding, reopened_finding]),
+    )
+    commit_paths(root, "record reopened initial audit", d / "audits/integration.md")
+    started_second = devflow(root, "work", "start", "billing", "INT-R02")
+    done_second = devflow(root, "work", "done", "billing", "INT-R02", "--command", "true -> passed")
+    rendered_second_closure = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "closure")
+    second_closure = [
+        {"finding_id": "F-01", "outcome": "resolved", "evidence": ["first path replaced"], "reopened_as": []},
+        {"finding_id": "F-02", "outcome": "resolved", "evidence": ["regression passed"], "reopened_as": []},
+    ]
+    write_audit(
+        d / "audits/integration.md",
+        audit_metadata(d, mode="closure", findings=[first_finding, reopened_finding], closure=second_closure),
+    )
+    applied_second_closure = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    status = devflow(root, "status", "billing", "--json")
+    completed = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    final_work = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
+    check(
+        "full reopen lifecycle completes after the second closure",
+        started_second.returncode == 0
+        and done_second.returncode == 0
+        and rendered_second_closure.returncode == 0
+        and applied_second_closure.returncode == 0
+        and read_audit(d / "audits/integration.md")["closure"] == second_closure
+        and all(entry["status"] == "done" for entry in final_work["items"])
+        and completed["integration"]["status"] == "verified"
+        and completed["next_action"]["command"] == "complete"
+        and json.loads(status.stdout)["project_status"] == "complete"
+        and devflow(root, "validate", "billing").returncode == 0,
+        started_second.stdout + started_second.stderr + done_second.stdout + done_second.stderr + rendered_second_closure.stdout + rendered_second_closure.stderr + applied_second_closure.stdout + applied_second_closure.stderr + status.stdout + status.stderr + repr(completed),
+    )
+
+
+def case_delivery_lifecycle_regression_after_protocol_130(root: Path) -> None:
+    initialized = devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    state_path = d / "STATE.yaml"
+    state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_doc["protocol_version"] = "1.3.0"
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    dump(state_path, state_doc)
+    delivery_work = v2_item("P01-I01")
+    delivery_work.update(
+        risk={"level": "high", "axes": ["correctness"]},
+        premise_checks=["Confirm the delivery contract at current HEAD."],
+    )
+    dump(d / "work/phase-01.yaml", work_v2("01", delivery_work))
+    initial_status = devflow(root, "status", "billing", "--json")
+    rendered_run = devflow(root, "render", "run", "billing", "--task", "P01-I01")
+    started = devflow(root, "work", "start", "billing", "P01-I01")
+    done = devflow(root, "work", "done", "billing", "P01-I01", "--command", "true -> passed")
+    after_done = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    check(
+        "protocol 1.3 delivery runs phase WORK and preserves required work review",
+        initialized.returncode == 0
+        and initial_status.returncode == 0
+        and json.loads(initial_status.stdout)["protocol_version"] == "1.3.0"
+        and rendered_run.returncode == 0
+        and started.returncode == 0
+        and done.returncode == 0
+        and after_done["next_action"]["scope"] == "work"
+        and after_done["next_action"]["mode"] == "initial"
+        and yaml.safe_load((d / "work/phase-01.yaml").read_text(encoding="utf-8"))["version"] == 2,
+        initial_status.stdout + initial_status.stderr + rendered_run.stdout + rendered_run.stderr + started.stdout + started.stderr + done.stdout + done.stderr + repr(after_done),
+    )
+
+    rendered_work_audit = devflow(root, "render", "audit", "billing", "--scope", "work", "--task", "P01-I01", "--mode", "initial")
+    write_audit(d / "audits/work/P01-I01.md", audit_metadata(d, scope="work"))
+    applied_work_audit = devflow(root, "audit", "apply", "billing", "--scope", "work", "--task", "P01-I01", "--mode", "initial")
+    phase_ref = devflow(root, "phase", "ref", "billing", "01", "--base", "HEAD", "--head", "HEAD")
+    rendered_phase_audit = devflow(root, "render", "audit", "billing", "--scope", "phase", "--phase", "01", "--mode", "initial")
+    write_audit(d / "audits/phase-01.md", audit_metadata(d, scope="phase"))
+    applied_phase_audit = devflow(root, "audit", "apply", "billing", "--scope", "phase", "--phase", "01", "--mode", "initial")
+    after_phase = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    persisted_work = yaml.safe_load((d / "work/phase-01.yaml").read_text(encoding="utf-8"))["items"][0]
+    check(
+        "protocol 1.3 delivery verifies work and phase audits through audit apply",
+        rendered_work_audit.returncode == 0
+        and applied_work_audit.returncode == 0
+        and phase_ref.returncode == 0
+        and rendered_phase_audit.returncode == 0
+        and applied_phase_audit.returncode == 0
+        and persisted_work["review"]["status"] == "verified"
+        and after_phase["phases"]["01"]["status"] == "verified"
+        and after_phase["next_action"]["scope"] == "integration"
+        and after_phase["next_action"]["mode"] == "initial"
+        and read_audit(d / "audits/work/P01-I01.md")["scope"] == "work"
+        and read_audit(d / "audits/phase-01.md")["scope"] == "phase",
+        rendered_work_audit.stdout + rendered_work_audit.stderr + applied_work_audit.stdout + applied_work_audit.stderr + phase_ref.stdout + phase_ref.stderr + rendered_phase_audit.stdout + rendered_phase_audit.stderr + applied_phase_audit.stdout + applied_phase_audit.stderr + repr(after_phase),
+    )
+
+    rendered_integration = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    write_audit(d / "audits/integration.md", audit_metadata(d))
+    applied_integration = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    status = devflow(root, "status", "billing", "--json")
+    completed = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    check(
+        "protocol 1.3 delivery verifies integration and completes",
+        rendered_integration.returncode == 0
+        and applied_integration.returncode == 0
+        and read_audit(d / "audits/integration.md")["verdict"] == "pass"
+        and completed["workflow_type"] == "delivery"
+        and completed["integration"]["status"] == "verified"
+        and completed["project_status"] == "complete"
+        and completed["next_action"]["command"] == "complete"
+        and json.loads(status.stdout)["next_action"]["command"] == "complete"
+        and devflow(root, "validate", "billing").returncode == 0,
+        rendered_integration.stdout + rendered_integration.stderr + applied_integration.stdout + applied_integration.stderr + status.stdout + status.stderr + repr(completed),
     )
 
 
@@ -4442,6 +4841,11 @@ CASES = [
     case_audit_closure_covers_every_prior_finding,
     case_audit_closure_reopens_finding,
     case_audit_remediation_lifecycle_reaches_closure_and_complete,
+    case_audit_remediation_full_lifecycle_without_findings,
+    case_audit_remediation_full_lifecycle_with_remediation,
+    case_audit_remediation_full_lifecycle_with_decision,
+    case_audit_remediation_full_lifecycle_with_reopened_finding,
+    case_delivery_lifecycle_regression_after_protocol_130,
     case_audit_apply_rolls_back_work_when_state_write_fails,
     case_audit_apply_rollback_survives_atomic_writer_failure,
     case_audit_closure_uses_git_history_for_prior_findings,
