@@ -22,6 +22,12 @@ backward_compatibility:
   legacy_plan_review_audit_file: Existing plan_review without audit_file reads as audits/plan.md.
   legacy_plan_review_remediation: Existing pending plan_review with remediation_work_ids keeps the remediation gate.
   migration: No migration command is required; runtime normalization preserves readability.
+protocol_compatibility:
+  runtime_config: .devflow/config.yaml protocol_version is checked before artifact mutation.
+  malformed_or_different_major: Validation error.
+  newer_same_major: Read-only status and validate are allowed with a warning; artifact mutation is blocked.
+  older_same_major: Backward-compatible read is allowed.
+  new_state: New init records the current runtime protocol version in config and STATE.
 workflow_type:
   allowed: [delivery, audit_remediation]
 project_status:

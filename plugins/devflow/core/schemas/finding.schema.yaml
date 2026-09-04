@@ -5,6 +5,7 @@ contract:
     - properties.classification
     - properties.severity
     - properties.disposition.properties.action
+  required_fields: [severity_reason]
   references: []
 required:
   - id
@@ -59,7 +60,7 @@ classification:
 severity:
   allowed: [blocker, major, minor, nit]
   meaning:
-    blocker: Shipping this corrupts data or gets money wrong. Fix before any dependent work starts.
-    major: Violates an approved specification or a repository-enforced rule. Fix inside this phase.
-    minor: Behavior is correct but carries maintenance risk. May travel to the next phase.
-    nit: Taste and readability. Closing it is optional.
+    blocker: A concrete and realistic money, data, security, or customer-access harm can occur in production. Fix before release or dependent work.
+    major: A production failure, approved contract violation, or repository-enforced rule violation must be fixed in the current workflow.
+    minor: Current behavior is safe and correct, but configuration, operations, or maintenance risk remains.
+    nit: Optional readability or preference improvement.

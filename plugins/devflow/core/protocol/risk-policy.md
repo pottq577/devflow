@@ -16,6 +16,23 @@ Risk controls review timing.
 
 High-risk domains should run `audit --scope plan` before implementation. Examples include payments, payroll, authorization, security-sensitive flows, and destructive data migrations.
 
+Finding severity is separate from WORK risk level. Finding severity describes the evidenced impact of
+one audit finding. WORK risk level controls execution and review depth for the change that addresses it.
+Every finding requires a nonblank `severity_reason` that records:
+
+- trigger conditions,
+- affected users or systems,
+- current defenses,
+- residual impact,
+- why the selected severity applies.
+
+Use `blocker` for concrete and realistic production harm to money, data, security, or customer access.
+Use `major` for a production failure, approved contract violation, or repository-enforced rule violation
+that must be fixed in the current workflow. Use `minor` when behavior is currently safe and correct but
+configuration, operations, or maintenance risk remains. Use `nit` only for optional readability or taste.
+A missing development switch with a safe `false` default is normally `minor`; evidence that the default
+is unsafe or already failed in production can justify `major` or `blocker`.
+
 The audit scopes are `plan`, `work`, `phase`, and `integration`. Initial and closure modes apply to
 work, phase, and integration; a high-risk plan review is initial before WORK begins.
 

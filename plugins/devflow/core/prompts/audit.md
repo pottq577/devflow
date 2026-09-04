@@ -22,7 +22,10 @@ next action. Re-run `devflow status` instead of auditing another lifecycle posit
    inspect the full selected WORK YAML, origin links, implementation evidence, changed files, recorded
    commit, current HEAD, and its `audits/work/<WORK-ID>.md` artifact.
 6. Classify every finding using the DevFlow finding taxonomy. Assign severity, and reach a verdict
-   of `pass`, `conditional_pass`, or `fail`.
+   of `pass`, `conditional_pass`, or `fail`. Every `severity_reason` must name trigger conditions,
+   affected users or systems, current defenses, residual impact, and why the selected severity applies.
+   Finding severity is separate from WORK risk level: severity describes evidenced finding impact,
+   while WORK risk controls execution and review depth.
 7. Write the audit result as YAML front matter at the start of the single canonical audit Markdown.
    Follow `audit.schema.yaml`, retain the human-readable explanation below it, and keep initial
    findings in the file when recording closure outcomes.

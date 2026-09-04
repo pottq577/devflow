@@ -67,6 +67,12 @@ Three sentences at most. What matched the plan, and what did not.
 - Disposition:
 - Generated work item:
 - Severity reason:
+  - Trigger conditions:
+  - Affected users or systems:
+  - Current defenses:
+  - Residual impact:
+  - Why the selected severity applies:
+  - Finding severity is separate from WORK risk level.
 
 ## Axis results
 

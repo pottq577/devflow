@@ -59,7 +59,10 @@ def sh(
 
 
 def devflow(cwd: Path, *args: str) -> subprocess.CompletedProcess:
-    return sh([sys.executable, str(CLI), *args], cwd)
+    proc = sh([sys.executable, str(CLI), *args], cwd)
+    if proc.returncode == 0 and args and args[0] == "init" and "audit-remediation" not in args:
+        fill_delivery_contract(cwd / "docs/domains" / args[1])
+    return proc
 
 
 def load_runtime_module():
@@ -236,14 +239,65 @@ def write_open_decision(path: Path, decision_id: str) -> None:
     )
 
 
+def fill_delivery_contract(d: Path) -> None:
+    (d / "PRD.md").write_text(
+        "# Billing PRD\n\n"
+        "## Requirements\n\n"
+        "### REQ-001 Billing behavior\n"
+        "- Requirement: Preserve the approved billing behavior.\n"
+        "- Acceptance criteria: AC-001 is verified.\n",
+        encoding="utf-8",
+    )
+    (d / "PLAN.md").write_text(
+        "# Implementation PLAN\n\n"
+        "## Metadata\n"
+        "- Domain: billing\n"
+        "- Baseline SHA: HEAD\n"
+        "- Risk profile: medium\n\n"
+        "## Phase graph\n\n"
+        "### Phase 01 Billing\n"
+        "- Objective: Preserve the approved behavior.\n",
+        encoding="utf-8",
+    )
+
+
+def fill_audit_remediation_contract(d: Path) -> None:
+    (d / "PRD.md").write_text(
+        "# Audit Scope Contract\n\n"
+        "## Audit target\nCurrent billing implementation.\n\n"
+        "## User-verified flows\nBilling flow.\n\n"
+        "## In scope\nBilling runtime.\n\n"
+        "## Out of scope\nUnrelated domains.\n\n"
+        "## Authoritative requirements and policies\nRepository policy.\n\n"
+        "## Success criteria\nAll findings are dispositioned.\n\n"
+        "## Open decisions\nNone.\n",
+        encoding="utf-8",
+    )
+    (d / "PLAN.md").write_text(
+        "# Audit and Remediation PLAN\n\n"
+        "## Metadata\nDomain: billing.\n\n"
+        "## Repository reconnaissance\nInspect the current repository.\n\n"
+        "## Audit axes\nUse the standard audit axes.\n\n"
+        "## Evidence plan\nRun targeted checks.\n\n"
+        "## Finding disposition strategy\nClassify every finding.\n\n"
+        "## Remediation topology\nUse integration WORK only.\n\n"
+        "## Closure criteria\nAll required evidence passes.\n",
+        encoding="utf-8",
+    )
+
+
 def audit_remediation_fixture(root: Path) -> Path:
     devflow(root, "init", "billing", "--workflow", "audit-remediation")
-    return root / "docs/domains/billing"
+    d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
+    return d
 
 
 def broken_delivery_fixture(root: Path) -> Path:
     devflow(root, "init", "billing", "--risk", "high")
     d = root / "docs/domains/billing"
+    (d / "PRD.md").write_text((PLUGIN / "core/templates/PRD.md").read_text(encoding="utf-8"), encoding="utf-8")
+    (d / "PLAN.md").write_text((PLUGIN / "core/templates/PLAN.md").read_text(encoding="utf-8"), encoding="utf-8")
     state_doc = yaml.safe_load((d / "STATE.yaml").read_text())
     state_doc["workflow_type"] = "delivery"
     dump(d / "STATE.yaml", state_doc)
@@ -494,6 +548,37 @@ def case_validate_rejects_orphan_phase_manifest(root: Path) -> None:
         "validate rejects a phase manifest absent from STATE",
         out.returncode != 0 and "orphan" in out.stdout.lower() and "phase-01.yaml" in out.stdout,
         out.stdout + out.stderr,
+    )
+
+
+def case_validate_rejects_phase_document_mismatch(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    mismatched_state = state({"01": {**phase("executing", "01"), "work_file": "work/phase-02.yaml"}})
+    dump(d / "STATE.yaml", mismatched_state)
+    dump(d / "work/phase-02.yaml", work("02", item("P02-I01")))
+
+    state_mismatch = devflow(root, "validate", "billing")
+    check(
+        "validate rejects a STATE phase whose work_file names another phase",
+        state_mismatch.returncode == 1
+        and "Phase 01" in state_mismatch.stdout
+        and "work/phase-02.yaml" in state_mismatch.stdout
+        and "phase 02" in state_mismatch.stdout,
+        state_mismatch.stdout + state_mismatch.stderr,
+    )
+
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    (d / "work/phase-02.yaml").unlink()
+    dump(d / "work/phase-01.yaml", work("02", item("P01-I01")))
+    document_mismatch = devflow(root, "validate", "billing")
+    check(
+        "validate rejects a WORK document phase that differs from its filename and STATE phase",
+        document_mismatch.returncode == 1
+        and "phase-01.yaml" in document_mismatch.stdout
+        and "declares phase 02" in document_mismatch.stdout
+        and "STATE phase 01" in document_mismatch.stdout,
+        document_mismatch.stdout + document_mismatch.stderr,
     )
 
 
@@ -1261,6 +1346,79 @@ def case_audit_apply_updates_state_and_next_action(root: Path) -> None:
     )
 
 
+def case_delivery_integration_still_requires_verified_phases(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({}, integration="verified", workflow_type="delivery"))
+    (d / "audits/integration.md").write_text("# Legacy integration audit\n", encoding="utf-8")
+
+    no_phases = devflow(root, "validate", "billing")
+    check(
+        "delivery integration verification still requires at least one real phase",
+        no_phases.returncode == 1 and "integration is verified but delivery has no phases" in no_phases.stdout,
+        no_phases.stdout + no_phases.stderr,
+    )
+
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}, integration="verified", workflow_type="delivery"))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01", status="done", commands=["true -> passed"])))
+    unverified = devflow(root, "validate", "billing")
+    check(
+        "delivery integration verification still requires every phase to be verified",
+        unverified.returncode == 1 and "integration is verified but phases are not: 01" in unverified.stdout,
+        unverified.stdout + unverified.stderr,
+    )
+
+
+def case_audit_remediation_verifies_without_fake_phases(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    write_audit(d / "audits/integration.md", audit_metadata(d))
+    empty_contract = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "audit remediation apply rejects empty scope and strategy sections",
+        empty_contract.returncode == 2
+        and "PRD.md" in empty_contract.stderr
+        and "PLAN.md" in empty_contract.stderr
+        and "required section" in empty_contract.stderr,
+        empty_contract.stdout + empty_contract.stderr,
+    )
+
+    fill_audit_remediation_contract(d)
+    applied = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    validated = devflow(root, "validate", "billing")
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    phase_files = list((d / "work").glob("phase-*.yaml"))
+    check(
+        "audit remediation reaches verified complete without fake phases",
+        applied.returncode == 0
+        and validated.returncode == 0
+        and state_doc["phases"] == {}
+        and state_doc["integration"]["status"] == "verified"
+        and state_doc["project_status"] == "complete"
+        and not phase_files,
+        applied.stdout + applied.stderr + validated.stdout + validated.stderr + repr(state_doc),
+    )
+
+
+def case_validate_rejects_applied_audit_lifecycle_mismatch(root: Path) -> None:
+    devflow(root, "init", "billing", "--risk", "high")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["protocol_version"] = "1.3.0"
+    state_doc["integration"]["status"] = "verified"
+    dump(d / "STATE.yaml", state_doc)
+    write_audit(d / "audits/integration.md", audit_metadata(d))
+
+    out = devflow(root, "validate", "billing")
+    check(
+        "validate rejects an applied integration audit while plan review is pending",
+        out.returncode == 1
+        and "plan review is pending" in out.stdout
+        and "integration status verified" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
 def case_audit_closure_covers_every_prior_finding(root: Path) -> None:
     d = audit_remediation_fixture(root)
     findings = [audit_finding("F-01"), audit_finding("F-02")]
@@ -1643,6 +1801,7 @@ def case_audit_apply_requires_schema_files(root: Path) -> None:
     for domain in ["missing-audit", "missing-finding"]:
         devflow(root, "init", domain, "--workflow", "audit-remediation")
         directory = root / f"docs/domains/{domain}"
+        fill_audit_remediation_contract(directory)
         write_audit(directory / "audits/integration.md", audit_metadata(directory))
         domains.append((domain, directory))
 
@@ -1651,7 +1810,7 @@ def case_audit_apply_requires_schema_files(root: Path) -> None:
         (*domains[1], "finding"),
     ]:
         fake_plugin = root / f"fake-plugin-{missing}"
-        shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+        shutil.copytree(PLUGIN / "core", fake_plugin / "core")
         schema_path = fake_plugin / f"core/schemas/{missing}.schema.yaml"
         if missing == "audit":
             schema_path.unlink()
@@ -1675,8 +1834,9 @@ def case_audit_apply_rejects_corrupt_schema_contracts(root: Path) -> None:
     for domain, schema_name in [("corrupt-audit", "audit"), ("corrupt-finding", "finding")]:
         devflow(root, "init", domain, "--workflow", "audit-remediation")
         d = root / f"docs/domains/{domain}"
+        fill_audit_remediation_contract(d)
         fake_plugin = root / f"fake-plugin-{schema_name}"
-        shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+        shutil.copytree(PLUGIN / "core", fake_plugin / "core")
         schema_path = fake_plugin / f"core/schemas/{schema_name}.schema.yaml"
         schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
         schema_doc["schema"] = f"corrupt-{schema_name}-schema"
@@ -1711,8 +1871,9 @@ def case_audit_apply_rejects_corrupt_schema_contracts(root: Path) -> None:
 def case_audit_schema_trust_anchor_rejects_removed_verdict_contract(root: Path) -> None:
     devflow(root, "init", "billing", "--workflow", "audit-remediation")
     d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
     fake_plugin = root / "fake-plugin-audit-anchor"
-    shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+    shutil.copytree(PLUGIN / "core", fake_plugin / "core")
     schema_path = fake_plugin / "core/schemas/audit.schema.yaml"
     schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
     schema_doc["contract"]["required_allowed"] = ["properties.scope"]
@@ -1738,8 +1899,9 @@ def case_audit_schema_trust_anchor_rejects_removed_verdict_contract(root: Path) 
 def case_finding_schema_trust_anchor_rejects_removed_enum_contract(root: Path) -> None:
     devflow(root, "init", "billing", "--workflow", "audit-remediation")
     d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
     fake_plugin = root / "fake-plugin-finding-anchor"
-    shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+    shutil.copytree(PLUGIN / "core", fake_plugin / "core")
     schema_path = fake_plugin / "core/schemas/finding.schema.yaml"
     schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
     schema_doc["contract"]["required_allowed"] = ["properties.severity"]
@@ -1769,7 +1931,7 @@ def case_finding_schema_trust_anchor_rejects_removed_enum_contract(root: Path) -
 def case_finding_schema_trust_anchor_requires_work_kind(root: Path) -> None:
     d = audit_remediation_fixture(root)
     fake_plugin = root / "fake-plugin-finding-work-kind"
-    shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+    shutil.copytree(PLUGIN / "core", fake_plugin / "core")
     schema_path = fake_plugin / "core/schemas/finding.schema.yaml"
     schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
     schema_doc["classification"]["disposition"]["CONFIRMED"].pop("work_kind")
@@ -2356,7 +2518,7 @@ def case_work_schema_trust_anchor_rejects_malformed_contract(root: Path) -> None
     ]
     for name, mutate in mutations:
         fake_plugin = root / f"fake-plugin-work-{name.replace(' ', '-')}"
-        shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+        shutil.copytree(PLUGIN / "core", fake_plugin / "core")
         schema_path = fake_plugin / "core/schemas/work.schema.yaml"
         schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
         mutate(schema_doc)
@@ -3336,37 +3498,158 @@ def case_protocol_version_is_enforced(root: Path) -> None:
     )
 
 
-def case_state_is_protocol_version_source_of_truth(root: Path) -> None:
+def case_config_protocol_version_is_checked(root: Path) -> None:
     out = devflow(root, "init", "billing")
-    check("init succeeds for protocol source test", out.returncode == 0, out.stdout + out.stderr)
+    check("init succeeds for config protocol compatibility test", out.returncode == 0, out.stdout + out.stderr)
 
     config_path = root / ".devflow/config.yaml"
     state_path = root / "docs/domains/billing/STATE.yaml"
-
     config = yaml.safe_load(config_path.read_text())
     state_doc = yaml.safe_load(state_path.read_text())
-
     check(
-        "generated config does not duplicate protocol_version",
-        "protocol_version" not in config,
-        repr(config),
-    )
-    check(
-        "generated STATE owns protocol_version",
-        state_doc.get("protocol_version") == "1.2.0",
-        repr(state_doc),
+        "new init records the current runtime protocol in config and STATE",
+        config.get("protocol_version") == "1.2.0" and state_doc.get("protocol_version") == "1.2.0",
+        repr(config) + repr(state_doc),
     )
 
-    # Legacy projects may still have this obsolete config field.
-    # It must not override the domain artifact contract.
-    config["protocol_version"] = "9.9.9"
+    for value, expected in [("1.2", "Invalid config protocol_version"), ("2.0.0", "Unsupported config protocol_version")]:
+        config["protocol_version"] = value
+        dump(config_path, config)
+        invalid = devflow(root, "validate", "billing")
+        check(
+            f"validate rejects config protocol_version {value!r}",
+            invalid.returncode == 1 and expected in invalid.stdout,
+            invalid.stdout + invalid.stderr,
+        )
+
+    config["protocol_version"] = "1.1.0"
     dump(config_path, config)
-
-    out = devflow(root, "validate", "billing")
+    older = devflow(root, "validate", "billing")
     check(
-        "legacy config protocol_version does not override STATE",
-        out.returncode == 0,
-        out.stdout + out.stderr,
+        "validate reads an older same-major config protocol",
+        older.returncode == 0 and "Unsupported config protocol_version" not in older.stdout,
+        older.stdout + older.stderr,
+    )
+
+    config["protocol_version"] = "1.2.0"
+    dump(config_path, config)
+    human = devflow(root, "status", "billing")
+    machine = devflow(root, "status", "billing", "--json")
+    report = json.loads(machine.stdout) if machine.returncode == 0 else {}
+    expected_versions = {"runtime": "1.2.0", "config": "1.2.0", "state": "1.2.0", "effective": "1.2.0"}
+    check(
+        "human and JSON status expose runtime, config, state, and effective protocol versions",
+        human.returncode == 0
+        and all(f"protocol.{key}: {value}" in human.stdout for key, value in expected_versions.items())
+        and machine.returncode == 0
+        and report.get("protocol_versions") == expected_versions,
+        human.stdout + human.stderr + machine.stdout + machine.stderr,
+    )
+
+
+def case_newer_config_protocol_blocks_mutation(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+    devflow(root, "status", "billing")
+    config_path = root / ".devflow/config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["protocol_version"] = "1.99.0"
+    dump(config_path, config)
+    before = {
+        str(path.relative_to(root)): path.read_bytes()
+        for base in [root / ".devflow", root / "docs/domains"]
+        for path in base.rglob("*")
+        if path.is_file()
+    }
+
+    validated = devflow(root, "validate", "billing")
+    status = devflow(root, "status", "billing")
+    mutations = [
+        ("init", "shipping"),
+        ("work", "start", "billing", "P01-I01"),
+        ("work", "done", "billing", "P01-I01", "--command", "true -> passed"),
+        ("work", "block", "billing", "P01-I01", "--reason", "blocked"),
+        ("work", "review", "billing", "P01-I01", "blocked"),
+        ("phase", "set", "billing", "01", "remediation"),
+        ("phase", "ref", "billing", "01", "--base", "HEAD", "--head", "HEAD"),
+        ("plan-review", "set", "billing", "pending"),
+        ("integration", "set", "billing", "audit"),
+        ("decision", "add", "billing", "DEC-001"),
+        ("audit", "apply", "billing", "--scope", "integration", "--mode", "initial"),
+    ]
+    results = [devflow(root, *command) for command in mutations]
+    after = {
+        str(path.relative_to(root)): path.read_bytes()
+        for base in [root / ".devflow", root / "docs/domains"]
+        for path in base.rglob("*")
+        if path.is_file()
+    }
+    check(
+        "newer same-major config permits read-only status and validate with a warning",
+        validated.returncode == 0
+        and "newer than this runtime" in validated.stdout
+        and status.returncode == 0
+        and "protocol.config: 1.99.0" in status.stdout,
+        validated.stdout + validated.stderr + status.stdout + status.stderr,
+    )
+    check(
+        "newer same-major config blocks every artifact mutation before writing",
+        all(result.returncode == 2 and "newer config protocol" in result.stderr for result in results)
+        and before == after
+        and not (root / "docs/domains/shipping").exists(),
+        "\n".join(result.stdout + result.stderr for result in results)
+        + f"\nartifacts_unchanged={before == after}",
+    )
+
+
+def case_finding_requires_severity_reason(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    finding = audit_finding("F-01")
+    finding.pop("severity_reason")
+    write_audit(d / "audits/integration.md", audit_metadata(d, findings=[finding]))
+    missing = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "audit apply rejects a finding without a nonblank severity_reason",
+        missing.returncode == 2 and "severity_reason" in missing.stderr,
+        missing.stdout + missing.stderr,
+    )
+
+    fake_plugin = root / "fake-plugin-severity-anchor"
+    shutil.copytree(PLUGIN / "core", fake_plugin / "core")
+    schema_path = fake_plugin / "core/schemas/finding.schema.yaml"
+    schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    schema_doc["required"].remove("severity_reason")
+    schema_doc["properties"].pop("severity_reason")
+    (schema_doc.get("contract") or {}).pop("required_fields", None)
+    dump(schema_path, schema_doc)
+    runtime = load_runtime_module()
+    before = (d / "STATE.yaml").read_bytes()
+    with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+        weakened = invoke_runtime(root, runtime, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    check(
+        "finding schema trust anchor protects the severity_reason requirement",
+        weakened.returncode == 2
+        and "finding schema" in weakened.stderr.lower()
+        and "severity_reason" in weakened.stderr
+        and (d / "STATE.yaml").read_bytes() == before,
+        weakened.stdout + weakened.stderr,
+    )
+
+    rendered = devflow(root, "render", "audit", "billing", "--scope", "integration", "--mode", "initial")
+    required_guidance = [
+        "trigger conditions",
+        "affected users or systems",
+        "current defenses",
+        "residual impact",
+        "why the selected severity applies",
+        "Finding severity is separate from WORK risk level",
+    ]
+    check(
+        "audit packet carries the evidence-backed severity calibration contract",
+        rendered.returncode == 0 and all(text in rendered.stdout for text in required_guidance),
+        rendered.stdout + rendered.stderr,
     )
 
 
@@ -3532,6 +3815,7 @@ CASES = [
     case_render_audit_requires_exact_scope_mode_and_target,
     case_audit_remediation_allows_initial_integration_render,
     case_validate_rejects_orphan_phase_manifest,
+    case_validate_rejects_phase_document_mismatch,
     case_validate_rejects_placeholder_delivery_contract_before_execution,
     case_render_guard_does_not_mutate_artifacts,
     case_audit_apply_rejects_missing_front_matter,
@@ -3558,6 +3842,9 @@ CASES = [
     case_decision_commonmark_indented_heading_boundary,
     case_audit_apply_failure_is_atomic,
     case_audit_apply_updates_state_and_next_action,
+    case_delivery_integration_still_requires_verified_phases,
+    case_audit_remediation_verifies_without_fake_phases,
+    case_validate_rejects_applied_audit_lifecycle_mismatch,
     case_audit_closure_covers_every_prior_finding,
     case_audit_closure_reopens_finding,
     case_audit_remediation_lifecycle_reaches_closure_and_complete,
@@ -3633,7 +3920,9 @@ CASES = [
     case_work_block_requires_active_status_and_reason,
     case_verification_is_gated_by_validation,
     case_protocol_version_is_enforced,
-    case_state_is_protocol_version_source_of_truth,
+    case_config_protocol_version_is_checked,
+    case_newer_config_protocol_blocks_mutation,
+    case_finding_requires_severity_reason,
     case_phase_entry_schema_fields_are_enforced,
     case_phase_commands_refuse_to_invent_a_phase,
     case_work_review_order_follows_phase,

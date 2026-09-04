@@ -21,6 +21,7 @@ except ImportError:
 PROTOCOL_VERSION = "1.2.0"
 HIGH_RISK = {"high", "critical"}
 REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.I)
+PROTOCOL_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 PROMPT_PROTOCOLS = {
     "plan": ["authority", "lifecycle", "work-item-contract", "decision-policy"],
@@ -194,12 +195,13 @@ def audit_schema_contract_errors(
         },
         "finding": {
             "root_keys": {"schema", "type", "contract", "required", "properties", "classification"},
-            "contract_keys": {"required_allowed", "references"},
+            "contract_keys": {"required_allowed", "required_fields", "references"},
             "required_allowed": {
                 "properties.classification",
                 "properties.severity",
                 "properties.disposition.properties.action",
             },
+            "required_fields": {"severity_reason"},
             "references": set(),
             "rubric": None,
         },
@@ -237,6 +239,19 @@ def audit_schema_contract_errors(
         allowed = node.get("allowed") if isinstance(node, dict) else None
         if not isinstance(allowed, list) or not allowed:
             errors.append(f"{dotted_path}.allowed is required")
+
+    expected_required_fields = anchor.get("required_fields", set())
+    if expected_required_fields:
+        required_fields = contract.get("required_fields")
+        if not isinstance(required_fields, list) or set(required_fields) != expected_required_fields:
+            errors.append("contract.required_fields must protect severity_reason")
+        root_required = schema.get("required")
+        properties = schema.get("properties")
+        for field in expected_required_fields:
+            if not isinstance(root_required, list) or field not in root_required:
+                errors.append(f"required must include {field}")
+            if not isinstance(properties, dict) or field not in properties:
+                errors.append(f"properties must include {field}")
 
     declared_references = contract.get("references")
     if not isinstance(declared_references, list) or any(not isinstance(value, str) or not value.strip() for value in declared_references):
@@ -546,8 +561,43 @@ def normalized_verification_commands(item: dict[str, Any], version: int) -> list
 def runtime_config(root: Path) -> dict[str, Any]:
     cfg_path = root / ".devflow" / "config.yaml"
     cfg = load_yaml(cfg_path, {}) or {}
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Runtime config must be a mapping: {cfg_path}")
     cfg.setdefault("domains_root", "docs/domains")
+    cfg.setdefault("protocol_version", PROTOCOL_VERSION)
     return cfg
+
+
+def parsed_protocol_version(value: Any) -> tuple[int, int, int] | None:
+    match = PROTOCOL_VERSION_PATTERN.fullmatch(str(value or ""))
+    return tuple(map(int, match.groups())) if match else None
+
+
+def config_protocol_diagnostics(root: Path) -> tuple[list[str], list[str], bool]:
+    config_path = root / ".devflow" / "config.yaml"
+    if not config_path.exists():
+        return [], [], False
+    value = runtime_config(root).get("protocol_version")
+    version = parsed_protocol_version(value)
+    runtime_version = parsed_protocol_version(PROTOCOL_VERSION)
+    if version is None:
+        return [f"Invalid config protocol_version: {value or '<empty>'}"], [], False
+    if version[0] != runtime_version[0]:
+        return [f"Unsupported config protocol_version {value}: this runtime implements {PROTOCOL_VERSION}"], [], False
+    newer = version[1:] > runtime_version[1:]
+    warnings = [f"Config protocol_version {value} is newer than this runtime's {PROTOCOL_VERSION}"] if newer else []
+    return [], warnings, newer
+
+
+def reported_protocol_versions(root: Path, state: dict[str, Any]) -> dict[str, str]:
+    config_version = str(runtime_config(root).get("protocol_version") or PROTOCOL_VERSION)
+    state_version = str(state.get("protocol_version") or config_version)
+    return {
+        "runtime": PROTOCOL_VERSION,
+        "config": config_version,
+        "state": state_version,
+        "effective": state_version,
+    }
 
 
 def domain_dir(root: Path, domain: str) -> Path:
@@ -593,7 +643,7 @@ def ensure_runtime(root: Path) -> None:
     runtime.mkdir(parents=True, exist_ok=True)
     cfg = runtime / "config.yaml"
     if not cfg.exists():
-        dump_yaml(cfg, {"domains_root": "docs/domains", "extension": "default"})
+        dump_yaml(cfg, {"protocol_version": PROTOCOL_VERSION, "domains_root": "docs/domains", "extension": "default"})
 
 
 def phase_key(value: Any) -> str:
@@ -615,8 +665,8 @@ def effective_workflow_type(state: dict[str, Any]) -> str:
 
 
 def requires_audit_apply(state: dict[str, Any]) -> bool:
-    match = re.fullmatch(r"(\d+)\.(\d+)\.\d+", str(state.get("protocol_version") or ""))
-    return bool(match and tuple(map(int, match.groups())) >= (1, 3))
+    version = parsed_protocol_version(state.get("protocol_version"))
+    return bool(version and version >= (1, 3, 0))
 
 
 def raw_phase_key(state: dict[str, Any], key: str) -> str | None:
@@ -1290,15 +1340,25 @@ def print_status(args: argparse.Namespace) -> int:
     if not path.exists():
         print(f"Domain not initialized: {args.domain}", file=sys.stderr)
         return 2
-    state = refresh_state(root, args.domain)
+    config_errors, config_warnings, newer_config = config_protocol_diagnostics(root)
+    if config_errors:
+        for error in config_errors:
+            print(f"DevFlow error: {error}", file=sys.stderr)
+        return 2
+    for warning in config_warnings:
+        print(f"WARN: {warning}", file=sys.stderr)
+    raw_state = load_yaml(path, {}) or {}
+    state = project_state(root, args.domain, copy.deepcopy(raw_state)) if newer_config else refresh_state(root, args.domain, raw_state)
     cfg = runtime_config(root)
     d = domain_dir(root, args.domain)
+    protocol_versions = reported_protocol_versions(root, state)
     if args.json:
         report = dict(state)
         report.setdefault("workflow_type", effective_workflow_type(state))
         report["runtime_config"] = ".devflow/config.yaml"
         report["domains_root"] = cfg["domains_root"]
         report["domain_dir"] = str(d.relative_to(root))
+        report["protocol_versions"] = protocol_versions
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     action = state.get("next_action", {}) or {}
@@ -1307,6 +1367,8 @@ def print_status(args: argparse.Namespace) -> int:
     print("runtime_config: .devflow/config.yaml")
     print(f"domains_root: {cfg['domains_root']}")
     print(f"domain_dir: {d.relative_to(root)}")
+    for name, value in protocol_versions.items():
+        print(f"protocol.{name}: {value}")
     print(f"project_status: {state.get('project_status')}")
     print(f"risk_profile: {state.get('risk_profile')}")
     print(f"baseline_sha: {short_sha(state.get('baseline_sha'))}")
@@ -1593,6 +1655,8 @@ def set_plan_review(args: argparse.Namespace) -> int:
     if args.status == "verified":
         d = domain_dir(root, args.domain)
         errors = []
+        docs, _, _ = load_work_index(d)
+        errors.extend(delivery_placeholder_errors(d, state, docs))
         if not (d / "PLAN.md").exists():
             errors.append(f"PLAN.md not found: {d / 'PLAN.md'}")
         if not (d / audit_file).exists():
@@ -1743,12 +1807,12 @@ def validate_protocol_version(state: dict[str, Any], errors: list[str], warnings
     if "protocol_version" not in state:
         return
     value = str(state.get("protocol_version") or "")
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
-    if match is None:
+    version = parsed_protocol_version(value)
+    if version is None:
         errors.append(f"Invalid protocol_version: {value or '<empty>'}")
         return
-    major, minor, _patch = map(int, match.groups())
-    runtime_major, runtime_minor, _runtime_patch = map(int, PROTOCOL_VERSION.split("."))
+    major, minor, _patch = version
+    runtime_major, runtime_minor, _runtime_patch = parsed_protocol_version(PROTOCOL_VERSION)
     if major != runtime_major:
         errors.append(f"Unsupported protocol_version {value}: this runtime implements {PROTOCOL_VERSION}")
     elif minor > runtime_minor:
@@ -1988,6 +2052,187 @@ def validate_work_file(
     return errors, warnings
 
 
+def required_markdown_section_errors(path: Path, template_name: str) -> list[str]:
+    template = read_template(template_name)
+    required = [match.group(1).strip() for match in re.finditer(r"^##\s+(.+?)\s*$", template, re.M)]
+    text = read_text_if_exists(path)
+    errors: list[str] = []
+    for heading in required:
+        match = re.search(
+            rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
+            text,
+            re.M | re.S,
+        )
+        body = re.sub(r"<!--.*?-->", "", match.group(1), flags=re.S) if match else ""
+        body = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#")).strip()
+        if not body:
+            errors.append(f"{path.name} required section is empty: {heading}")
+    return errors
+
+
+def delivery_placeholder_errors(d: Path, state: dict[str, Any], docs: dict[Path, dict[str, Any]]) -> list[str]:
+    review = effective_plan_review(state)
+    if not docs and not (review.get("required") and review.get("status") != "verified"):
+        return []
+    errors: list[str] = []
+    for name in ["PRD.md", "PLAN.md"]:
+        path = d / name
+        text = read_text_if_exists(path)
+        template = read_template(name)
+        markers = set(re.findall(r"\[[^\]\n]+\]", template))
+        if not text or any(marker in text for marker in markers):
+            errors.append(f"{name} still contains placeholder scaffold markers")
+    prd_text = read_text_if_exists(d / "PRD.md")
+    if not re.search(r"^#{2,6}\s+REQ-[A-Z0-9-]+\s+\S", prd_text, re.M | re.I):
+        errors.append("PRD.md placeholder contract has no concrete requirement heading")
+    plan_text = read_text_if_exists(d / "PLAN.md")
+    if re.search(r"^-\s*(?:Domain|Baseline SHA|Risk profile):\s*$", plan_text, re.M | re.I):
+        errors.append("PLAN.md placeholder contract has blank metadata")
+    return errors
+
+
+def manifest_phase(path: Path) -> str | None:
+    match = re.fullmatch(r"phase[-_]?([0-9]+)", path.stem, re.I)
+    return phase_key(match.group(1)) if match else None
+
+
+def phase_work_contract_errors(
+    d: Path,
+    state: dict[str, Any],
+    docs: dict[Path, dict[str, Any]],
+) -> list[str]:
+    errors: list[str] = []
+    phases = normalized_phases(state)
+    for key, phase_state in phases.items():
+        relative = str(phase_state.get("work_file", f"work/phase-{key}.yaml"))
+        path = d / relative
+        named_phase = manifest_phase(path)
+        if named_phase is not None and named_phase != key:
+            errors.append(f"Phase {key} work_file {relative} names phase {named_phase}")
+        doc = docs.get(path)
+        if doc is not None:
+            declared = phase_key(doc.get("phase")) if doc.get("phase") is not None else None
+            if declared != key:
+                errors.append(f"{path.name} declares phase {declared or '<missing>'}, not STATE phase {key}")
+
+    for path, doc in docs.items():
+        named_phase = manifest_phase(path)
+        if named_phase is not None:
+            if named_phase not in phases:
+                errors.append(f"orphan phase manifest {path.name}: STATE has no phase {named_phase}")
+            declared = phase_key(doc.get("phase")) if doc.get("phase") is not None else None
+            if declared != named_phase:
+                errors.append(
+                    f"{path.name} declares phase {declared or '<missing>'}, but filename and STATE phase {named_phase}"
+                )
+        elif path.name == "integration.yaml" and item_phase(path, doc) != "integration":
+            errors.append(f"integration.yaml declares non-integration phase {item_phase(path, doc)}")
+    return errors
+
+
+def audit_artifact_contract_errors(
+    root: Path,
+    d: Path,
+    state: dict[str, Any],
+    docs: dict[Path, dict[str, Any]],
+) -> list[str]:
+    errors: list[str] = []
+    metadata_required = requires_audit_apply(state)
+    specs: dict[Path, tuple[str, str | None, str | None, bool]] = {}
+    plan_review = effective_plan_review(state)
+    specs[d / plan_review["audit_file"]] = (
+        "plan",
+        None,
+        None,
+        plan_review.get("status") == "verified",
+    )
+    for key, phase_state in normalized_phases(state).items():
+        specs[d / phase_state.get("audit_file", f"audits/phase-{key}.md")] = (
+            "phase",
+            key,
+            None,
+            phase_state.get("status") == "verified",
+        )
+    integration = state.get("integration", {}) or {}
+    specs[d / integration.get("audit_file", "audits/integration.md")] = (
+        "integration",
+        None,
+        None,
+        integration.get("status") == "verified",
+    )
+    for _path, doc in docs.items():
+        for item in doc.get("items", []) or []:
+            review = effective_review(item)
+            specs[d / review["audit_file"]] = (
+                "work",
+                None if item_phase(_path, doc) == "integration" else item_phase(_path, doc),
+                str(item.get("id")),
+                review.get("status") == "verified",
+            )
+
+    try:
+        expected = compute_next_action(root, str(state.get("domain")), state)
+    except (KeyError, TypeError, ValueError):
+        expected = {}
+    audit_schema: dict[str, Any] | None = None
+    finding_schema: dict[str, Any] | None = None
+    for path, (scope, phase, task, verified) in specs.items():
+        if not path.exists():
+            if verified and metadata_required:
+                errors.append(f"verified {scope} has no canonical audit artifact: {path.relative_to(d)}")
+            continue
+        text = read_text_if_exists(path)
+        if not text.startswith("---"):
+            if verified and metadata_required:
+                errors.append(
+                    f"verified {scope} requires protocol 1.3 audit metadata: {path.relative_to(d)}"
+                )
+            continue
+        try:
+            metadata = parse_audit_text(text, str(path))
+            if audit_schema is None or finding_schema is None:
+                audit_schema, finding_schema = load_audit_schemas()
+            schema_errors = validate_schema_value(
+                metadata,
+                audit_schema,
+                f"canonical audit {path.relative_to(d)}",
+                {"finding": finding_schema},
+            )
+            errors.extend(schema_errors)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        if schema_errors:
+            continue
+        if metadata.get("scope") != scope:
+            errors.append(f"canonical audit {path.relative_to(d)} scope must be {scope}")
+        if "phase" in metadata:
+            actual_phase = phase_key(metadata.get("phase")) if metadata.get("phase") is not None else None
+            if actual_phase != phase:
+                errors.append(f"canonical audit {path.relative_to(d)} phase must be {phase or '<none>'}")
+        if "task" in metadata and metadata.get("task") != task:
+            errors.append(f"canonical audit {path.relative_to(d)} task must be {task or '<none>'}")
+        if (
+            expected.get("command") == "audit"
+            and expected.get("mode") == "initial"
+            and expected.get("scope") == scope
+            and (expected.get("phase") or None) == (phase or None)
+            and (expected.get("work_item") or None) == (task or None)
+            and metadata.get("mode") != expected.get("mode")
+        ):
+            errors.append(
+                f"canonical audit {path.relative_to(d)} mode must match lifecycle {expected.get('mode')}"
+            )
+        if metadata.get("mode") == "closure":
+            try:
+                initial_audit_metadata(root, path)
+            except ValueError as exc:
+                errors.append(str(exc))
+        if verified and metadata_required and metadata.get("verdict") != "pass":
+            errors.append(f"verified {scope} requires a pass verdict in {path.relative_to(d)}")
+    return errors
+
+
 def collect_validation(
     root: Path,
     domain: str,
@@ -1999,6 +2244,9 @@ def collect_validation(
     d = domain_dir(root, domain)
     errors: list[str] = []
     warnings: list[str] = []
+    config_errors, config_warnings, _newer_config = config_protocol_diagnostics(root)
+    errors.extend(config_errors)
+    warnings.extend(config_warnings)
     state = state_override if state_override is not None else load_yaml(d / "STATE.yaml", {}) or {}
     validate_state(state, d, errors, warnings)
     decision_errors, open_decisions = decision_state_errors(state, d)
@@ -2013,6 +2261,21 @@ def collect_validation(
     all_ids = set(index)
     unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or []) | open_decisions
     phases = normalized_phases(state)
+    errors.extend(phase_work_contract_errors(d, state, docs))
+    if effective_workflow_type(state) == "delivery":
+        errors.extend(delivery_placeholder_errors(d, state, docs))
+
+    plan_review_state = effective_plan_review(state)
+    integration_state = state.get("integration", {}) or {}
+    if (
+        effective_workflow_type(state) == "delivery"
+        and plan_review_state.get("required")
+        and plan_review_state.get("status") != "verified"
+        and integration_state.get("status") != "pending"
+    ):
+        errors.append(
+            f"plan review is pending but integration status {integration_state.get('status')} indicates an applied audit lifecycle"
+        )
 
     plan_review = state.get("plan_review") if isinstance(state.get("plan_review"), dict) else {}
     remediation_ids = plan_review.get("remediation_work_ids", [])
@@ -2035,10 +2298,14 @@ def collect_validation(
         open_items = [str(i.get("id")) for i in (doc.get("items", []) or []) if i.get("status") not in TERMINAL_STATUSES]
         if open_items:
             errors.append(f"Phase {key} is verified but has open work: {', '.join(open_items)}")
-    if (state.get("integration", {}) or {}).get("status") == "verified":
+    if integration_state.get("status") == "verified":
+        if effective_workflow_type(state) == "delivery" and not phases:
+            errors.append("integration is verified but delivery has no phases")
         unfinished = [k for k, p in phases.items() if p.get("status") != "verified"]
         if unfinished:
             errors.append(f"integration is verified but phases are not: {', '.join(sorted(unfinished))}")
+
+    errors.extend(audit_artifact_contract_errors(root, d, state, docs))
 
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -2390,6 +2657,12 @@ def audit_apply(args: argparse.Namespace) -> int:
         metadata = parse_audit_metadata(audit_path)
     except ValueError as exc:
         return reject_transition("audit", "be applied", [str(exc)])
+    if effective_workflow_type(state) == "audit_remediation" and args.mode == "initial":
+        d = domain_dir(root, args.domain)
+        contract_errors = required_markdown_section_errors(d / "PRD.md", "PRD.audit-remediation.md")
+        contract_errors.extend(required_markdown_section_errors(d / "PLAN.md", "PLAN.audit-remediation.md"))
+        if contract_errors:
+            return reject_transition("audit", "be applied", contract_errors)
     errors = validate_audit_metadata(
         root,
         args.domain,
@@ -2849,6 +3122,20 @@ def main() -> int:
     try:
         configure_work_schema()
         args = build_parser().parse_args()
+        if args.func not in {validate, print_status}:
+            config_errors, _config_warnings, newer_config = config_protocol_diagnostics(repo_root())
+            if config_errors:
+                for error in config_errors:
+                    print(f"DevFlow error: {error}", file=sys.stderr)
+                return 2
+            if newer_config:
+                value = runtime_config(repo_root()).get("protocol_version")
+                print(
+                    f"DevFlow error: newer config protocol {value} blocks artifact mutation; "
+                    f"this runtime implements {PROTOCOL_VERSION}. Use status or validate with a compatible runtime.",
+                    file=sys.stderr,
+                )
+                return 2
         return int(args.func(args))
     except KeyboardInterrupt:
         return 130
