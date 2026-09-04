@@ -242,7 +242,7 @@ def write_open_decision(path: Path, decision_id: str) -> None:
 def fill_delivery_contract(d: Path) -> None:
     (d / "PRD.md").write_text(
         "# Billing PRD\n\n"
-        "## Requirements\n\n"
+        "## 4. Requirements\n\n"
         "### REQ-001 Billing behavior\n"
         "- Requirement: Preserve the approved billing behavior.\n"
         "- Acceptance criteria: AC-001 is verified.\n",
@@ -254,9 +254,13 @@ def fill_delivery_contract(d: Path) -> None:
         "- Domain: billing\n"
         "- Baseline SHA: HEAD\n"
         "- Risk profile: medium\n\n"
+        "## Repository findings\nThe repository structure is recorded.\n\n"
+        "## Architecture / implementation strategy\nUse the existing runtime boundary.\n\n"
+        "## Requirement traceability\nREQ-001 maps to Phase 01.\n\n"
         "## Phase graph\n\n"
         "### Phase 01 Billing\n"
-        "- Objective: Preserve the approved behavior.\n",
+        "- Objective: Preserve the approved behavior.\n\n"
+        "## Verification strategy\nRun the targeted regression suite.\n",
         encoding="utf-8",
     )
 
@@ -1416,6 +1420,157 @@ def case_validate_rejects_applied_audit_lifecycle_mismatch(root: Path) -> None:
         and "plan review is pending" in out.stdout
         and "integration status verified" in out.stdout,
         out.stdout + out.stderr,
+    )
+
+
+def case_validate_rechecks_verified_audit_verdict_rubric(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    state_path = d / "STATE.yaml"
+    state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_doc["protocol_version"] = "1.3.0"
+    state_doc["integration"]["status"] = "verified"
+    dump(state_path, state_doc)
+    blocker = audit_finding(
+        "F-01",
+        severity="blocker",
+        severity_reason="A concrete production failure remains active.",
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="pass", findings=[blocker]))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "validate", "billing")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "validate reapplies the audit verdict rubric to verified protocol 1.3 evidence",
+        out.returncode == 1
+        and "verdict pass forbids finding severity: blocker" in out.stdout
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+
+def case_validate_rejects_canonical_audit_path_collision(root: Path) -> None:
+    devflow(root, "init", "billing", "--risk", "high")
+    d = root / "docs/domains/billing"
+    state_path = d / "STATE.yaml"
+    state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_doc["plan_review"]["audit_file"] = "audits/shared.md"
+    state_doc["integration"]["audit_file"] = "audits/shared.md"
+    dump(state_path, state_doc)
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "validate", "billing")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "validate rejects one canonical audit path assigned to distinct lifecycle targets",
+        out.returncode == 1
+        and "canonical audit path collision" in out.stdout
+        and "plan" in out.stdout
+        and "integration" in out.stdout
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+
+def case_delivery_placeholder_contract_requires_trusted_sections(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+    (d / "PRD.md").write_text(
+        "# Billing PRD\n\n"
+        "## 4. Requirements\n\n"
+        "### REQ-001 Billing behavior\n"
+        "- Requirement:\n"
+        "- Acceptance criteria:\n\n"
+        "## 5. Notes\n"
+        "- Requirement: This later section must not satisfy REQ-001.\n"
+        "- Acceptance criteria: This later section must not satisfy REQ-001.\n",
+        encoding="utf-8",
+    )
+    (d / "PLAN.md").write_text(
+        "# Implementation PLAN\n\n"
+        "## Metadata\n"
+        "- Domain: billing\n"
+        "- Baseline SHA: HEAD\n"
+        "- Risk profile: medium\n",
+        encoding="utf-8",
+    )
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    out = devflow(root, "validate", "billing")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "delivery WORK requires nonblank requirement and acceptance bodies plus trusted PLAN sections",
+        out.returncode == 1
+        and "Requirement" in out.stdout
+        and "Acceptance criteria" in out.stdout
+        and "Phase graph" in out.stdout
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+    fake_plugin = root / "fake-plugin-delivery-sections"
+    shutil.copytree(PLUGIN / "core", fake_plugin / "core")
+    plan_template = fake_plugin / "core/templates/PLAN.md"
+    plan_template.write_text(
+        plan_template.read_text(encoding="utf-8").replace("## Phase graph\n", ""),
+        encoding="utf-8",
+    )
+    runtime = load_runtime_module()
+    with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+        tampered = invoke_runtime(root, runtime, "validate", "billing")
+    check(
+        "delivery section trust anchor rejects a template and artifact missing the same required heading",
+        tampered.returncode == 1
+        and "template" in tampered.stdout.lower()
+        and "Phase graph" in tampered.stdout,
+        tampered.stdout + tampered.stderr,
+    )
+
+
+def case_audit_remediation_required_sections_survive_template_tampering(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    fake_plugin = root / "fake-plugin-audit-sections"
+    shutil.copytree(PLUGIN / "core", fake_plugin / "core")
+    prd_template = fake_plugin / "core/templates/PRD.audit-remediation.md"
+    plan_template = fake_plugin / "core/templates/PLAN.audit-remediation.md"
+    prd_template.write_text(
+        prd_template.read_text(encoding="utf-8").replace("## In scope\n\n", ""),
+        encoding="utf-8",
+    )
+    plan_template.write_text(
+        plan_template.read_text(encoding="utf-8").replace("## Finding disposition strategy\n\n", ""),
+        encoding="utf-8",
+    )
+    prd_path = d / "PRD.md"
+    plan_path = d / "PLAN.md"
+    prd_path.write_text(
+        prd_path.read_text(encoding="utf-8").replace("## In scope\nBilling runtime.\n\n", ""),
+        encoding="utf-8",
+    )
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "## Finding disposition strategy\nClassify every finding.\n\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    runtime = load_runtime_module()
+
+    with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+        out = invoke_runtime(root, runtime, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "audit remediation section trust anchors survive simultaneous template and artifact deletion",
+        out.returncode == 2
+        and "In scope" in out.stderr
+        and "Finding disposition strategy" in out.stderr
+        and "template" in out.stderr.lower()
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
     )
 
 
@@ -3653,6 +3808,34 @@ def case_finding_requires_severity_reason(root: Path) -> None:
     )
 
 
+def case_finding_schema_trust_anchor_requires_severity_reason_string(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    fake_plugin = root / "fake-plugin-severity-shape"
+    shutil.copytree(PLUGIN / "core", fake_plugin / "core")
+    schema_path = fake_plugin / "core/schemas/finding.schema.yaml"
+    schema_doc = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    schema_doc["properties"]["severity_reason"] = {"type": "list", "items": {"type": "string"}}
+    dump(schema_path, schema_doc)
+    write_audit(
+        d / "audits/integration.md",
+        audit_metadata(d, findings=[audit_finding("F-01", severity_reason=[])]),
+    )
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    runtime = load_runtime_module()
+
+    with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+        out = invoke_runtime(root, runtime, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "finding schema trust anchor requires severity_reason to remain a nonblank string",
+        out.returncode == 2
+        and "finding schema" in out.stderr.lower()
+        and "severity_reason" in out.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{out.stdout}{out.stderr}",
+    )
+
+
 def case_phase_entry_schema_fields_are_enforced(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -3845,6 +4028,10 @@ CASES = [
     case_delivery_integration_still_requires_verified_phases,
     case_audit_remediation_verifies_without_fake_phases,
     case_validate_rejects_applied_audit_lifecycle_mismatch,
+    case_validate_rechecks_verified_audit_verdict_rubric,
+    case_validate_rejects_canonical_audit_path_collision,
+    case_delivery_placeholder_contract_requires_trusted_sections,
+    case_audit_remediation_required_sections_survive_template_tampering,
     case_audit_closure_covers_every_prior_finding,
     case_audit_closure_reopens_finding,
     case_audit_remediation_lifecycle_reaches_closure_and_complete,
@@ -3923,6 +4110,7 @@ CASES = [
     case_config_protocol_version_is_checked,
     case_newer_config_protocol_blocks_mutation,
     case_finding_requires_severity_reason,
+    case_finding_schema_trust_anchor_requires_severity_reason_string,
     case_phase_entry_schema_fields_are_enforced,
     case_phase_commands_refuse_to_invent_a_phase,
     case_work_review_order_follows_phase,

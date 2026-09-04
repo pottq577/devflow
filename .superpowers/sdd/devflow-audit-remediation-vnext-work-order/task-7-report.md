@@ -226,3 +226,118 @@ plugins/devflow/tests/test_devflow.py
 ```
 
 커밋 메시지: `fix(devflow): validate lifecycle artifacts as one contract`
+
+## Fix round 1
+
+### 시작 상태
+
+- 작업일: 2026-09-04
+- branch: `main`
+- 시작 HEAD: `bc41e1d9306eafc308520da1e4f6ec911f9527c2`
+- 시작 tracked working tree: clean
+- branch, worktree, subagent를 만들지 않았다.
+
+### 리뷰 검증과 assumptions
+
+독립 리뷰의 Important 5건을 현재 runtime 경로에서 확인했다.
+
+- `collect_validation`은 schema shape와 verified `pass` 값만 확인하고 active finding에 대한 verdict rubric을 다시 적용하지 않았다.
+- Canonical audit spec을 `Path` key dict에 직접 대입해 동일 path의 앞선 lifecycle target을 조용히 덮어썼다.
+- Delivery placeholder 검사는 bracket marker와 REQ heading 존재만 확인해 빈 requirement와 acceptance body 및 누락 PLAN section을 허용했다.
+- Audit remediation required section 목록을 현재 template에서만 얻어 template과 artifact를 함께 약화하면 검사를 우회했다.
+- Finding schema trust anchor는 `severity_reason`의 required 존재만 확인해 property type을 list로 바꾸는 동시 손상을 허용했다.
+
+`audit.schema.yaml`의 실제 verdict rubric과 severity 목록을 source of truth로 계속 사용한다. Reviewer가 별도로 관찰한 `pass.forbidden_severities` 값 변조 방어는 Python 상수로 복제하지 않았다. Runtime은 Markdown heading, label과 nonblank body shape만 확인하고 자연어 의미는 추론하지 않는다. 계약 충돌과 막힌 사항은 없었다.
+
+### RED
+
+Production 변경 전에 다음 adversarial case 5개를 추가했다.
+
+- `case_validate_rechecks_verified_audit_verdict_rubric`
+- `case_validate_rejects_canonical_audit_path_collision`
+- `case_delivery_placeholder_contract_requires_trusted_sections`
+- `case_audit_remediation_required_sections_survive_template_tampering`
+- `case_finding_schema_trust_anchor_requires_severity_reason_string`
+
+첫 대상 실행은 `passed=0 failed=6`, exit 1이었다. Delivery case는 artifact shape와 template 동시 손상을 별도 assertion으로 검사해 총 6개 assertion이다. Invalid validate 3개가 exit 0이었고 audit remediation template 및 severity schema 동시 손상 apply 2개가 성공해 STATE bytes를 변경했다.
+
+Delivery body case에는 빈 REQ 뒤의 다른 PRD section에 같은 label을 둔 변형을 추가했다. 첫 수정 뒤 이 assertion은 `passed=1 failed=1`, exit 1로 REQ body 범위가 다음 section까지 새는 결함을 재현했다.
+
+### 구현
+
+- Audit apply에서 사용하던 schema 기반 verdict rubric 검사를 `audit_verdict_errors`로 추출하고 canonical audit validation에서도 재사용했다.
+- Closure audit는 initial Git metadata와 closure outcome으로 active finding ID를 계산해 resolved finding은 verdict severity에서 제외하고 current-only 및 still-open finding만 검사한다.
+- Plan, work, phase, integration audit spec을 먼저 list로 모은 뒤 resolved canonical path별 lifecycle target 충돌을 명시적 validation error로 보고한다.
+- Delivery PRD와 PLAN, audit remediation PRD와 PLAN의 최소 required heading을 고정 trust anchor로 정의했다. Validator는 anchor가 현재 template에 있는지와 artifact의 해당 body가 nonblank인지 각각 검사한다.
+- Delivery의 각 REQ block은 `4. Requirements` section 내부에서 nonblank `Requirement`와 `Acceptance criteria` 또는 `AC-*` body를 요구한다. 뒤 section의 같은 label은 앞 REQ를 만족시키지 않는다.
+- Finding trust anchor가 `severity_reason` property의 `type: string`을 고정한다. 기존 schema validator가 blank string을 계속 거절한다.
+- 새 dependency, sidecar, schema 값 복제, autonomous orchestration은 추가하지 않았다.
+
+### GREEN과 exact commands
+
+새 adversarial case 5개:
+
+```bash
+python3 -c 'exec("""import importlib.util, shutil
+spec = importlib.util.spec_from_file_location("test_devflow", "plugins/devflow/tests/test_devflow.py")
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+names = ["case_validate_rechecks_verified_audit_verdict_rubric", "case_validate_rejects_canonical_audit_path_collision", "case_delivery_placeholder_contract_requires_trusted_sections", "case_audit_remediation_required_sections_survive_template_tampering", "case_finding_schema_trust_anchor_requires_severity_reason_string"]
+for name in names:
+    print("\n" + name, flush=True)
+    root = m.new_repo()
+    try:
+        getattr(m, name)(root)
+    except Exception as exc:
+        m.FAILED.append(name)
+        print(f"  FAIL  {name} raised {exc!r}", flush=True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+print(f"\npassed={len(m.PASSED)} failed={len(m.FAILED)}")
+raise SystemExit(1 if m.FAILED else 0)
+""")'
+```
+
+RED 결과: `passed=0 failed=6`, exit 1. 최종 결과: `passed=6 failed=0`, exit 0.
+
+Task 7 named, Task 1 placeholder known RED, config mutation matrix는 기존 보고서의 같은 inline runner로 실행했다. 결과는 `passed=20 failed=0`, exit 0이었다.
+
+Task 4부터 6 focused regression도 기존 보고서의 같은 inline runner로 실행했다. 결과는 `passed=38 failed=0`, exit 0이었다.
+
+최종 syntax와 full suite:
+
+```bash
+python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+```
+
+결과: py_compile exit 0. Full suite 1회차와 2회차 모두 `passed=372 failed=0`, exit 0.
+
+### Atomicity evidence
+
+- 새 validate case 3개는 실행 전후 domain 전체 file bytes가 동일함을 확인한다.
+- Audit remediation template 동시 삭제와 severity schema type 손상 case는 apply 전후 domain 전체 file bytes가 동일함을 확인한다.
+- 두 invalid apply는 각각 exit 2이며 STATE와 다른 artifact를 변경하지 않는다.
+
+### Self-review
+
+- Verdict 판단은 `audit.schema.yaml` rubric을 읽는 한 helper에서 apply와 validate가 동일하게 수행한다.
+- `pass.forbidden_severities`와 다른 실제 rubric 값은 Python에 복제하지 않았다.
+- Path collision은 resolved path와 scope, phase, task target을 비교해 silent overwrite를 제거했다.
+- Fixed heading 목록은 template과 artifact를 각각 검증한다. Markdown 본문의 자연어 적절성은 판단하지 않는다.
+- `severity_reason`은 required, property 존재, string type, runtime nonblank 검사를 모두 통과해야 한다.
+- 기존 Task 7 named와 Task 4부터 6 focused 회귀 및 config mutation matrix가 모두 유지됐다.
+- 변경은 runtime, tests, 이 보고서로 제한했다.
+
+### 변경 파일
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-7-report.md
+plugins/devflow/scripts/devflow.py
+plugins/devflow/tests/test_devflow.py
+```
+
+커밋 메시지: `fix(devflow): close lifecycle validation gaps`
+
+남은 우려 사항은 없다.

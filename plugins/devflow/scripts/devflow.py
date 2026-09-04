@@ -22,6 +22,35 @@ PROTOCOL_VERSION = "1.2.0"
 HIGH_RISK = {"high", "critical"}
 REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.I)
 PROTOCOL_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+MARKDOWN_SECTION_ANCHORS = {
+    "PRD.md": ("4. Requirements",),
+    "PLAN.md": (
+        "Metadata",
+        "Repository findings",
+        "Architecture / implementation strategy",
+        "Requirement traceability",
+        "Phase graph",
+        "Verification strategy",
+    ),
+    "PRD.audit-remediation.md": (
+        "Audit target",
+        "User-verified flows",
+        "In scope",
+        "Out of scope",
+        "Authoritative requirements and policies",
+        "Success criteria",
+        "Open decisions",
+    ),
+    "PLAN.audit-remediation.md": (
+        "Metadata",
+        "Repository reconnaissance",
+        "Audit axes",
+        "Evidence plan",
+        "Finding disposition strategy",
+        "Remediation topology",
+        "Closure criteria",
+    ),
+}
 
 PROMPT_PROTOCOLS = {
     "plan": ["authority", "lifecycle", "work-item-contract", "decision-policy"],
@@ -252,6 +281,8 @@ def audit_schema_contract_errors(
                 errors.append(f"required must include {field}")
             if not isinstance(properties, dict) or field not in properties:
                 errors.append(f"properties must include {field}")
+            elif not isinstance(properties[field], dict) or properties[field].get("type") != "string":
+                errors.append(f"properties.{field} must remain a nonblank string")
 
     declared_references = contract.get("references")
     if not isinstance(declared_references, list) or any(not isinstance(value, str) or not value.strip() for value in declared_references):
@@ -2054,10 +2085,13 @@ def validate_work_file(
 
 def required_markdown_section_errors(path: Path, template_name: str) -> list[str]:
     template = read_template(template_name)
-    required = [match.group(1).strip() for match in re.finditer(r"^##\s+(.+?)\s*$", template, re.M)]
+    template_headings = {match.group(1).strip() for match in re.finditer(r"^##\s+(.+?)\s*$", template, re.M)}
+    required = MARKDOWN_SECTION_ANCHORS[template_name]
     text = read_text_if_exists(path)
     errors: list[str] = []
     for heading in required:
+        if heading not in template_headings:
+            errors.append(f"template {template_name} is missing required section: {heading}")
         match = re.search(
             rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
             text,
@@ -2082,9 +2116,28 @@ def delivery_placeholder_errors(d: Path, state: dict[str, Any], docs: dict[Path,
         markers = set(re.findall(r"\[[^\]\n]+\]", template))
         if not text or any(marker in text for marker in markers):
             errors.append(f"{name} still contains placeholder scaffold markers")
+        errors.extend(required_markdown_section_errors(path, name))
     prd_text = read_text_if_exists(d / "PRD.md")
-    if not re.search(r"^#{2,6}\s+REQ-[A-Z0-9-]+\s+\S", prd_text, re.M | re.I):
+    requirements_section = re.search(
+        r"^##\s+4\.\s+Requirements\s*$\n(.*?)(?=^##\s+|\Z)",
+        prd_text,
+        re.M | re.S | re.I,
+    )
+    requirements_text = requirements_section.group(1) if requirements_section else ""
+    requirements = list(re.finditer(r"^#{3,6}\s+(REQ-[A-Z0-9-]+)\b.*$", requirements_text, re.M | re.I))
+    if not requirements:
         errors.append("PRD.md placeholder contract has no concrete requirement heading")
+    for index, requirement in enumerate(requirements):
+        body_end = requirements[index + 1].start() if index + 1 < len(requirements) else len(requirements_text)
+        body = requirements_text[requirement.end():body_end]
+        requirement_id = requirement.group(1)
+        if not re.search(r"^\s*-\s*Requirement:\s*\S", body, re.M | re.I):
+            errors.append(f"PRD.md {requirement_id} Requirement body must be nonblank")
+        if not (
+            re.search(r"^\s*-\s*Acceptance criteria:\s*\S", body, re.M | re.I)
+            or re.search(r"^\s*-\s*AC-[A-Z0-9-]+:\s*\S", body, re.M | re.I)
+        ):
+            errors.append(f"PRD.md {requirement_id} Acceptance criteria body must be nonblank")
     plan_text = read_text_if_exists(d / "PLAN.md")
     if re.search(r"^-\s*(?:Domain|Baseline SHA|Risk profile):\s*$", plan_text, re.M | re.I):
         errors.append("PLAN.md placeholder contract has blank metadata")
@@ -2138,37 +2191,54 @@ def audit_artifact_contract_errors(
 ) -> list[str]:
     errors: list[str] = []
     metadata_required = requires_audit_apply(state)
-    specs: dict[Path, tuple[str, str | None, str | None, bool]] = {}
+    candidates: list[tuple[Path, tuple[str, str | None, str | None, bool]]] = []
     plan_review = effective_plan_review(state)
-    specs[d / plan_review["audit_file"]] = (
-        "plan",
-        None,
-        None,
-        plan_review.get("status") == "verified",
+    candidates.append(
+        (
+            d / plan_review["audit_file"],
+            ("plan", None, None, plan_review.get("status") == "verified"),
+        )
     )
     for key, phase_state in normalized_phases(state).items():
-        specs[d / phase_state.get("audit_file", f"audits/phase-{key}.md")] = (
-            "phase",
-            key,
-            None,
-            phase_state.get("status") == "verified",
+        candidates.append(
+            (
+                d / phase_state.get("audit_file", f"audits/phase-{key}.md"),
+                ("phase", key, None, phase_state.get("status") == "verified"),
+            )
         )
     integration = state.get("integration", {}) or {}
-    specs[d / integration.get("audit_file", "audits/integration.md")] = (
-        "integration",
-        None,
-        None,
-        integration.get("status") == "verified",
+    candidates.append(
+        (
+            d / integration.get("audit_file", "audits/integration.md"),
+            ("integration", None, None, integration.get("status") == "verified"),
+        )
     )
-    for _path, doc in docs.items():
+    for work_path, doc in docs.items():
         for item in doc.get("items", []) or []:
             review = effective_review(item)
-            specs[d / review["audit_file"]] = (
-                "work",
-                None if item_phase(_path, doc) == "integration" else item_phase(_path, doc),
-                str(item.get("id")),
-                review.get("status") == "verified",
+            candidates.append(
+                (
+                    d / review["audit_file"],
+                    (
+                        "work",
+                        None if item_phase(work_path, doc) == "integration" else item_phase(work_path, doc),
+                        str(item.get("id")),
+                        review.get("status") == "verified",
+                    ),
+                )
             )
+
+    specs: dict[Path, tuple[str, str | None, str | None, bool]] = {}
+    for path, spec in candidates:
+        canonical_path = path.resolve()
+        previous = specs.get(canonical_path)
+        if previous is not None and previous[:3] != spec[:3]:
+            errors.append(
+                f"canonical audit path collision at {canonical_path.relative_to(d.resolve())}: "
+                f"{previous[:3]} and {spec[:3]}"
+            )
+            continue
+        specs[canonical_path] = spec
 
     try:
         expected = compute_next_action(root, str(state.get("domain")), state)
@@ -2223,11 +2293,30 @@ def audit_artifact_contract_errors(
             errors.append(
                 f"canonical audit {path.relative_to(d)} mode must match lifecycle {expected.get('mode')}"
             )
+        initial_metadata: dict[str, Any] | None = None
         if metadata.get("mode") == "closure":
             try:
-                initial_audit_metadata(root, path)
+                initial_metadata = initial_audit_metadata(root, path)
             except ValueError as exc:
                 errors.append(str(exc))
+        active_ids = {str(finding["id"]) for finding in metadata.get("findings", [])}
+        if initial_metadata is not None:
+            prior_ids = {str(finding["id"]) for finding in initial_metadata.get("findings", [])}
+            closure_by_id = {
+                str(entry["finding_id"]): entry
+                for entry in metadata.get("closure", []) or []
+            }
+            active_ids = (active_ids - prior_ids) | {
+                finding_id
+                for finding_id, entry in closure_by_id.items()
+                if entry.get("outcome") == "still_open"
+            }
+        severities = [
+            str(finding["severity"])
+            for finding in metadata.get("findings", [])
+            if str(finding["id"]) in active_ids
+        ]
+        errors.extend(audit_verdict_errors(audit_schema, str(metadata.get("verdict")), severities))
         if verified and metadata_required and metadata.get("verdict") != "pass":
             errors.append(f"verified {scope} requires a pass verdict in {path.relative_to(d)}")
     return errors
@@ -2433,6 +2522,22 @@ def known_canonical_finding_ids(
     return finding_ids
 
 
+def audit_verdict_errors(
+    audit_schema: dict[str, Any],
+    verdict: str,
+    severities: list[str],
+) -> list[str]:
+    rubric = (audit_schema.get("verdict") or {}).get(verdict, {})
+    forbidden = sorted(set(severities) & set(rubric.get("forbidden_severities", []) or []))
+    required = set(rubric.get("required_severities", []) or [])
+    errors = []
+    if forbidden:
+        errors.append(f"verdict {verdict} forbids finding severity: {', '.join(forbidden)}")
+    if required and not required.intersection(severities):
+        errors.append(f"verdict {verdict} requires finding severity: {', '.join(sorted(required))}")
+    return errors
+
+
 def validate_audit_metadata(
     root: Path,
     domain: str,
@@ -2514,13 +2619,7 @@ def validate_audit_metadata(
 
     severities = [str(finding["severity"]) for finding in findings if str(finding["id"]) in active_ids]
     verdict = str(metadata["verdict"])
-    rubric = (audit_schema.get("verdict") or {}).get(verdict, {})
-    forbidden = sorted(set(severities) & set(rubric.get("forbidden_severities", []) or []))
-    required = set(rubric.get("required_severities", []) or [])
-    if forbidden:
-        errors.append(f"verdict {verdict} forbids finding severity: {', '.join(forbidden)}")
-    if required and not required.intersection(severities):
-        errors.append(f"verdict {verdict} requires finding severity: {', '.join(sorted(required))}")
+    errors.extend(audit_verdict_errors(audit_schema, verdict, severities))
 
     d = domain_dir(root, domain)
     work_docs, work_index, _ = load_work_index(d)
