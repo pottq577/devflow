@@ -204,6 +204,11 @@ coverage, unfinished remediation, and any request that differs from the computed
 validates the prospective domain before writing lifecycle state. The auditor never edits STATE to
 apply an outcome.
 
+Closure coverage comes from the canonical file's committed initial Git version. Every initial
+finding needs one closure outcome. Findings present only in the current file are new findings, and
+`reopened_as` may reference only those current-only IDs. Closure fails cleanly when the canonical
+file has no committed initial version.
+
 ## 9. Severity and verdict
 
 | Severity | Meaning |

@@ -11,12 +11,17 @@ malformed fixture cannot masquerade as a passing assertion.
 """
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +61,29 @@ def devflow(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return sh([sys.executable, str(CLI), *args], cwd)
 
 
+def load_runtime_module():
+    spec = importlib.util.spec_from_file_location(f"devflow_runtime_{len(PASSED) + len(FAILED)}", CLI)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def invoke_runtime(root: Path, runtime: Any, *args: str) -> subprocess.CompletedProcess:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    previous_cwd = Path.cwd()
+    previous_argv = sys.argv
+    try:
+        os.chdir(root)
+        sys.argv = [str(CLI), *args]
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            returncode = runtime.main()
+    finally:
+        sys.argv = previous_argv
+        os.chdir(previous_cwd)
+    return subprocess.CompletedProcess([str(CLI), *args], returncode, stdout.getvalue(), stderr.getvalue())
+
+
 def new_repo() -> Path:
     root = Path(tempfile.mkdtemp(prefix="devflow-test-"))
     sh(["git", "init", "-q", "."], root, check=True)
@@ -73,6 +101,12 @@ def commit(root: Path, name: str) -> None:
     (root / f"{name}.txt").write_text(f"{name}\n")
     sh(["git", "add", f"{name}.txt"], root, check=True)
     sh(["git", "commit", "-qm", name], root, check=True)
+
+
+def commit_paths(root: Path, message: str, *paths: Path) -> None:
+    relative = [str(path.relative_to(root)) for path in paths]
+    sh(["git", "add", *relative], root, check=True)
+    sh(["git", "commit", "-qm", message], root, check=True)
 
 
 def dump(path: Path, doc: Any) -> None:
@@ -653,10 +687,13 @@ def case_audit_apply_updates_state_and_next_action(root: Path) -> None:
 
 def case_audit_closure_covers_every_prior_finding(root: Path) -> None:
     d = audit_remediation_fixture(root)
+    findings = [audit_finding("F-01"), audit_finding("F-02")]
+    write_audit(d / "audits/integration.md", audit_metadata(d, findings=findings))
+    commit_paths(root, "record initial integration audit", d / "audits/integration.md")
+    devflow(root, "status", "billing")
     state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
     state_doc["integration"]["status"] = "closure"
     dump(d / "STATE.yaml", state_doc)
-    findings = [audit_finding("F-01"), audit_finding("F-02")]
     closure = [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["regression passed"], "reopened_as": []}]
     write_audit(d / "audits/integration.md", audit_metadata(d, mode="closure", findings=findings, closure=closure))
 
@@ -670,6 +707,16 @@ def case_audit_closure_covers_every_prior_finding(root: Path) -> None:
 
 def case_audit_closure_reopens_finding(root: Path) -> None:
     d = audit_remediation_fixture(root)
+    prior_finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="major",
+        severity_reason="The first remediation did not close the root cause.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[prior_finding]))
+    commit_paths(root, "record initial integration finding", d / "audits/integration.md")
+    devflow(root, "status", "billing")
     state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
     state_doc["integration"]["status"] = "closure"
     dump(d / "STATE.yaml", state_doc)
@@ -687,13 +734,7 @@ def case_audit_closure_reopens_finding(root: Path) -> None:
     )
     dump(d / "work/integration.yaml", work("integration", old_work, new_work))
     findings = [
-        audit_finding(
-            "F-01",
-            classification="CONFIRMED",
-            severity="major",
-            severity_reason="The first remediation did not close the root cause.",
-            disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
-        ),
+        prior_finding,
         audit_finding(
             "F-02",
             classification="CONFIRMED",
@@ -718,6 +759,12 @@ def case_audit_closure_reopens_finding(root: Path) -> None:
 
     devflow(root, "init", "shipping")
     phase_domain = root / "docs/domains/shipping"
+    write_audit(
+        phase_domain / "audits/phase-01.md",
+        audit_metadata(phase_domain, scope="phase", verdict="conditional_pass", findings=[prior_finding]),
+    )
+    commit_paths(root, "record initial phase finding", phase_domain / "audits/phase-01.md")
+    devflow(root, "status", "shipping")
     phase_state = yaml.safe_load((phase_domain / "STATE.yaml").read_text(encoding="utf-8"))
     phase_state["phases"] = {
         "01": {
@@ -753,6 +800,303 @@ def case_audit_closure_reopens_finding(root: Path) -> None:
         and phase_applied["phases"]["01"]["status"] == "remediation"
         and phase_applied["next_action"].get("work_item") == "INT-R02",
         phase_out.stdout + phase_out.stderr + repr(phase_applied),
+    )
+
+
+def case_audit_remediation_lifecycle_reaches_closure_and_complete(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    remediation = item(
+        "INT-R01",
+        kind="remediation",
+        risk_level="high",
+        premise_checks=["Confirm the finding still reproduces."],
+        context=["Integration audit F-01 created this remediation."],
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", remediation))
+    finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="blocker",
+        severity_reason="The integration defect blocks release.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="fail", findings=[finding]))
+
+    initial = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    after_initial = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "audit remediation initial apply releases linked integration WORK",
+        initial.returncode == 0 and after_initial["next_action"].get("work_item") == "INT-R01",
+        initial.stdout + initial.stderr + repr(after_initial),
+    )
+    commit_paths(root, "record initial audit", d / "audits/integration.md")
+
+    started = devflow(root, "work", "start", "billing", "INT-R01")
+    done = devflow(root, "work", "done", "billing", "INT-R01", "--command", "true -> passed")
+    after_done = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "terminal high-risk remediation returns to its required work audit",
+        started.returncode == 0
+        and done.returncode == 0
+        and after_done["next_action"].get("scope") == "work"
+        and after_done["next_action"].get("work_item") == "INT-R01",
+        started.stdout + started.stderr + done.stdout + done.stderr + repr(after_done),
+    )
+
+    write_audit(
+        d / "audits/work/INT-R01.md",
+        audit_metadata(d, scope="work", findings=[]),
+    )
+    reviewed = devflow(root, "audit", "apply", "billing", "--scope", "work", "--task", "INT-R01", "--mode", "initial")
+    after_review = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "terminal remediation with verified review reaches integration closure",
+        reviewed.returncode == 0
+        and after_review["next_action"].get("scope") == "integration"
+        and after_review["next_action"].get("mode") == "closure",
+        reviewed.stdout + reviewed.stderr + repr(after_review),
+    )
+
+    closure = [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["regression passed"], "reopened_as": []}]
+    write_audit(d / "audits/integration.md", audit_metadata(d, mode="closure", findings=[finding], closure=closure))
+    closed = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    completed = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "audit remediation closure reaches verified complete with terminal WORK present",
+        closed.returncode == 0
+        and completed["integration"]["status"] == "verified"
+        and completed["project_status"] == "complete"
+        and completed["next_action"].get("command") == "complete",
+        closed.stdout + closed.stderr + repr(completed),
+    )
+
+
+def case_audit_apply_rolls_back_work_when_state_write_fails(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    dump(d / "STATE.yaml", state_doc)
+    dump(d / "work/phase-01.yaml", work("01", high_done("P01-I01")))
+    write_audit(d / "audits/work/P01-I01.md", audit_metadata(d, scope="work"))
+    before_state = (d / "STATE.yaml").read_bytes()
+    before_work = (d / "work/phase-01.yaml").read_bytes()
+    runtime = load_runtime_module()
+    original_write = runtime.atomic_write_text
+
+    def fail_state_write(path: Path, content: str) -> None:
+        if Path(path) == d / "STATE.yaml":
+            raise OSError("injected STATE write failure")
+        original_write(path, content)
+
+    with mock.patch.object(runtime, "atomic_write_text", side_effect=fail_state_write):
+        out = invoke_runtime(root, runtime, "audit", "apply", "billing", "--scope", "work", "--task", "P01-I01", "--mode", "initial")
+    check(
+        "audit apply rolls back WORK when the following STATE write fails",
+        out.returncode == 2
+        and "injected STATE write failure" in out.stderr
+        and (d / "STATE.yaml").read_bytes() == before_state
+        and (d / "work/phase-01.yaml").read_bytes() == before_work,
+        out.stdout + out.stderr,
+    )
+
+
+def case_audit_closure_uses_git_history_for_prior_findings(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    devflow(root, "init", "bypass", "--workflow", "audit-remediation")
+    devflow(root, "init", "uncommitted", "--workflow", "audit-remediation")
+    billing = root / "docs/domains/billing"
+    bypass = root / "docs/domains/bypass"
+    uncommitted = root / "docs/domains/uncommitted"
+    prior = audit_finding("F-01")
+    write_audit(billing / "audits/integration.md", audit_metadata(billing, findings=[prior]))
+    write_audit(bypass / "audits/integration.md", audit_metadata(bypass, findings=[prior]))
+    commit_paths(
+        root,
+        "record initial audit histories",
+        billing / "audits/integration.md",
+        bypass / "audits/integration.md",
+    )
+    for domain, directory in [("billing", billing), ("bypass", bypass)]:
+        devflow(root, "status", domain)
+        state_doc = yaml.safe_load((directory / "STATE.yaml").read_text(encoding="utf-8"))
+        state_doc["integration"]["status"] = "closure"
+        dump(directory / "STATE.yaml", state_doc)
+
+    new_finding = audit_finding("F-02")
+    resolved = [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["regression passed"], "reopened_as": []}]
+    write_audit(
+        billing / "audits/integration.md",
+        audit_metadata(billing, mode="closure", findings=[prior, new_finding], closure=resolved),
+    )
+    applied = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    check(
+        "closure covers prior Git findings without treating a current-only finding as prior",
+        applied.returncode == 0,
+        applied.stdout + applied.stderr,
+    )
+
+    bypass_closure = [{"finding_id": "F-01", "outcome": "reopened", "evidence": ["still fails"], "reopened_as": ["F-01"]}]
+    write_audit(
+        bypass / "audits/integration.md",
+        audit_metadata(bypass, mode="closure", findings=[prior], closure=bypass_closure),
+    )
+    rejected = devflow(root, "audit", "apply", "bypass", "--scope", "integration", "--mode", "closure")
+    check(
+        "closure reopened_as must identify a current-only finding",
+        rejected.returncode == 2 and "current-only" in rejected.stderr and "F-01" in rejected.stderr,
+        rejected.stdout + rejected.stderr,
+    )
+
+    uncommitted_state = yaml.safe_load((uncommitted / "STATE.yaml").read_text(encoding="utf-8"))
+    uncommitted_state["integration"]["status"] = "closure"
+    dump(uncommitted / "STATE.yaml", uncommitted_state)
+    write_audit(
+        uncommitted / "audits/integration.md",
+        audit_metadata(uncommitted, mode="closure", findings=[prior], closure=resolved),
+    )
+    no_history = devflow(root, "audit", "apply", "uncommitted", "--scope", "integration", "--mode", "closure")
+    check(
+        "closure rejects a canonical audit with no committed initial Git history",
+        no_history.returncode == 2 and "no initial Git history" in no_history.stderr,
+        no_history.stdout + no_history.stderr,
+    )
+
+
+def case_plan_audit_remediation_reaches_closure(root: Path) -> None:
+    devflow(root, "init", "billing", "--risk", "high")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    dump(d / "STATE.yaml", state_doc)
+    planned = item("P01-I01")
+    remediation = item(
+        "P01-R01",
+        kind="documentation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    dump(d / "work/phase-01.yaml", work("01", planned, remediation))
+    finding = audit_finding(
+        "F-01",
+        classification="DOCUMENTATION_DRIFT",
+        severity="major",
+        severity_reason="The PLAN documentation is stale.",
+        disposition={"action": "documentation_work", "work_ids": ["P01-R01"], "decision_ids": []},
+    )
+    write_audit(d / "audits/plan.md", audit_metadata(d, scope="plan", verdict="conditional_pass", findings=[finding]))
+
+    initial = devflow(root, "audit", "apply", "billing", "--scope", "plan", "--mode", "initial")
+    after_initial = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "plan audit apply releases only its linked remediation WORK",
+        initial.returncode == 0
+        and after_initial["plan_review"]["status"] == "pending"
+        and after_initial["plan_review"]["remediation_work_ids"] == ["P01-R01"]
+        and after_initial["next_action"].get("work_item") == "P01-R01",
+        initial.stdout + initial.stderr + repr(after_initial),
+    )
+    ordinary = devflow(root, "work", "start", "billing", "P01-I01")
+    check(
+        "plan remediation rejects direct execution of ordinary planned WORK",
+        ordinary.returncode == 2 and "required plan review is pending" in ordinary.stderr,
+        ordinary.stdout + ordinary.stderr,
+    )
+    commit_paths(root, "record initial plan audit", d / "audits/plan.md")
+    started = devflow(root, "work", "start", "billing", "P01-R01")
+    done = devflow(root, "work", "done", "billing", "P01-R01")
+    after_done = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "plan remediation can execute and returns to plan closure",
+        started.returncode == 0
+        and done.returncode == 0
+        and after_done["next_action"].get("scope") == "plan"
+        and after_done["next_action"].get("mode") == "closure",
+        started.stdout + started.stderr + done.stdout + done.stderr + repr(after_done),
+    )
+
+    closure = [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["documentation verified"], "reopened_as": []}]
+    write_audit(d / "audits/plan.md", audit_metadata(d, scope="plan", mode="closure", findings=[finding], closure=closure))
+    closed = devflow(root, "audit", "apply", "billing", "--scope", "plan", "--mode", "closure")
+    final_state = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "plan closure verifies review and releases planned implementation",
+        closed.returncode == 0
+        and final_state["plan_review"]["status"] == "verified"
+        and final_state["next_action"].get("work_item") == "P01-I01",
+        closed.stdout + closed.stderr + repr(final_state),
+    )
+
+
+def case_audit_apply_requires_schema_files(root: Path) -> None:
+    domains: list[tuple[str, Path]] = []
+    for domain in ["missing-audit", "missing-finding"]:
+        devflow(root, "init", domain, "--workflow", "audit-remediation")
+        directory = root / f"docs/domains/{domain}"
+        write_audit(directory / "audits/integration.md", audit_metadata(directory))
+        domains.append((domain, directory))
+
+    for domain, directory, missing in [
+        (*domains[0], "audit"),
+        (*domains[1], "finding"),
+    ]:
+        fake_plugin = root / f"fake-plugin-{missing}"
+        shutil.copytree(PLUGIN / "core/schemas", fake_plugin / "core/schemas")
+        schema_path = fake_plugin / f"core/schemas/{missing}.schema.yaml"
+        if missing == "audit":
+            schema_path.unlink()
+        else:
+            schema_path.write_text("{}\n", encoding="utf-8")
+        before = (directory / "STATE.yaml").read_bytes()
+        runtime = load_runtime_module()
+        with mock.patch.object(runtime, "plugin_root", return_value=fake_plugin):
+            out = invoke_runtime(root, runtime, "audit", "apply", domain, "--scope", "integration", "--mode", "initial")
+        check(
+            f"audit apply rejects unavailable {missing} schema",
+            out.returncode == 2
+            and missing in out.stderr.lower()
+            and "schema" in out.stderr.lower()
+            and (directory / "STATE.yaml").read_bytes() == before,
+            out.stdout + out.stderr,
+        )
+
+
+def case_audit_remediation_prioritizes_unresolved_decisions(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    remediation = item(
+        "INT-R01",
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    dump(d / "work/integration.yaml", work("integration", remediation))
+    work_finding = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="major",
+        severity_reason="The implementation requires remediation.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R01"], "decision_ids": []},
+    )
+    decision_finding = audit_finding(
+        "F-02",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="A product decision is unresolved.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-001"]},
+    )
+    write_audit(
+        d / "audits/integration.md",
+        audit_metadata(d, verdict="conditional_pass", findings=[work_finding, decision_finding]),
+    )
+
+    out = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    applied = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "audit remediation resolves project decisions before executable WORK",
+        out.returncode == 0
+        and applied["unresolved_decisions"] == ["DEC-001"]
+        and applied["next_action"].get("command") == "decision"
+        and applied["next_action"].get("role") == "human",
+        out.stdout + out.stderr + repr(applied),
     )
 
 
@@ -2047,6 +2391,12 @@ CASES = [
     case_audit_apply_updates_state_and_next_action,
     case_audit_closure_covers_every_prior_finding,
     case_audit_closure_reopens_finding,
+    case_audit_remediation_lifecycle_reaches_closure_and_complete,
+    case_audit_apply_rolls_back_work_when_state_write_fails,
+    case_audit_closure_uses_git_history_for_prior_findings,
+    case_plan_audit_remediation_reaches_closure,
+    case_audit_apply_requires_schema_files,
+    case_audit_remediation_prioritizes_unresolved_decisions,
     case_schema_required_fields_are_enforced,
     case_phase_key_normalization,
     case_phase_set_no_duplicate,

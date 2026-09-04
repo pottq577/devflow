@@ -90,13 +90,13 @@ AuditMetadataLoader.add_constructor(
 )
 
 
-def parse_audit_metadata(path: Path) -> dict[str, Any]:
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+def parse_audit_text(text: str, source: str) -> dict[str, Any]:
+    lines = text.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
-        raise ValueError(f"Audit file must start with YAML front matter: {path}")
+        raise ValueError(f"Audit file must start with YAML front matter: {source}")
     end = next((index for index, line in enumerate(lines[1:], start=1) if line.rstrip("\r\n") == "---"), None)
     if end is None:
-        raise ValueError(f"Audit YAML front matter is not closed: {path}")
+        raise ValueError(f"Audit YAML front matter is not closed: {source}")
     try:
         metadata = yaml.load("".join(lines[1:end]), Loader=AuditMetadataLoader)
     except yaml.YAMLError as exc:
@@ -104,6 +104,49 @@ def parse_audit_metadata(path: Path) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         raise ValueError("Audit YAML front matter must be a mapping")
     return metadata
+
+
+def parse_audit_metadata(path: Path) -> dict[str, Any]:
+    return parse_audit_text(path.read_text(encoding="utf-8"), str(path))
+
+
+def load_required_audit_schema(name: str) -> dict[str, Any]:
+    schema = load_schema(name)
+    if not schema:
+        raise ValueError(f"Required {name} schema is missing or empty")
+    if (
+        schema.get("type") != "mapping"
+        or not isinstance(schema.get("required"), list)
+        or not schema["required"]
+        or not isinstance(schema.get("properties"), dict)
+        or not schema["properties"]
+    ):
+        raise ValueError(f"Required {name} schema has an invalid structure")
+    return schema
+
+
+def initial_audit_metadata(root: Path, path: Path) -> dict[str, Any]:
+    try:
+        relative = path.resolve().relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Canonical audit file is outside the repository: {path}") from exc
+    history = run_git(["log", "--format=%H", "--", str(relative)], root)
+    if not history:
+        raise ValueError(f"Closure audit has no initial Git history for canonical file: {relative}")
+    for commit_sha in history.splitlines():
+        proc = subprocess.run(
+            ["git", "show", f"{commit_sha}:{relative}"],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if proc.returncode != 0:
+            continue
+        metadata = parse_audit_text(proc.stdout, f"{commit_sha}:{relative}")
+        if metadata.get("mode") == "initial":
+            return metadata
+    raise ValueError(f"Closure audit has no initial Git version for canonical file: {relative}")
 
 
 def validate_schema_value(
@@ -186,6 +229,33 @@ def dump_yaml_if_changed(path: Path, data: Any) -> bool:
         return False
     atomic_write_text(path, rendered)
     return True
+
+
+def commit_yaml_transaction(documents: dict[Path, Any]) -> None:
+    rendered = {
+        path: yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000)
+        for path, data in documents.items()
+    }
+    originals = {path: path.read_bytes() if path.exists() else None for path in documents}
+    try:
+        for path, content in rendered.items():
+            atomic_write_text(path, content)
+    except Exception:
+        rollback_errors = []
+        for path, original in originals.items():
+            current = path.read_bytes() if path.exists() else None
+            if current == original:
+                continue
+            try:
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_write_text(path, original.decode("utf-8"))
+            except Exception as exc:
+                rollback_errors.append(f"{path}: {exc}")
+        if rollback_errors:
+            raise RuntimeError("Audit apply rollback failed: " + "; ".join(rollback_errors))
+        raise
 
 
 def has_nonblank_string(values: Any) -> bool:
@@ -353,8 +423,11 @@ def index_work_docs(docs: dict[Path, dict[str, Any]]):
     return docs, index, duplicates
 
 
-def load_work_index(d: Path):
-    return index_work_docs({path: load_yaml(path, {}) or {} for path in work_files(d)})
+def load_work_index(d: Path, overrides: dict[Path, dict[str, Any]] | None = None):
+    docs = {path: load_yaml(path, {}) or {} for path in work_files(d)}
+    if overrides:
+        docs.update(overrides)
+    return index_work_docs(docs)
 
 
 def item_phase(path: Path, doc: dict[str, Any]) -> str:
@@ -389,11 +462,14 @@ def effective_review(item: dict[str, Any]) -> dict[str, Any]:
 def effective_plan_review(state: dict[str, Any]) -> dict[str, Any]:
     """Return the plan-review defaults without requiring legacy STATE migration."""
     raw = state.get("plan_review") if isinstance(state.get("plan_review"), dict) else {}
-    return {
+    review = {
         "required": bool(raw.get("required")),
         "status": raw.get("status") or ("pending" if raw.get("required") else "skipped"),
         "audit_file": raw.get("audit_file") or "audits/plan.md",
     }
+    if "remediation_work_ids" in raw:
+        review["remediation_work_ids"] = list(raw.get("remediation_work_ids") or [])
+    return review
 
 
 def review_satisfied(item: dict[str, Any]) -> bool:
@@ -484,7 +560,11 @@ def work_start_errors(state: dict[str, Any], path: Path, doc: dict[str, Any], it
         errors.append(f"phase {phase} is already verified")
 
     plan_review = effective_plan_review(state)
-    if plan_review.get("required") and plan_review.get("status") != "verified":
+    plan_remediation = (
+        plan_review.get("status") == "pending"
+        and str(item.get("id")) in plan_review.get("remediation_work_ids", [])
+    )
+    if plan_review.get("required") and plan_review.get("status") != "verified" and not plan_remediation:
         errors.append("required plan review is pending")
     return errors
 
@@ -563,10 +643,15 @@ def reject_transition(subject: str, action: str, errors: list[str]) -> int:
     return 2
 
 
-def choose_next(root: Path, domain: str, statuses: set[str] | None = None):
+def choose_next(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    statuses: set[str] | None = None,
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+):
     d = domain_dir(root, domain)
-    state = load_yaml(d / "STATE.yaml", {}) or {}
-    docs, index, _ = load_work_index(d)
+    docs, index, _ = load_work_index(d, work_overrides)
     phases = normalized_phases(state)
     unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
     all_phases_verified = effective_workflow_type(state) == "audit_remediation" or (
@@ -594,10 +679,15 @@ def choose_next(root: Path, domain: str, statuses: set[str] | None = None):
     return phase, path, item
 
 
-def work_review_action(root: Path, domain: str, state: dict[str, Any]) -> dict[str, Any] | None:
+def work_review_action(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """Return the unresolved high-risk review action before normal ready WORK."""
     d = domain_dir(root, domain)
-    docs, index, _ = load_work_index(d)
+    docs, index, _ = load_work_index(d, work_overrides)
     unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
     reviews = []
     for path, doc in docs.items():
@@ -627,24 +717,80 @@ def work_review_action(root: Path, domain: str, state: dict[str, Any]) -> dict[s
     return None
 
 
-def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[str, Any]:
+def plan_remediation_action(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    review: dict[str, Any],
+    work_overrides: dict[Path, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    if state.get("unresolved_decisions"):
+        return {"role": "human", "command": "decision", "scope": "plan", "phase": None, "work_item": None}
+    d = domain_dir(root, domain)
+    docs, index, _ = load_work_index(d, work_overrides)
+    targets = [index.get(str(item_id)) for item_id in review.get("remediation_work_ids", [])]
+    for status in ["in_progress", "ready"]:
+        for target in targets:
+            if not target or target[1].get("status") != status:
+                continue
+            path, item = target
+            if deps_satisfied(item, index) and decision_satisfied(item, set()):
+                phase = item_phase(path, docs[path])
+                return {
+                    "role": "executor",
+                    "command": "run",
+                    "scope": "integration" if phase == "integration" else "phase",
+                    "phase": None if phase == "integration" else phase,
+                    "work_item": item.get("id"),
+                    "item_kind": item.get("kind"),
+                }
+    for target in targets:
+        if not target or target[1].get("status") != "done":
+            continue
+        path, item = target
+        item_review = effective_review(item)
+        phase = item_phase(path, docs[path])
+        if item_review["required"] and item_review["status"] == "pending":
+            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item.get("id")}
+        if item_review["required"] and item_review["status"] != "verified":
+            action = work_review_action(root, domain, state, work_overrides)
+            if action and action.get("work_item") == item.get("id"):
+                return action
+            return {"role": "human", "command": "decision", "scope": "work", "phase": None if phase == "integration" else phase, "work_item": item.get("id")}
+    if targets and all(target and target[1].get("status") in TERMINAL_STATUSES and review_satisfied(target[1]) for target in targets):
+        return {"role": "auditor", "command": "audit", "scope": "plan", "mode": "closure", "phase": None, "work_item": None}
+    return {"role": "human", "command": "decision", "scope": "plan", "phase": None, "work_item": None}
+
+
+def compute_next_action(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     d = domain_dir(root, domain)
     work = work_files(d)
-    if not work:
-        if effective_workflow_type(state) == "audit_remediation":
-            if state.get("unresolved_decisions"):
-                return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
-            integration_status = (state.get("integration") or {}).get("status", "audit")
-            if integration_status in {"pending", "audit"}:
-                return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
-            if integration_status == "closure":
-                return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
-            if integration_status == "verified":
-                return {"role": "none", "command": "complete", "scope": "project", "phase": None, "work_item": None}
+    workflow_type = effective_workflow_type(state)
+    integration = state.get("integration", {}) or {}
+    if workflow_type == "audit_remediation":
+        if state.get("unresolved_decisions"):
+            return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
+        integration_status = integration.get("status", "audit")
+        if integration_status in {"pending", "audit"}:
+            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
+        if integration_status == "closure":
+            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+        if integration_status == "verified":
+            return {"role": "none", "command": "complete", "scope": "project", "phase": None, "work_item": None}
+        if not work:
+            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+    elif not work:
         return {"role": "architect", "command": "plan", "scope": "project", "phase": None, "work_item": None}
 
     plan_review = effective_plan_review(state)
     if plan_review.get("required") and plan_review.get("status") != "verified":
+        if plan_review.get("status") == "pending" and plan_review.get("remediation_work_ids"):
+            return plan_remediation_action(root, domain, state, plan_review, work_overrides)
         return {"role": "auditor", "command": "audit", "scope": "plan", "mode": "initial", "phase": None, "work_item": None}
 
     phases = normalized_phases(state)
@@ -661,32 +807,29 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
         and phases[recorded_phase].get("status") == "remediation"
     ):
         return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "closure", "phase": recorded_phase, "work_item": None}
-    integration = state.get("integration", {}) or {}
     all_verified = bool(phases) and all(phase.get("status") == "verified" for phase in phases.values())
-    integration_audit_is_active = effective_workflow_type(state) == "audit_remediation" or (
-        all_verified and integration.get("status") in {"audit", "closure"}
-    )
+    integration_audit_is_active = all_verified and integration.get("status") in {"audit", "closure"}
     if integration_audit_is_active:
         if integration.get("status") in {"pending", "audit"}:
             return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
         if integration.get("status") == "closure":
             return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
 
-    nxt = choose_next(root, domain, {"in_progress"})
+    nxt = choose_next(root, domain, state, {"in_progress"}, work_overrides)
     if nxt:
         phase, _, item = nxt
         return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), "item_kind": item.get("kind")}
 
-    review_action = work_review_action(root, domain, state)
+    review_action = work_review_action(root, domain, state, work_overrides)
     if review_action:
         return review_action
 
-    nxt = choose_next(root, domain, {"ready"})
+    nxt = choose_next(root, domain, state, {"ready"}, work_overrides)
     if nxt:
         phase, _, item = nxt
         return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), "item_kind": item.get("kind")}
 
-    docs, _, _ = load_work_index(d)
+    docs, _, _ = load_work_index(d, work_overrides)
     for key in sorted(phases):
         ps = phases[key]
         if ps.get("status") == "verified":
@@ -699,6 +842,23 @@ def compute_next_action(root: Path, domain: str, state: dict[str, Any]) -> dict[
         if items and all(i.get("status") in TERMINAL_STATUSES for i in items):
             mode = "closure" if ps.get("status") == "remediation" else "initial"
             return {"role": "auditor", "command": "audit", "scope": "phase", "mode": mode, "phase": key, "work_item": None}
+
+    if workflow_type == "audit_remediation":
+        integration_items = [
+            item
+            for path, doc in docs.items()
+            if item_phase(path, doc) == "integration"
+            for item in (doc.get("items", []) or [])
+        ]
+        blocked = [str(item.get("id")) for item in integration_items if item.get("status") == "blocked"]
+        if blocked:
+            return {"role": "human", "command": "decision", "scope": "integration", "phase": None, "work_item": blocked[0] if len(blocked) == 1 else None}
+        if integration.get("status") == "remediation" and all(
+            item.get("status") in TERMINAL_STATUSES and review_satisfied(item)
+            for item in integration_items
+        ):
+            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+        return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None, "reason": "lifecycle is incomplete"}
 
     all_verified = bool(phases) and all(p.get("status") == "verified" for p in phases.values())
     istatus = integration.get("status", "pending")
@@ -779,13 +939,22 @@ def active_phase_for_action(root: Path, domain: str, state: dict[str, Any], acti
     return active[0] if len(active) == 1 else None
 
 
-def refresh_state(root: Path, domain: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
-    path = state_path(root, domain)
-    state = state if state is not None else load_yaml(path, {}) or {}
+def project_state(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     state["target_sha"] = current_sha(root)
-    state["next_action"] = compute_next_action(root, domain, state)
+    state["next_action"] = compute_next_action(root, domain, state, work_overrides)
     state["project_status"] = project_status_for_action(state["next_action"])
     state["active_phase"] = active_phase_for_action(root, domain, state, state["next_action"])
+    return state
+
+
+def refresh_state(root: Path, domain: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
+    path = state_path(root, domain)
+    state = project_state(root, domain, state if state is not None else load_yaml(path, {}) or {})
     dump_yaml_if_changed(path, state)
     return state
 
@@ -1450,8 +1619,10 @@ def validate_audit_metadata(
     phase: str | None,
     work_item: str | None,
 ) -> list[str]:
-    audit_schema = load_schema("audit")
-    errors = validate_schema_value(metadata, audit_schema, "audit", {"finding": load_schema("finding")})
+    audit_schema = load_required_audit_schema("audit")
+    finding_schema = load_required_audit_schema("finding")
+    references = {"finding": finding_schema}
+    errors = validate_schema_value(metadata, audit_schema, "audit", references)
     if errors:
         return errors
 
@@ -1481,19 +1652,39 @@ def validate_audit_metadata(
     }
     active_ids = set(finding_ids)
     if mode == "closure":
-        prior_ids = set(finding_ids) - reopened_ids
+        try:
+            audit_path = canonical_audit_path(root, domain, state, scope, phase, work_item)
+            prior_metadata = initial_audit_metadata(root, audit_path)
+            prior_schema_errors = validate_schema_value(prior_metadata, audit_schema, "initial audit", references)
+            if prior_schema_errors:
+                errors.extend(prior_schema_errors)
+                prior_ids: set[str] = set()
+            else:
+                prior_ids = {str(finding["id"]) for finding in prior_metadata["findings"]}
+                if prior_metadata["scope"] != scope:
+                    errors.append(f"initial audit scope {prior_metadata['scope']!r} does not match closure scope {scope!r}")
+        except ValueError as exc:
+            errors.append(str(exc))
+            prior_ids = set()
+        current_ids = set(finding_ids)
+        current_only_ids = current_ids - prior_ids
+        missing_findings = sorted(prior_ids - current_ids)
         missing = sorted(prior_ids - set(closure_by_id))
-        unknown = sorted(set(closure_by_id) - set(finding_ids))
+        unknown = sorted(set(closure_by_id) - prior_ids)
+        if missing_findings:
+            errors.append(f"closure omits prior findings from current metadata: {', '.join(missing_findings)}")
         if missing:
             errors.append(f"closure does not cover prior findings: {', '.join(missing)}")
         if unknown:
-            errors.append(f"closure references unknown findings: {', '.join(unknown)}")
-        active_ids = set(finding_ids) - {
+            errors.append(f"closure covers findings that were not in the initial audit: {', '.join(unknown)}")
+        invalid_reopened = sorted(reopened_ids - current_only_ids)
+        if invalid_reopened:
+            errors.append(f"closure reopened_as must reference current-only findings: {', '.join(invalid_reopened)}")
+        active_ids = current_only_ids | {
             finding_id
             for finding_id, entry in closure_by_id.items()
-            if entry.get("outcome") in {"resolved", "accepted_risk", "reopened"}
+            if entry.get("outcome") == "still_open"
         }
-        active_ids.update(reopened_ids)
     elif closure:
         errors.append("initial audit closure must be empty")
 
@@ -1601,6 +1792,8 @@ def audit_apply(args: argparse.Namespace) -> int:
     if args.scope == "plan":
         review = effective_plan_review(prospective)
         review["status"] = "verified" if closes_scope else "pending"
+        if generated_work:
+            review["remediation_work_ids"] = generated_work
         prospective["plan_review"] = review
     elif args.scope == "work":
         work_path, work_doc, _ = find_item(root, args.domain, str(args.task))
@@ -1635,6 +1828,7 @@ def audit_apply(args: argparse.Namespace) -> int:
     if closes_scope and args.scope == "integration":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
         errors.extend(integration_verify_errors(root, args.domain, prospective, docs))
+    project_state(root, args.domain, prospective, work_overrides)
     validation_errors, _ = collect_validation(
         root,
         args.domain,
@@ -1645,9 +1839,10 @@ def audit_apply(args: argparse.Namespace) -> int:
     if errors:
         return reject_transition("audit", "be applied", errors)
 
-    for work_path, work_doc in work_overrides.items():
-        dump_yaml(work_path, work_doc)
-    applied = refresh_state(root, args.domain, prospective)
+    documents: dict[Path, Any] = dict(work_overrides)
+    documents[path] = prospective
+    commit_yaml_transaction(documents)
+    applied = prospective
     next_action = applied.get("next_action") or {}
     print(f"audit applied: {args.scope} {args.mode}")
     print(f"verdict: {metadata['verdict']}")

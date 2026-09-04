@@ -46,6 +46,16 @@ integration initial audit
  -> project complete
 ```
 
+Empty phases are valid throughout this workflow. Unresolved decisions outrank executable
+remediation. After all integration remediation WORK is terminal and every required work review is
+verified, the next action is integration closure. A verified integration reaches project complete
+even while its integration WORK manifest remains present.
+
+A required plan review remains `status: pending` and records `remediation_work_ids` after an initial
+audit that requires follow-up. While those IDs are present, only the linked remediation or evidence
+WORK may run. When those items and their required reviews are terminal, the next action is the plan
+closure audit. A passing closure marks the plan review verified and releases ordinary planned WORK.
+
 Independent low and medium WORK remains batch-reviewed in the phase audit. A work audit uses
 `--scope work --task <WORK-ID>` and `--mode initial|closure`; plan, phase, and integration audits
 use those same modes at their own scope. The runtime computes the next action from STATE and WORK,
@@ -64,8 +74,9 @@ prerequisites, and closure coverage before any mutation. Invalid input exits wit
 STATE, WORK, DECISIONS, and audit artifacts unchanged.
 
 On success, the command registers new unresolved decision IDs, updates the audited lifecycle scope,
-and refreshes derived fields through one atomic STATE write. Linked remediation remains ordinary
-WORK and becomes executable only after the outcome is applied. Existing protocol 1.2 and older
+and computes derived fields against prospective STATE and WORK before writing. When both STATE and
+WORK change, write failure rolls every already-written file back to its original bytes. Linked
+remediation remains ordinary WORK and becomes executable only after the outcome is applied. Existing protocol 1.2 and older
 `plan-review set`, `work review`, `phase set`, and `integration set` transitions remain readable.
 Protocol 1.3 and newer verified transitions must use `audit apply`, so the legacy commands cannot
 bypass metadata validation.
