@@ -34,8 +34,10 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 3. Inspect repository rules (`AGENTS.md`, `CLAUDE.md`, CI/lint/test configuration), current git
    status, git history when relevant, and the actual implementation surfaces.
 4. Write `docs/domains/<domain>/PLAN.md` using the plan template. Record the immutable baseline SHA.
-5. Create one `work/phase-XX.yaml` per implementation phase. Keep all tasks in the standard WORK
-   schema; do not create per-task Markdown files.
+5. Create one version 2 `work/phase-XX.yaml` per implementation phase. Keep all tasks in the
+   standard WORK schema; do not create per-task Markdown files. Give each acceptance criterion and
+   verification command a unique, nonblank item-local ID. Each command declares nonempty `covers`,
+   and every acceptance ID must be covered.
 6. **Carry your findings into each WORK item.** `context` for repository facts you verified,
    `premise_checks` for what the Executor must re-confirm at HEAD, `pitfalls` for the mistakes it is
    likely to make. `premise_checks` is mandatory for `high` and `critical` risk and `validate`
@@ -46,7 +48,9 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 8. For audit-derived WORK, preserve each finding's expected event and outcome in objective and
    acceptance. Link audit disposition and `origin.findings` in both directions. Default to one
    finding per WORK; explain a shared root cause, change and rollback boundary, and verification set
-   in `origin.aggregation_reason` when aggregation is necessary.
+   in `origin.aggregation_reason` when aggregation is necessary. Use version 2 and map each
+   acceptance criterion to a command that observes the required outcome. Static source search alone
+   does not verify API or end-to-end behavior.
 9. Once a phase's branch exists, pin its range:
    `devflow phase ref <domain> <phase> --base <ref> --head <ref>`. It verifies ancestry and refuses
     rather than producing a stale 3-dot range.

@@ -1,4 +1,7 @@
-schema: devflow-work-v1
+schema: devflow-work-v2
+version:
+  current: 2
+  supported: [1, 2]
 required_item_fields:
   - id
   - kind
@@ -24,8 +27,19 @@ optional_item_fields:
   references: External document ids or paths the Executor should read.
   review: Optional work-level review metadata, as {required, status, audit_file, remediation_work_ids}. Runtime defaults preserve legacy WORK files.
 backward_compatibility:
+  legacy_shape: Version 1 acceptance and verification.commands remain string lists and are not rewritten.
   legacy_review: Existing WORK without review remains readable; high/critical done WORK defaults to pending required review.
   migration: No migration command is required; runtime normalization preserves readability.
+version_2:
+  acceptance:
+    required_fields: [id, criterion]
+    unique: id
+    nonblank: [id, criterion]
+  verification_command:
+    required_fields: [id, command, covers]
+    unique: id
+    nonblank: [id, command]
+    covers: Every command covers at least one existing acceptance id, and every acceptance id is covered.
 finding_traceability:
   required_for_kinds: [remediation, evidence, documentation]
   aggregation_reason_required_when_findings_at_least: 2
@@ -41,7 +55,11 @@ review_status:
 enforced_by_validate:
   - remediation, evidence, and documentation require nonempty origin.findings
   - multiple origin.findings require a nonblank origin.aggregation_reason
-  - acceptance and verification.commands must not be empty
+  - version 1 acceptance and verification.commands must not be empty
+  - version 2 acceptance ids and verification command ids are unique and nonblank
+  - version 2 acceptance criteria and verification commands are nonblank
+  - version 2 verification coverage is complete and references only existing acceptance ids
+  - version 2 rejects version 1 string entries
   - dependencies must resolve, and the dependency graph must be acyclic
   - a ready item must not depend on an unresolved decision
   - high and critical risk require premise_checks

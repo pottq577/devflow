@@ -165,6 +165,20 @@ def work(phase_num: str, *items: dict[str, Any]) -> dict[str, Any]:
     return {"version": 1, "phase": phase_num, "items": list(items)}
 
 
+def v2_item(
+    item_id: str,
+    acceptance: list[Any] | None = None,
+    commands: list[Any] | None = None,
+) -> dict[str, Any]:
+    acceptance = acceptance if acceptance is not None else [{"id": "AC-01", "criterion": f"acceptance for {item_id}"}]
+    commands = commands if commands is not None else [{"id": "V-01", "command": "true", "covers": ["AC-01"]}]
+    return item(item_id, acceptance=acceptance, verification={"commands": commands})
+
+
+def work_v2(phase_num: str, *items: dict[str, Any]) -> dict[str, Any]:
+    return {"version": 2, "phase": phase_num, "items": list(items)}
+
+
 def audit_finding(finding_id: str, **over: Any) -> dict[str, Any]:
     doc: dict[str, Any] = {
         "id": finding_id,
@@ -2140,6 +2154,139 @@ def case_evidence_required(root: Path) -> None:
     check("validate rejects done whose evidence.commands are whitespace only", "done without evidence.commands" in out, out)
 
 
+def case_work_v2_requires_unique_acceptance_ids(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    template = yaml.safe_load((PLUGIN / "core/templates/WORK.yaml").read_text(encoding="utf-8"))
+    check(
+        "new WORK template uses version 2 acceptance and verification mappings",
+        template.get("version") == 2
+        and all(isinstance(value, dict) for value in template["items"][0]["acceptance"])
+        and all(isinstance(value, dict) for value in template["items"][0]["verification"]["commands"]),
+        repr(template),
+    )
+    cases = [
+        (
+            "duplicate",
+            [
+                {"id": "AC-01", "criterion": "first"},
+                {"id": "AC-01", "criterion": "second"},
+            ],
+            "duplicate acceptance id",
+        ),
+        ("blank id", [{"id": "  ", "criterion": "first"}], "acceptance id must be a nonblank string"),
+        ("blank criterion", [{"id": "AC-01", "criterion": "  "}], "acceptance criterion must be a nonblank string"),
+    ]
+    for name, acceptance, expected in cases:
+        commands = [{"id": "V-01", "command": "true", "covers": [str(acceptance[0]["id"])]}]
+        dump(d / "work/integration.yaml", work_v2("integration", v2_item("INT-I01", acceptance, commands)))
+        out = devflow(root, "validate", "billing")
+        check(
+            f"WORK v2 rejects {name} acceptance metadata",
+            out.returncode == 1 and expected in out.stdout,
+            out.stdout + out.stderr,
+        )
+    valid = work_v2("integration", v2_item("INT-I01"))
+    dump(d / "work/integration.yaml", valid)
+    out = devflow(root, "validate", "billing")
+    check("WORK v2 accepts unique complete mappings", out.returncode == 0, out.stdout + out.stderr)
+
+
+def case_work_v2_requires_unique_verification_ids(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    cases = [
+        (
+            "duplicate",
+            [
+                {"id": "V-01", "command": "true", "covers": ["AC-01"]},
+                {"id": "V-01", "command": "true", "covers": ["AC-01"]},
+            ],
+            "duplicate verification command id",
+        ),
+        ("blank id", [{"id": "  ", "command": "true", "covers": ["AC-01"]}], "verification command id must be a nonblank string"),
+        ("blank command", [{"id": "V-01", "command": "  ", "covers": ["AC-01"]}], "verification command must be a nonblank string"),
+        ("empty coverage", [{"id": "V-01", "command": "true", "covers": []}], "verification command covers must not be empty"),
+    ]
+    for name, commands, expected in cases:
+        dump(d / "work/integration.yaml", work_v2("integration", v2_item("INT-I01", commands=commands)))
+        out = devflow(root, "validate", "billing")
+        check(
+            f"WORK v2 rejects {name} verification metadata",
+            out.returncode == 1 and expected in out.stdout,
+            out.stdout + out.stderr,
+        )
+
+
+def case_verification_coverage_requires_every_acceptance_id(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    acceptance = [
+        {"id": "AC-01", "criterion": "first"},
+        {"id": "AC-02", "criterion": "second"},
+    ]
+    commands = [{"id": "V-01", "command": "true", "covers": ["AC-01"]}]
+    dump(d / "work/integration.yaml", work_v2("integration", v2_item("INT-I01", acceptance, commands)))
+
+    out = devflow(root, "validate", "billing")
+    check(
+        "WORK v2 requires every acceptance id to be covered",
+        out.returncode == 1 and "acceptance ids lack verification coverage: AC-02" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_verification_coverage_rejects_unknown_acceptance_id(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    commands = [{"id": "V-01", "command": "true", "covers": ["AC-01", "AC-404"]}]
+    dump(d / "work/integration.yaml", work_v2("integration", v2_item("INT-I01", commands=commands)))
+
+    out = devflow(root, "validate", "billing")
+    check(
+        "WORK v2 rejects verification coverage of unknown acceptance ids",
+        out.returncode == 1 and "verification command V-01 covers unknown acceptance id AC-404" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_work_v2_rejects_mixed_legacy_shapes(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    acceptance = [{"id": "AC-01", "criterion": "first"}, "legacy acceptance"]
+    commands = [{"id": "V-01", "command": "true", "covers": ["AC-01"]}, "true"]
+    dump(d / "work/integration.yaml", work_v2("integration", v2_item("INT-I01", acceptance, commands)))
+
+    out = devflow(root, "validate", "billing")
+    check(
+        "WORK v2 rejects legacy acceptance and verification strings",
+        out.returncode == 1
+        and "acceptance entries must be mappings in WORK version 2" in out.stdout
+        and "verification.commands entries must be mappings in WORK version 2" in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_work_v1_remains_readable(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    dump(d / "STATE.yaml", state_doc)
+    work_path = d / "work/phase-01.yaml"
+    dump(work_path, work("01", item("P01-I01")))
+
+    validated = devflow(root, "validate", "billing")
+    started = devflow(root, "work", "start", "billing", "P01-I01")
+    done = devflow(root, "work", "done", "billing", "P01-I01", "--command", "true -> passed")
+    persisted = yaml.safe_load(work_path.read_text(encoding="utf-8"))
+    check(
+        "WORK v1 remains valid through the existing lifecycle without shape rewrite",
+        validated.returncode == 0
+        and started.returncode == 0
+        and done.returncode == 0
+        and persisted["version"] == 1
+        and all(isinstance(value, str) for value in persisted["items"][0]["acceptance"])
+        and all(isinstance(value, str) for value in persisted["items"][0]["verification"]["commands"]),
+        validated.stdout + validated.stderr + started.stdout + started.stderr + done.stdout + done.stderr + repr(persisted),
+    )
+
+
 def case_transfer_enforced(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -3330,6 +3477,12 @@ CASES = [
     case_status_is_side_effect_free,
     case_premise_checks_required,
     case_evidence_required,
+    case_work_v2_requires_unique_acceptance_ids,
+    case_work_v2_requires_unique_verification_ids,
+    case_verification_coverage_requires_every_acceptance_id,
+    case_verification_coverage_rejects_unknown_acceptance_id,
+    case_work_v2_rejects_mixed_legacy_shapes,
+    case_work_v1_remains_readable,
     case_transfer_enforced,
     case_lifecycle_consistency,
     case_validate_core_rules,

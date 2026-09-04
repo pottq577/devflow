@@ -1,4 +1,4 @@
-version: 1
+version: 2
 phase: "01"
 items:
   - id: P01-I01
@@ -33,8 +33,13 @@ items:
       - "Name a specific method, condition, or migration number to look at, and what you expect to find."
 
     verification:
-      commands: []
-    acceptance: []
+      commands:
+        - id: V-P01-I01-01
+          command: replace-with-repository-verification-command
+          covers: [AC-P01-I01-01]
+    acceptance:
+      - id: AC-P01-I01-01
+        criterion: Replace with one observable completion criterion.
 
     # Known failure modes for this change. Each entry says what breaks and what it costs.
     pitfalls:

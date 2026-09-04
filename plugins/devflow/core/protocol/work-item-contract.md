@@ -25,6 +25,38 @@ Every executable item must include:
 - status,
 - evidence fields.
 
+## WORK versions and verification coverage
+
+Architects and auditors create new WORK documents with `version: 2`. Version 2 gives every
+acceptance criterion and verification command a stable item-local ID:
+
+```yaml
+version: 2
+items:
+  - id: P01-I01
+    acceptance:
+      - id: AC-P01-I01-01
+        criterion: The billing API returns the persisted invoice.
+    verification:
+      commands:
+        - id: V-P01-I01-01
+          command: ./gradlew integrationTest --tests '*BillingApiIT*'
+          covers: [AC-P01-I01-01]
+```
+
+Within one item, acceptance IDs and verification command IDs are unique and nonblank. Criteria and
+commands are nonblank. Every command covers at least one acceptance ID, every referenced acceptance
+ID exists, and every acceptance criterion is covered by at least one command. Do not mix the legacy
+string shape into a version 2 document.
+
+Choose commands that verify each criterion at the layer where its outcome is observable. API and
+end-to-end behavior requires a controller, API integration, browser, or equivalent contract check.
+A static source search alone does not establish that runtime behavior. The runtime validates the
+declared mapping but does not infer whether a command is technically sufficient.
+
+Record executed command results in the existing `evidence.commands` list. Coverage declarations do
+not replace execution evidence.
+
 ## The item must carry what the Architect learned
 
 The Architect reads the repository. The Executor does not get to repeat that reading, and an item
@@ -119,6 +151,9 @@ only accepts ready WORK after dependency, decision, phase, and required plan-rev
 `block` only accepts ready or in-progress WORK and requires a non-empty reason.
 
 ## Backward compatibility
+
+Version 1 WORK keeps its string lists under `acceptance` and `verification.commands`. The runtime
+normalizes that shape for reading and preserves its lifecycle without rewriting it to version 2.
 
 `review` is optional for existing WORK. The runtime reads legacy high or critical done WORK as
 requiring review before a dependent starts, without requiring an artifact migration. New high and

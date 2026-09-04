@@ -14,9 +14,12 @@ This packet is emitted only for the exact WORK item in the computed next action.
    `devflow work block` with the reason rather than improvising.
 4. Establish the failing test or verification criterion first, where the change admits one.
 5. Make the smallest coherent change that satisfies the contract. Stay inside `scope.allowed`.
-6. Run the specified verification plus repository-required checks.
+6. Run every version 2 verification command needed to cover the selected acceptance IDs, plus
+   repository-required checks. Verify API and end-to-end criteria at an observable contract layer;
+   a static source search alone is not runtime behavior evidence.
 7. Record commit, changed files, commands with their results, deviations, and discoveries in
-   `evidence`. A command's result means what it printed, not what you expected it to print.
+   `evidence`. Keep executed results in `evidence.commands`; the verification mapping does not
+   replace them. A command's result means what it printed, not what you expected it to print.
 8. Mark the item `done` only when acceptance criteria are supported by evidence. `devflow work done`
    refuses a completion with no recorded command.
    High and critical completed WORK then waits for its initial work audit before dependents run.

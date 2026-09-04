@@ -380,6 +380,7 @@ PHASE_STATUSES = set(STATE_SCHEMA["phase_status"]["allowed"])
 INTEGRATION_STATUSES = set(STATE_SCHEMA["integration_status"]["allowed"])
 PLAN_REVIEW_STATUSES = set(STATE_SCHEMA["plan_review_status"]["allowed"])
 WORK_REQUIRED_ITEM_FIELDS = WORK_SCHEMA["required_item_fields"]
+WORK_VERSIONS = set(WORK_SCHEMA["version"]["supported"])
 WORK_STATUSES = set(WORK_SCHEMA["status"]["allowed"])
 TERMINAL_STATUSES = set(WORK_SCHEMA["terminal"])
 KINDS = set(WORK_SCHEMA["kind"]["allowed"])
@@ -466,6 +467,30 @@ def has_nonblank_string(values: Any) -> bool:
     return isinstance(values, list) and any(
         isinstance(value, str) and bool(value.strip()) for value in values
     )
+
+
+def work_document_version(doc: dict[str, Any]) -> int:
+    version = doc.get("version", 1)
+    return version if type(version) is int else 0
+
+
+def normalized_acceptance(item: dict[str, Any], version: int) -> list[dict[str, Any]]:
+    values = item.get("acceptance")
+    if not isinstance(values, list):
+        return []
+    if version == 1:
+        return [{"id": None, "criterion": value} for value in values]
+    return [value for value in values if isinstance(value, dict)]
+
+
+def normalized_verification_commands(item: dict[str, Any], version: int) -> list[dict[str, Any]]:
+    verification = item.get("verification")
+    values = verification.get("commands") if isinstance(verification, dict) else None
+    if not isinstance(values, list):
+        return []
+    if version == 1:
+        return [{"id": None, "command": value, "covers": []} for value in values]
+    return [value for value in values if isinstance(value, dict)]
 
 
 def runtime_config(root: Path) -> dict[str, Any]:
@@ -1725,7 +1750,15 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
         errors.append(f"Invalid integration.status: {istatus}")
 
 
-def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: set[str], errors: list[str], warnings: list[str]) -> None:
+def validate_item(
+    item: dict[str, Any],
+    version: int,
+    all_ids: set[str],
+    index,
+    unresolved: set[str],
+    errors: list[str],
+    warnings: list[str],
+) -> None:
     item_id = str(item.get("id", "<missing>"))
     for field in WORK_REQUIRED_ITEM_FIELDS:
         if field not in item:
@@ -1747,10 +1780,64 @@ def validate_item(item: dict[str, Any], all_ids: set[str], index, unresolved: se
         aggregation_reason = origin.get("aggregation_reason")
         if not isinstance(aggregation_reason, str) or not aggregation_reason.strip():
             errors.append(f"{item_id}: multiple origin.findings require nonblank origin.aggregation_reason")
-    if not (item.get("acceptance") or []):
-        errors.append(f"{item_id}: acceptance must not be empty")
-    if not has_nonblank_string((item.get("verification") or {}).get("commands")):
-        errors.append(f"{item_id}: verification.commands must contain a non-empty command")
+    acceptance = normalized_acceptance(item, version)
+    commands = normalized_verification_commands(item, version)
+    if version == 1:
+        if not acceptance:
+            errors.append(f"{item_id}: acceptance must not be empty")
+        if not has_nonblank_string([command["command"] for command in commands]):
+            errors.append(f"{item_id}: verification.commands must contain a non-empty command")
+    else:
+        raw_acceptance = item.get("acceptance")
+        raw_commands = (item.get("verification") or {}).get("commands") if isinstance(item.get("verification"), dict) else None
+        if not isinstance(raw_acceptance, list) or not raw_acceptance:
+            errors.append(f"{item_id}: acceptance must not be empty")
+        elif any(not isinstance(value, dict) for value in raw_acceptance):
+            errors.append(f"{item_id}: acceptance entries must be mappings in WORK version 2")
+        if not isinstance(raw_commands, list) or not raw_commands:
+            errors.append(f"{item_id}: verification.commands must not be empty")
+        elif any(not isinstance(value, dict) for value in raw_commands):
+            errors.append(f"{item_id}: verification.commands entries must be mappings in WORK version 2")
+
+        acceptance_ids: set[str] = set()
+        for acceptance_entry in acceptance:
+            acceptance_id = acceptance_entry.get("id")
+            if not isinstance(acceptance_id, str) or not acceptance_id.strip():
+                errors.append(f"{item_id}: acceptance id must be a nonblank string")
+            elif acceptance_id in acceptance_ids:
+                errors.append(f"{item_id}: duplicate acceptance id {acceptance_id}")
+            else:
+                acceptance_ids.add(acceptance_id)
+            criterion = acceptance_entry.get("criterion")
+            if not isinstance(criterion, str) or not criterion.strip():
+                errors.append(f"{item_id}: acceptance criterion must be a nonblank string")
+
+        command_ids: set[str] = set()
+        covered_ids: set[str] = set()
+        for command in commands:
+            command_id = command.get("id")
+            if not isinstance(command_id, str) or not command_id.strip():
+                errors.append(f"{item_id}: verification command id must be a nonblank string")
+            elif command_id in command_ids:
+                errors.append(f"{item_id}: duplicate verification command id {command_id}")
+            else:
+                command_ids.add(command_id)
+            if not isinstance(command.get("command"), str) or not command["command"].strip():
+                errors.append(f"{item_id}: verification command must be a nonblank string")
+            covers = command.get("covers")
+            if not isinstance(covers, list) or not covers:
+                errors.append(f"{item_id}: verification command covers must not be empty")
+                continue
+            for acceptance_id in covers:
+                if not isinstance(acceptance_id, str) or not acceptance_id.strip():
+                    errors.append(f"{item_id}: verification command covers must contain nonblank acceptance ids")
+                elif acceptance_id not in acceptance_ids:
+                    errors.append(f"{item_id}: verification command {command_id} covers unknown acceptance id {acceptance_id}")
+                else:
+                    covered_ids.add(acceptance_id)
+        uncovered_ids = sorted(acceptance_ids - covered_ids)
+        if uncovered_ids:
+            errors.append(f"{item_id}: acceptance ids lack verification coverage: {', '.join(uncovered_ids)}")
     for dep in item.get("dependencies", []) or []:
         if str(dep) not in all_ids:
             errors.append(f"{item_id}: unknown dependency {dep}")
@@ -1854,12 +1941,16 @@ def collect_validation(
                 errors.append(f"plan_review: unknown remediation WORK id {remediation_id}")
 
     for path, doc in docs.items():
+        version = work_document_version(doc)
+        if version not in WORK_VERSIONS:
+            errors.append(f"{path.name}: unsupported WORK version {doc.get('version')!r}")
+            continue
         items = doc.get("items", []) or []
         if not isinstance(items, list):
             errors.append(f"{path.name}: items must be a list")
             continue
         for item in items:
-            validate_item(item, all_ids, index, unresolved, errors, warnings)
+            validate_item(item, version, all_ids, index, unresolved, errors, warnings)
 
     # A phase cannot be verified while its own work is unfinished.
     for key, phase_state in phases.items():

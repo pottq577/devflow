@@ -36,13 +36,16 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 6. Establish the failing test or verification criterion first, where the change admits one.
 7. Implement only the coherent change boundary defined by the WORK item, staying inside
    `scope.allowed`. Follow repository rules and existing patterns.
-8. Execute the item's verification commands plus repository-required checks.
+8. Execute the item's verification commands plus repository-required checks. For version 2, confirm
+   the executed set covers every acceptance ID. Verify API and end-to-end criteria at an observable
+   contract layer; static source search alone is not runtime behavior evidence.
 9. If a stop condition is reached, run `devflow work block <domain> <ID> --reason "..."` and stop.
    Record a decision when human or product authority is required.
 10. When acceptance criteria are supported by evidence, run
     `devflow work done <domain> <ID> --commit <sha> --command '<cmd> -> <result>' ...`. It refuses a
     completion with no recorded command, because an unevidenced completion is the failure this
-    protocol exists to prevent.
+    protocol exists to prevent. Keep actual command results in `evidence.commands`; version 2
+    `covers` metadata does not replace execution evidence.
     A completed high/critical item then receives an initial work audit before a dependent can start.
 11. If you discovered a trap that outlives this item, add it to `PITFALLS.md`.
 12. Run `devflow validate <domain>` and `devflow status <domain>`.
