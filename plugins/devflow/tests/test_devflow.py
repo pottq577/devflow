@@ -1574,6 +1574,233 @@ def case_audit_remediation_required_sections_survive_template_tampering(root: Pa
     )
 
 
+def case_validate_closure_reuses_apply_finding_coverage(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    state_path = d / "STATE.yaml"
+    prior = audit_finding(
+        "F-01",
+        severity="blocker",
+        severity_reason="The prior production failure remains concrete.",
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="fail", findings=[prior]))
+    commit_paths(root, "record initial audit", d / "audits/integration.md")
+
+    def validate_closure(
+        status: str,
+        verdict: str,
+        findings: list[dict[str, Any]],
+        closure: list[dict[str, Any]],
+    ) -> tuple[subprocess.CompletedProcess, bool]:
+        state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+        state_doc["protocol_version"] = "1.3.0"
+        state_doc["integration"]["status"] = status
+        dump(state_path, state_doc)
+        write_audit(
+            d / "audits/integration.md",
+            audit_metadata(d, mode="closure", verdict=verdict, findings=findings, closure=closure),
+        )
+        before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        out = devflow(root, "validate", "billing")
+        after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        return out, before == after
+
+    missing, unchanged = validate_closure(
+        "verified",
+        "pass",
+        [],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["still failing"], "reopened_as": []}],
+    )
+    check(
+        "canonical closure rejects a prior still-open finding omitted from current metadata",
+        missing.returncode == 1
+        and "closure omits prior findings from current metadata: F-01" in missing.stdout
+        and unchanged,
+        f"artifacts_unchanged={unchanged}\n{missing.stdout}{missing.stderr}",
+    )
+
+    resolved, unchanged = validate_closure(
+        "verified",
+        "pass",
+        [prior],
+        [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["fixed"], "reopened_as": []}],
+    )
+    check(
+        "canonical closure permits a covered resolved blocker with a pass verdict",
+        resolved.returncode == 0 and unchanged,
+        f"artifacts_unchanged={unchanged}\n{resolved.stdout}{resolved.stderr}",
+    )
+
+    still_open, unchanged = validate_closure(
+        "closure",
+        "fail",
+        [prior],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["still failing"], "reopened_as": []}],
+    )
+    check(
+        "canonical closure preserves a covered still-open blocker as active",
+        still_open.returncode == 0 and unchanged,
+        f"artifacts_unchanged={unchanged}\n{still_open.stdout}{still_open.stderr}",
+    )
+
+    current = audit_finding(
+        "F-02",
+        severity="blocker",
+        severity_reason="A new production failure was found during closure.",
+    )
+    current_only, unchanged = validate_closure(
+        "closure",
+        "fail",
+        [prior, current],
+        [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["fixed"], "reopened_as": []}],
+    )
+    check(
+        "canonical closure preserves a current-only blocker as active",
+        current_only.returncode == 0 and unchanged,
+        f"artifacts_unchanged={unchanged}\n{current_only.stdout}{current_only.stderr}",
+    )
+
+
+def case_delivery_markdown_sections_follow_commonmark_boundaries(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+
+    def validate_unchanged() -> tuple[subprocess.CompletedProcess, bool]:
+        before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        out = devflow(root, "validate", "billing")
+        after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+        return out, before == after
+
+    valid_prd = (
+        "# Billing PRD\n\n"
+        "   ## 4. Requirements\n\n"
+        "  ### REQ-001 Billing behavior\n"
+        "- Requirement: Preserve billing behavior.\n"
+        "- Acceptance criteria:\n"
+        "  - AC-001: The behavior is verified.\n"
+    )
+    valid_plan = (
+        "# Implementation PLAN\n\n"
+        "## Metadata\n- Domain: billing\n- Baseline SHA: HEAD\n- Risk profile: medium\n\n"
+        " ## Repository findings\n- Existing runtime inspected.\n\n"
+        "  ## Architecture / implementation strategy\n* Reuse the runtime boundary.\n\n"
+        "   ## Requirement traceability\n+ REQ-001 maps to Phase 01.\n\n"
+        "## Phase graph\n- Phase 01 implements REQ-001.\n\n"
+        "   ## Verification strategy\n- Run the targeted suite.\n"
+    )
+    (d / "PRD.md").write_text(valid_prd, encoding="utf-8")
+    (d / "PLAN.md").write_text(valid_plan, encoding="utf-8")
+    accepted, unchanged = validate_unchanged()
+    check(
+        "delivery accepts CommonMark ATX headings with zero through three leading spaces",
+        accepted.returncode == 0 and unchanged,
+        f"artifacts_unchanged={unchanged}\n{accepted.stdout}{accepted.stderr}",
+    )
+
+    (d / "PLAN.md").write_text(valid_plan.replace("## Phase graph", "    ## Phase graph"), encoding="utf-8")
+    code_block, unchanged = validate_unchanged()
+    check(
+        "delivery treats an ATX-looking line with four leading spaces as a code block",
+        code_block.returncode == 1 and "Phase graph" in code_block.stdout and unchanged,
+        f"artifacts_unchanged={unchanged}\n{code_block.stdout}{code_block.stderr}",
+    )
+
+    (d / "PLAN.md").write_text(
+        valid_plan + "\n## Phase graph\n<!-- no phase content -->\n*\n",
+        encoding="utf-8",
+    )
+    duplicate, unchanged = validate_unchanged()
+    check(
+        "delivery rejects an empty duplicate of a required heading",
+        duplicate.returncode == 1 and "Phase graph" in duplicate.stdout and unchanged,
+        f"artifacts_unchanged={unchanged}\n{duplicate.stdout}{duplicate.stderr}",
+    )
+
+    marker_prd = (
+        "# Billing PRD\n\n"
+        "## 4. Requirements\n\n"
+        "### REQ-001 Billing behavior\n"
+        "- Requirement: <!-- empty --> -\n"
+        "- Acceptance criteria: +\n\n"
+        "## 5. Notes\n"
+        "- Requirement: A later section must not satisfy REQ-001.\n"
+        "- Acceptance criteria: A later section must not satisfy REQ-001.\n"
+    )
+    (d / "PRD.md").write_text(marker_prd, encoding="utf-8")
+    (d / "PLAN.md").write_text(valid_plan, encoding="utf-8")
+    markers, unchanged = validate_unchanged()
+    check(
+        "delivery rejects comment and empty list marker bodies without crossing section boundaries",
+        markers.returncode == 1
+        and "Requirement body must be nonblank" in markers.stdout
+        and "Acceptance criteria body must be nonblank" in markers.stdout
+        and unchanged,
+        f"artifacts_unchanged={unchanged}\n{markers.stdout}{markers.stderr}",
+    )
+
+
+def case_audit_remediation_markdown_sections_reject_empty_duplicates(root: Path) -> None:
+    valid_domain = "valid-audit-sections"
+    devflow(root, "init", valid_domain, "--workflow", "audit-remediation")
+    valid_dir = root / f"docs/domains/{valid_domain}"
+    fill_audit_remediation_contract(valid_dir)
+    valid_prd = valid_dir / "PRD.md"
+    valid_plan = valid_dir / "PLAN.md"
+    valid_prd.write_text(
+        valid_prd.read_text(encoding="utf-8").replace("## In scope\nBilling runtime.", "   ## In scope\n- Billing runtime."),
+        encoding="utf-8",
+    )
+    valid_plan.write_text(
+        valid_plan.read_text(encoding="utf-8").replace(
+            "## Finding disposition strategy\nClassify every finding.",
+            "  ## Finding disposition strategy\n+ Classify every finding.",
+        ),
+        encoding="utf-8",
+    )
+    write_audit(valid_dir / "audits/integration.md", audit_metadata(valid_dir))
+    accepted = devflow(root, "audit", "apply", valid_domain, "--scope", "integration", "--mode", "initial")
+    check(
+        "audit remediation accepts indented headings and nonblank list item bodies",
+        accepted.returncode == 0,
+        accepted.stdout + accepted.stderr,
+    )
+
+    invalid_domain = "invalid-audit-sections"
+    devflow(root, "init", invalid_domain, "--workflow", "audit-remediation")
+    invalid_dir = root / f"docs/domains/{invalid_domain}"
+    fill_audit_remediation_contract(invalid_dir)
+    invalid_prd = invalid_dir / "PRD.md"
+    invalid_plan = invalid_dir / "PLAN.md"
+    invalid_prd.write_text(
+        invalid_prd.read_text(encoding="utf-8").replace(
+            "## In scope\nBilling runtime.",
+            "## In scope\n- Billing runtime.\n\n   ## In scope\n<!-- empty -->\n-",
+        ),
+        encoding="utf-8",
+    )
+    invalid_plan.write_text(
+        invalid_plan.read_text(encoding="utf-8").replace(
+            "## Finding disposition strategy\nClassify every finding.",
+            "## Finding disposition strategy\n+ Classify every finding.\n\n"
+            "  ## Finding disposition strategy\n<!-- empty -->\n*\n+",
+        ),
+        encoding="utf-8",
+    )
+    write_audit(invalid_dir / "audits/integration.md", audit_metadata(invalid_dir))
+    before = {str(path.relative_to(invalid_dir)): path.read_bytes() for path in invalid_dir.rglob("*") if path.is_file()}
+    rejected = devflow(root, "audit", "apply", invalid_domain, "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(invalid_dir)): path.read_bytes() for path in invalid_dir.rglob("*") if path.is_file()}
+    check(
+        "audit remediation rejects empty duplicate required sections without mutation",
+        rejected.returncode == 2
+        and "In scope" in rejected.stderr
+        and "Finding disposition strategy" in rejected.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{rejected.stdout}{rejected.stderr}",
+    )
+
+
 def case_audit_closure_covers_every_prior_finding(root: Path) -> None:
     d = audit_remediation_fixture(root)
     findings = [audit_finding("F-01"), audit_finding("F-02")]
@@ -4032,6 +4259,9 @@ CASES = [
     case_validate_rejects_canonical_audit_path_collision,
     case_delivery_placeholder_contract_requires_trusted_sections,
     case_audit_remediation_required_sections_survive_template_tampering,
+    case_validate_closure_reuses_apply_finding_coverage,
+    case_delivery_markdown_sections_follow_commonmark_boundaries,
+    case_audit_remediation_markdown_sections_reject_empty_duplicates,
     case_audit_closure_covers_every_prior_finding,
     case_audit_closure_reopens_finding,
     case_audit_remediation_lifecycle_reaches_closure_and_complete,

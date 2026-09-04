@@ -2083,24 +2083,65 @@ def validate_work_file(
     return errors, warnings
 
 
+def markdown_sections(text: str) -> list[tuple[int, str, str]]:
+    heading_pattern = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$", re.M)
+    headings = list(heading_pattern.finditer(text))
+    sections: list[tuple[int, str, str]] = []
+    for index, heading in enumerate(headings):
+        level = len(heading.group(1))
+        title = re.sub(r"[ \t]+#+[ \t]*$", "", (heading.group(2) or "").strip())
+        body_end = len(text)
+        for following in headings[index + 1:]:
+            if len(following.group(1)) <= level:
+                body_end = following.start()
+                break
+        sections.append((level, title, text[heading.end():body_end]))
+    return sections
+
+
+def meaningful_markdown_body(body: str) -> bool:
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or re.fullmatch(r"[-*+]", stripped):
+            continue
+        if re.fullmatch(r"[-*+]\s+[^:]+:\s*", stripped):
+            continue
+        if re.fullmatch(r" {0,3}#{1,6}(?:[ \t]+.*?)?[ \t]*", line):
+            continue
+        return True
+    return False
+
+
+def markdown_field_has_meaningful_body(body: str, label: str) -> bool:
+    field_pattern = re.compile(r"^[ \t]*[-*+][ \t]+(Requirement|Acceptance criteria):[ \t]*(.*)$", re.M | re.I)
+    fields = list(field_pattern.finditer(body))
+    selected = [index for index, field in enumerate(fields) if field.group(1).casefold() == label.casefold()]
+    if not selected:
+        return False
+    for index in selected:
+        field = fields[index]
+        body_end = fields[index + 1].start() if index + 1 < len(fields) else len(body)
+        if not meaningful_markdown_body(field.group(2) + "\n" + body[field.end():body_end]):
+            return False
+    return True
+
+
 def required_markdown_section_errors(path: Path, template_name: str) -> list[str]:
     template = read_template(template_name)
-    template_headings = {match.group(1).strip() for match in re.finditer(r"^##\s+(.+?)\s*$", template, re.M)}
+    template_headings = {title for level, title, _body in markdown_sections(template) if level == 2}
     required = MARKDOWN_SECTION_ANCHORS[template_name]
     text = read_text_if_exists(path)
+    sections = markdown_sections(text)
     errors: list[str] = []
     for heading in required:
         if heading not in template_headings:
             errors.append(f"template {template_name} is missing required section: {heading}")
-        match = re.search(
-            rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
-            text,
-            re.M | re.S,
-        )
-        body = re.sub(r"<!--.*?-->", "", match.group(1), flags=re.S) if match else ""
-        body = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#")).strip()
-        if not body:
+        bodies = [body for level, title, body in sections if level == 2 and title == heading]
+        if not bodies:
             errors.append(f"{path.name} required section is empty: {heading}")
+        elif any(not meaningful_markdown_body(body) for body in bodies):
+            errors.append(f"{path.name} required section has an empty occurrence: {heading}")
     return errors
 
 
@@ -2117,27 +2158,25 @@ def delivery_placeholder_errors(d: Path, state: dict[str, Any], docs: dict[Path,
         if not text or any(marker in text for marker in markers):
             errors.append(f"{name} still contains placeholder scaffold markers")
         errors.extend(required_markdown_section_errors(path, name))
-    prd_text = read_text_if_exists(d / "PRD.md")
-    requirements_section = re.search(
-        r"^##\s+4\.\s+Requirements\s*$\n(.*?)(?=^##\s+|\Z)",
-        prd_text,
-        re.M | re.S | re.I,
-    )
-    requirements_text = requirements_section.group(1) if requirements_section else ""
-    requirements = list(re.finditer(r"^#{3,6}\s+(REQ-[A-Z0-9-]+)\b.*$", requirements_text, re.M | re.I))
-    if not requirements:
+    prd_sections = markdown_sections(read_text_if_exists(d / "PRD.md"))
+    requirement_sections = [body for level, title, body in prd_sections if level == 2 and title.casefold() == "4. requirements"]
+    found_requirement = False
+    for requirements_text in requirement_sections:
+        requirements = [
+            (title.split(maxsplit=1)[0], body)
+            for level, title, body in markdown_sections(requirements_text)
+            if level >= 3 and re.match(r"REQ-[A-Z0-9-]+\b", title, re.I)
+        ]
+        if not requirements:
+            errors.append("PRD.md 4. Requirements section has no concrete requirement heading")
+        found_requirement = found_requirement or bool(requirements)
+        for requirement_id, body in requirements:
+            if not markdown_field_has_meaningful_body(body, "Requirement"):
+                errors.append(f"PRD.md {requirement_id} Requirement body must be nonblank")
+            if not markdown_field_has_meaningful_body(body, "Acceptance criteria"):
+                errors.append(f"PRD.md {requirement_id} Acceptance criteria body must be nonblank")
+    if not found_requirement:
         errors.append("PRD.md placeholder contract has no concrete requirement heading")
-    for index, requirement in enumerate(requirements):
-        body_end = requirements[index + 1].start() if index + 1 < len(requirements) else len(requirements_text)
-        body = requirements_text[requirement.end():body_end]
-        requirement_id = requirement.group(1)
-        if not re.search(r"^\s*-\s*Requirement:\s*\S", body, re.M | re.I):
-            errors.append(f"PRD.md {requirement_id} Requirement body must be nonblank")
-        if not (
-            re.search(r"^\s*-\s*Acceptance criteria:\s*\S", body, re.M | re.I)
-            or re.search(r"^\s*-\s*AC-[A-Z0-9-]+:\s*\S", body, re.M | re.I)
-        ):
-            errors.append(f"PRD.md {requirement_id} Acceptance criteria body must be nonblank")
     plan_text = read_text_if_exists(d / "PLAN.md")
     if re.search(r"^-\s*(?:Domain|Baseline SHA|Risk profile):\s*$", plan_text, re.M | re.I):
         errors.append("PLAN.md placeholder contract has blank metadata")
@@ -2296,21 +2335,26 @@ def audit_artifact_contract_errors(
         initial_metadata: dict[str, Any] | None = None
         if metadata.get("mode") == "closure":
             try:
-                initial_metadata = initial_audit_metadata(root, path)
+                candidate = initial_audit_metadata(root, path)
+                initial_schema_errors = validate_schema_value(
+                    candidate,
+                    audit_schema,
+                    f"initial audit for {path.relative_to(d)}",
+                    {"finding": finding_schema},
+                )
+                errors.extend(initial_schema_errors)
+                if not initial_schema_errors:
+                    initial_metadata = candidate
+                    if candidate.get("scope") != scope:
+                        errors.append(
+                            f"initial audit scope {candidate.get('scope')!r} does not match closure scope {scope!r}"
+                        )
             except ValueError as exc:
                 errors.append(str(exc))
-        active_ids = {str(finding["id"]) for finding in metadata.get("findings", [])}
-        if initial_metadata is not None:
-            prior_ids = {str(finding["id"]) for finding in initial_metadata.get("findings", [])}
-            closure_by_id = {
-                str(entry["finding_id"]): entry
-                for entry in metadata.get("closure", []) or []
-            }
-            active_ids = (active_ids - prior_ids) | {
-                finding_id
-                for finding_id, entry in closure_by_id.items()
-                if entry.get("outcome") == "still_open"
-            }
+            closure_errors, _closure_by_id, active_ids = audit_closure_contract(metadata, initial_metadata)
+            errors.extend(closure_errors)
+        else:
+            active_ids = {str(finding["id"]) for finding in metadata.get("findings", [])}
         severities = [
             str(finding["severity"])
             for finding in metadata.get("findings", [])
@@ -2538,6 +2582,56 @@ def audit_verdict_errors(
     return errors
 
 
+def audit_closure_contract(
+    metadata: dict[str, Any],
+    prior_metadata: dict[str, Any] | None,
+) -> tuple[list[str], dict[str, dict[str, Any]], set[str]]:
+    findings = metadata.get("findings", []) or []
+    current_ids = {str(finding["id"]) for finding in findings}
+    closure = metadata.get("closure", []) or []
+    closure_by_id = {str(entry["finding_id"]): entry for entry in closure}
+    errors: list[str] = []
+    if len(closure_by_id) != len(closure):
+        errors.append("closure contains duplicate finding_id entries")
+    if prior_metadata is None:
+        return errors, closure_by_id, current_ids
+
+    prior_ids = {str(finding["id"]) for finding in prior_metadata.get("findings", []) or []}
+    current_only_ids = current_ids - prior_ids
+    missing_findings = sorted(prior_ids - current_ids)
+    missing = sorted(prior_ids - set(closure_by_id))
+    unknown = sorted(set(closure_by_id) - prior_ids)
+    if missing_findings:
+        errors.append(f"closure omits prior findings from current metadata: {', '.join(missing_findings)}")
+    if missing:
+        errors.append(f"closure does not cover prior findings: {', '.join(missing)}")
+    if unknown:
+        errors.append(f"closure covers findings that were not in the initial audit: {', '.join(unknown)}")
+
+    reopened_ids: set[str] = set()
+    for finding_id, entry in closure_by_id.items():
+        reopened_as = [str(value) for value in entry.get("reopened_as", []) or []]
+        if entry.get("outcome") == "reopened":
+            if not reopened_as:
+                errors.append(f"closure {finding_id}: reopened requires reopened_as")
+            reopened_ids.update(reopened_as)
+            for reopened_id in reopened_as:
+                if reopened_id not in current_ids:
+                    errors.append(f"closure {finding_id}: reopened finding does not exist: {reopened_id}")
+        elif reopened_as:
+            errors.append(f"closure {finding_id}: reopened_as is only valid for outcome reopened")
+    invalid_reopened = sorted(reopened_ids - current_only_ids)
+    if invalid_reopened:
+        errors.append(f"closure reopened_as must reference current-only findings: {', '.join(invalid_reopened)}")
+
+    active_ids = current_only_ids | {
+        finding_id
+        for finding_id, entry in closure_by_id.items()
+        if entry.get("outcome") == "still_open"
+    }
+    return errors, closure_by_id, active_ids
+
+
 def validate_audit_metadata(
     root: Path,
     domain: str,
@@ -2571,49 +2665,24 @@ def validate_audit_metadata(
         errors.append(f"duplicate audit finding id: {finding_id}")
 
     closure = metadata.get("closure", []) or []
-    closure_by_id = {str(entry["finding_id"]): entry for entry in closure}
-    if len(closure_by_id) != len(closure):
-        errors.append("closure contains duplicate finding_id entries")
-    reopened_ids = {
-        str(reopened_id)
-        for entry in closure
-        for reopened_id in entry.get("reopened_as", []) or []
-    }
+    closure_by_id: dict[str, dict[str, Any]] = {}
     active_ids = set(finding_ids)
     if mode == "closure":
+        prior_metadata: dict[str, Any] | None = None
         try:
             audit_path = canonical_audit_path(root, domain, state, scope, phase, work_item)
-            prior_metadata = initial_audit_metadata(root, audit_path)
-            prior_schema_errors = validate_schema_value(prior_metadata, audit_schema, "initial audit", references)
+            candidate = initial_audit_metadata(root, audit_path)
+            prior_schema_errors = validate_schema_value(candidate, audit_schema, "initial audit", references)
             if prior_schema_errors:
                 errors.extend(prior_schema_errors)
-                prior_ids: set[str] = set()
             else:
-                prior_ids = {str(finding["id"]) for finding in prior_metadata["findings"]}
-                if prior_metadata["scope"] != scope:
-                    errors.append(f"initial audit scope {prior_metadata['scope']!r} does not match closure scope {scope!r}")
+                prior_metadata = candidate
+                if candidate["scope"] != scope:
+                    errors.append(f"initial audit scope {candidate['scope']!r} does not match closure scope {scope!r}")
         except ValueError as exc:
             errors.append(str(exc))
-            prior_ids = set()
-        current_ids = set(finding_ids)
-        current_only_ids = current_ids - prior_ids
-        missing_findings = sorted(prior_ids - current_ids)
-        missing = sorted(prior_ids - set(closure_by_id))
-        unknown = sorted(set(closure_by_id) - prior_ids)
-        if missing_findings:
-            errors.append(f"closure omits prior findings from current metadata: {', '.join(missing_findings)}")
-        if missing:
-            errors.append(f"closure does not cover prior findings: {', '.join(missing)}")
-        if unknown:
-            errors.append(f"closure covers findings that were not in the initial audit: {', '.join(unknown)}")
-        invalid_reopened = sorted(reopened_ids - current_only_ids)
-        if invalid_reopened:
-            errors.append(f"closure reopened_as must reference current-only findings: {', '.join(invalid_reopened)}")
-        active_ids = current_only_ids | {
-            finding_id
-            for finding_id, entry in closure_by_id.items()
-            if entry.get("outcome") == "still_open"
-        }
+        closure_errors, closure_by_id, active_ids = audit_closure_contract(metadata, prior_metadata)
+        errors.extend(closure_errors)
     elif closure:
         errors.append("initial audit closure must be empty")
 
@@ -2716,15 +2785,6 @@ def validate_audit_metadata(
             if finding is None:
                 continue
             outcome = entry["outcome"]
-            reopened_as = [str(value) for value in entry["reopened_as"]]
-            if outcome == "reopened":
-                if not reopened_as:
-                    errors.append(f"closure {finding_id}: reopened requires reopened_as")
-                for reopened_id in reopened_as:
-                    if reopened_id not in finding_by_id:
-                        errors.append(f"closure {finding_id}: reopened finding does not exist: {reopened_id}")
-            elif reopened_as:
-                errors.append(f"closure {finding_id}: reopened_as is only valid for outcome reopened")
             if outcome == "accepted_risk":
                 decision_ids = [str(value) for value in finding["disposition"]["decision_ids"]]
                 resolved = [value for value in decision_ids if value in resolved_decisions and value not in (state.get("unresolved_decisions") or [])]
