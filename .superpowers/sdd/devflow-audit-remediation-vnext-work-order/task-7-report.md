@@ -478,3 +478,140 @@ plugins/devflow/tests/test_devflow.py
 커밋 메시지: `fix(devflow): unify lifecycle evidence validation`
 
 남은 우려 사항은 없다.
+
+## Fix round 3
+
+### 시작 상태와 assumptions
+
+- 작업일: 2026-09-04
+- branch: `main`
+- 시작 HEAD: `7cfd491ae0ea2e1df37276e4df4a5b8139077c14`
+- 시작 tracked working tree: clean
+- branch, worktree, subagent를 만들지 않았다.
+- 이 변경은 기존 Markdown parser와 audit validation 경계 안의 bounded fix로 분류했고, 구현 전에 제안한 최소 설계를 승인받았다.
+- Fence 내부 자연어는 분석하지 않고 opening marker와 matching closing marker 사이의 ATX heading만 제외한다.
+- Ordered list marker는 숫자 뒤 점 또는 닫는 괄호만 있는 줄을 empty로 본다. Marker 뒤 실제 text는 meaningful body로 유지한다.
+- Finding ID uniqueness는 schema-valid finding list에 적용하며 apply와 canonical validate가 같은 helper를 사용한다.
+- 계약 충돌과 막힌 사항은 없었다.
+
+### RED
+
+Production 변경 전에 다음 adversarial case 3개를 추가했다.
+
+- `case_markdown_sections_ignore_fenced_required_headings`
+- `case_markdown_body_rejects_empty_ordered_markers`
+- `case_validate_rejects_duplicate_canonical_finding_ids`
+
+실행한 명령은 다음과 같다.
+
+```bash
+python3 -c 'import sys; sys.path.insert(0,"plugins/devflow/tests"); import test_devflow as t; t.CASES=[t.case_markdown_sections_ignore_fenced_required_headings,t.case_markdown_body_rejects_empty_ordered_markers,t.case_validate_rejects_duplicate_canonical_finding_ids]; raise SystemExit(t.main())'
+```
+
+Production 변경 전 결과는 `passed=2 failed=5`, exit 1이었다.
+
+- 실제 Phase graph를 제거하고 backtick fence 안에만 둔 heading을 delivery validate가 허용했다.
+- 실제 In scope와 Finding disposition strategy를 제거하고 tilde 또는 backtick fence 안에만 둔 heading으로 audit apply가 성공해 bytes를 변경했다.
+- `Requirement: 1.`과 `Acceptance criteria: 2)`를 delivery validate가 meaningful body로 허용했다.
+- Audit remediation section의 `1.`과 `2)` body로 apply가 성공해 bytes를 변경했다.
+- 동일한 finding ID 두 개가 있는 verified canonical audit를 validate가 허용했다.
+- 실제 required section 안의 fenced code block과 marker 뒤 실제 text가 있는 ordered list item은 기존 정상 동작으로 PASS였다.
+
+### 구현
+
+- `markdown_sections`가 줄 단위로 0칸부터 3칸 들여쓴 backtick 또는 tilde fence를 추적한다.
+- Backtick fence info에 backtick이 없는 유효 opener만 열고, 같은 marker 문자와 opener 이상의 길이를 가진 closing fence에서만 닫는다.
+- Fence가 열린 동안 ATX heading을 section heading 후보에서 제외한다. Fence의 자연어와 code 내용은 분석하지 않는다.
+- `meaningful_markdown_body`가 unordered marker와 함께 숫자 뒤 점 또는 닫는 괄호만 있는 ordered marker를 empty로 처리한다.
+- `audit_finding_id_errors`가 finding ID 중복을 한 번 계산하고 audit apply와 canonical artifact validate에서 재사용된다.
+- 새 dependency, sidecar, autonomous orchestration과 Task 8 변경은 추가하지 않았다.
+
+### GREEN과 exact commands
+
+새 adversarial case 3개:
+
+```bash
+python3 -c 'import sys; sys.path.insert(0,"plugins/devflow/tests"); import test_devflow as t; t.CASES=[t.case_markdown_sections_ignore_fenced_required_headings,t.case_markdown_body_rejects_empty_ordered_markers,t.case_validate_rejects_duplicate_canonical_finding_ids]; raise SystemExit(t.main())'
+```
+
+결과: `passed=7 failed=0`, exit 0. Invalid validate와 invalid apply의 실행 전후 domain 전체 file bytes가 동일했다.
+
+Fix round 2 regression:
+
+```bash
+python3 -c 'import sys; sys.path.insert(0,"plugins/devflow/tests"); import test_devflow as t; t.CASES=[t.case_validate_closure_reuses_apply_finding_coverage,t.case_delivery_markdown_sections_follow_commonmark_boundaries,t.case_audit_remediation_markdown_sections_reject_empty_duplicates]; raise SystemExit(t.main())'
+```
+
+결과: `passed=10 failed=0`, exit 0.
+
+Task 7 named, Task 1 placeholder known RED, config mutation matrix:
+
+```bash
+python3 -c 'import sys; sys.path.insert(0,"plugins/devflow/tests"); import test_devflow as t; names=["case_validate_rejects_orphan_phase_manifest","case_validate_rejects_phase_document_mismatch","case_delivery_integration_still_requires_verified_phases","case_audit_remediation_verifies_without_fake_phases","case_validate_rejects_applied_audit_lifecycle_mismatch","case_config_protocol_version_is_checked","case_newer_config_protocol_blocks_mutation","case_finding_requires_severity_reason","case_validate_rejects_placeholder_delivery_contract_before_execution"]; t.CASES=[getattr(t,n) for n in names]; raise SystemExit(t.main())'
+```
+
+결과: `passed=20 failed=0`, exit 0.
+
+Task 4부터 6 focused regression:
+
+```bash
+python3 -c 'import sys; sys.path.insert(0,"plugins/devflow/tests"); import test_devflow as t; names=["case_audit_apply_rejects_missing_front_matter","case_audit_apply_rejects_malformed_front_matter","case_audit_apply_rejects_duplicate_yaml_keys","case_audit_apply_requires_exact_next_action","case_audit_apply_validates_verdict_against_findings","case_audit_apply_validates_finding_links","case_audit_apply_failure_is_atomic","case_audit_apply_updates_state_and_next_action","case_audit_closure_covers_every_prior_finding","case_audit_closure_reopens_finding","case_multi_finding_work_requires_aggregation_reason","case_multi_finding_work_accepts_coherent_explicit_aggregation","case_audit_work_links_are_bidirectional","case_decision_finding_cannot_generate_ready_work","case_decision_finding_requires_decision_id","case_evidence_finding_requires_evidence_work","case_documentation_drift_requires_documentation_work","case_work_cannot_reference_unknown_audit_finding","case_work_v2_requires_unique_acceptance_ids","case_work_v2_requires_unique_verification_ids","case_verification_coverage_requires_every_acceptance_id","case_verification_coverage_rejects_unknown_acceptance_id","case_work_v2_rejects_mixed_legacy_shapes","case_work_v1_remains_readable"]; t.CASES=[getattr(t,n) for n in names]; raise SystemExit(t.main())'
+```
+
+결과: `passed=38 failed=0`, exit 0.
+
+Syntax와 full suite:
+
+```bash
+python3 -m py_compile plugins/devflow/scripts/devflow.py plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+python3 plugins/devflow/tests/test_devflow.py
+```
+
+결과: py_compile exit 0. Full suite 1회차와 2회차 모두 `passed=389 failed=0`, exit 0.
+
+최종 hygiene 명령:
+
+```bash
+git diff --check
+git branch --show-current
+git status --short
+git diff --name-only
+git ls-files -s plugins/devflow/bin/devflow
+git diff --unified=0 | rg -n --pcre2 '^\+.*(?:\x{2014}|\x{2013}|\x{00B7}|\x{2026})'
+```
+
+결과: diff 공백 검사는 exit 0, branch는 `main`, status와 file list는 아래 변경 파일과 일치했다. Executable mode는 `100755`였다. 금지 문장부호 검색은 출력 없이 exit 1이었다.
+
+### Full suite twice
+
+같은 최종 code tree에서 전체 suite를 연속 두 번 실행했다.
+
+```text
+run 1: passed=389 failed=0, exit 0
+run 2: passed=389 failed=0, exit 0
+```
+
+추가 실패는 남지 않았다.
+
+### Self-review
+
+- 실제 required heading이 fence 밖에 없으면 delivery validate와 audit remediation apply가 거절한다.
+- 정상 required section body에 fenced code block을 포함하는 것은 허용한다.
+- Backtick과 tilde fence 및 선행 ASCII space 0칸부터 3칸을 같은 작은 state machine으로 처리한다.
+- Ordered marker만 있는 field와 section은 empty이며 marker 뒤 text가 있으면 meaningful하다.
+- Audit apply와 canonical validate의 finding ID uniqueness 판단은 한 helper에 있다.
+- Invalid apply는 STATE와 다른 artifact bytes를 변경하지 않는다.
+- 변경은 runtime, tests, 이 보고서로 제한했다.
+
+### 변경 파일
+
+```text
+.superpowers/sdd/devflow-audit-remediation-vnext-work-order/task-7-report.md
+plugins/devflow/scripts/devflow.py
+plugins/devflow/tests/test_devflow.py
+```
+
+커밋 메시지: `fix(devflow): reject malformed lifecycle evidence`
+
+남은 우려 사항은 없다.

@@ -1801,6 +1801,180 @@ def case_audit_remediation_markdown_sections_reject_empty_duplicates(root: Path)
     )
 
 
+def case_markdown_sections_ignore_fenced_required_headings(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+    fill_delivery_contract(d)
+    plan_path = d / "PLAN.md"
+    phase_section = (
+        "## Phase graph\n\n"
+        "### Phase 01 Billing\n"
+        "- Objective: Preserve the approved behavior.\n\n"
+    )
+    plan = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(
+        plan.replace(phase_section, "## Phase graph\n\n```text\nphase-01\n```\n\n"),
+        encoding="utf-8",
+    )
+    accepted = devflow(root, "validate", "billing")
+    check(
+        "delivery permits a fenced code block inside a real required section",
+        accepted.returncode == 0,
+        accepted.stdout + accepted.stderr,
+    )
+
+    plan_path.write_text(
+        plan.replace(phase_section, "")
+        + "\n```markdown\n## Phase graph\nThis heading is only example code.\n```\n",
+        encoding="utf-8",
+    )
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    rejected = devflow(root, "validate", "billing")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "delivery does not accept a required heading inside a backtick fence",
+        rejected.returncode == 1 and "Phase graph" in rejected.stdout and before == after,
+        f"artifacts_unchanged={before == after}\n{rejected.stdout}{rejected.stderr}",
+    )
+
+    audit_domain = "fenced-audit-sections"
+    devflow(root, "init", audit_domain, "--workflow", "audit-remediation")
+    audit_dir = root / f"docs/domains/{audit_domain}"
+    fill_audit_remediation_contract(audit_dir)
+    audit_prd = audit_dir / "PRD.md"
+    audit_plan = audit_dir / "PLAN.md"
+    audit_prd.write_text(
+        audit_prd.read_text(encoding="utf-8").replace("## In scope\nBilling runtime.\n\n", "")
+        + "\n ~~~markdown\n  ## In scope\nThis heading is only example code.\n ~~~\n",
+        encoding="utf-8",
+    )
+    audit_plan.write_text(
+        audit_plan.read_text(encoding="utf-8").replace(
+            "## Finding disposition strategy\nClassify every finding.\n\n",
+            "",
+        )
+        + "\n  ```markdown\n ## Finding disposition strategy\nThis heading is only example code.\n  ```\n",
+        encoding="utf-8",
+    )
+    write_audit(audit_dir / "audits/integration.md", audit_metadata(audit_dir))
+    before = {str(path.relative_to(audit_dir)): path.read_bytes() for path in audit_dir.rglob("*") if path.is_file()}
+    rejected = devflow(root, "audit", "apply", audit_domain, "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(audit_dir)): path.read_bytes() for path in audit_dir.rglob("*") if path.is_file()}
+    check(
+        "audit remediation does not accept required headings inside matching fences",
+        rejected.returncode == 2
+        and "In scope" in rejected.stderr
+        and "Finding disposition strategy" in rejected.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{rejected.stdout}{rejected.stderr}",
+    )
+
+
+def case_markdown_body_rejects_empty_ordered_markers(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+    fill_delivery_contract(d)
+    prd_path = d / "PRD.md"
+    prd_path.write_text(
+        prd_path.read_text(encoding="utf-8")
+        .replace("Requirement: Preserve the approved billing behavior.", "Requirement: 1.")
+        .replace("Acceptance criteria: AC-001 is verified.", "Acceptance criteria: 2)"),
+        encoding="utf-8",
+    )
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    rejected = devflow(root, "validate", "billing")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "delivery rejects ordered list markers without requirement or acceptance text",
+        rejected.returncode == 1
+        and "Requirement body must be nonblank" in rejected.stdout
+        and "Acceptance criteria body must be nonblank" in rejected.stdout
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{rejected.stdout}{rejected.stderr}",
+    )
+
+    audit_domain = "ordered-audit-sections"
+    devflow(root, "init", audit_domain, "--workflow", "audit-remediation")
+    audit_dir = root / f"docs/domains/{audit_domain}"
+    fill_audit_remediation_contract(audit_dir)
+    audit_prd = audit_dir / "PRD.md"
+    audit_plan = audit_dir / "PLAN.md"
+    audit_prd.write_text(
+        audit_prd.read_text(encoding="utf-8").replace("## In scope\nBilling runtime.", "## In scope\n1."),
+        encoding="utf-8",
+    )
+    audit_plan.write_text(
+        audit_plan.read_text(encoding="utf-8").replace(
+            "## Finding disposition strategy\nClassify every finding.",
+            "## Finding disposition strategy\n2)",
+        ),
+        encoding="utf-8",
+    )
+    write_audit(audit_dir / "audits/integration.md", audit_metadata(audit_dir))
+    before = {str(path.relative_to(audit_dir)): path.read_bytes() for path in audit_dir.rglob("*") if path.is_file()}
+    rejected = devflow(root, "audit", "apply", audit_domain, "--scope", "integration", "--mode", "initial")
+    after = {str(path.relative_to(audit_dir)): path.read_bytes() for path in audit_dir.rglob("*") if path.is_file()}
+    check(
+        "audit remediation rejects ordered list markers without section text",
+        rejected.returncode == 2
+        and "In scope" in rejected.stderr
+        and "Finding disposition strategy" in rejected.stderr
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{rejected.stdout}{rejected.stderr}",
+    )
+
+    valid_domain = "ordered-audit-content"
+    devflow(root, "init", valid_domain, "--workflow", "audit-remediation")
+    valid_dir = root / f"docs/domains/{valid_domain}"
+    fill_audit_remediation_contract(valid_dir)
+    valid_prd = valid_dir / "PRD.md"
+    valid_plan = valid_dir / "PLAN.md"
+    valid_prd.write_text(
+        valid_prd.read_text(encoding="utf-8").replace("## In scope\nBilling runtime.", "## In scope\n1. Billing runtime."),
+        encoding="utf-8",
+    )
+    valid_plan.write_text(
+        valid_plan.read_text(encoding="utf-8").replace(
+            "## Finding disposition strategy\nClassify every finding.",
+            "## Finding disposition strategy\n2) Classify every finding.",
+        ),
+        encoding="utf-8",
+    )
+    write_audit(valid_dir / "audits/integration.md", audit_metadata(valid_dir))
+    accepted = devflow(root, "audit", "apply", valid_domain, "--scope", "integration", "--mode", "initial")
+    check(
+        "audit remediation accepts ordered list markers followed by actual text",
+        accepted.returncode == 0,
+        accepted.stdout + accepted.stderr,
+    )
+
+
+def case_validate_rejects_duplicate_canonical_finding_ids(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    state_path = d / "STATE.yaml"
+    state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_doc["protocol_version"] = "1.3.0"
+    state_doc["integration"]["status"] = "verified"
+    dump(state_path, state_doc)
+    finding = audit_finding("F-01")
+    write_audit(d / "audits/integration.md", audit_metadata(d, findings=[finding, finding]))
+    before = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+
+    rejected = devflow(root, "validate", "billing")
+    after = {str(path.relative_to(d)): path.read_bytes() for path in d.rglob("*") if path.is_file()}
+    check(
+        "validate rejects duplicate finding IDs in a verified canonical audit",
+        rejected.returncode == 1
+        and "duplicate audit finding id: F-01" in rejected.stdout
+        and before == after,
+        f"artifacts_unchanged={before == after}\n{rejected.stdout}{rejected.stderr}",
+    )
+
+
 def case_audit_closure_covers_every_prior_finding(root: Path) -> None:
     d = audit_remediation_fixture(root)
     findings = [audit_finding("F-01"), audit_finding("F-02")]
@@ -4262,6 +4436,9 @@ CASES = [
     case_validate_closure_reuses_apply_finding_coverage,
     case_delivery_markdown_sections_follow_commonmark_boundaries,
     case_audit_remediation_markdown_sections_reject_empty_duplicates,
+    case_markdown_sections_ignore_fenced_required_headings,
+    case_markdown_body_rejects_empty_ordered_markers,
+    case_validate_rejects_duplicate_canonical_finding_ids,
     case_audit_closure_covers_every_prior_finding,
     case_audit_closure_reopens_finding,
     case_audit_remediation_lifecycle_reaches_closure_and_complete,

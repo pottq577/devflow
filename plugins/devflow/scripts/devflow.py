@@ -2084,18 +2084,43 @@ def validate_work_file(
 
 
 def markdown_sections(text: str) -> list[tuple[int, str, str]]:
-    heading_pattern = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$", re.M)
-    headings = list(heading_pattern.finditer(text))
+    heading_pattern = re.compile(r" {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*")
+    fence_pattern = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+    headings: list[tuple[int, int, int, str]] = []
+    fence_char: str | None = None
+    fence_length = 0
+    offset = 0
+    for raw_line in text.splitlines(keepends=True):
+        line = raw_line.rstrip("\r\n")
+        if fence_char is not None:
+            if re.fullmatch(rf" {{0,3}}{re.escape(fence_char)}{{{fence_length},}}[ \t]*", line):
+                fence_char = None
+            offset += len(raw_line)
+            continue
+        fence = fence_pattern.fullmatch(line)
+        if fence:
+            marker, info = fence.groups()
+            if marker[0] == "~" or "`" not in info:
+                fence_char = marker[0]
+                fence_length = len(marker)
+                offset += len(raw_line)
+                continue
+        heading = heading_pattern.fullmatch(line)
+        if heading:
+            level = len(heading.group(1))
+            title = re.sub(r"[ \t]+#+[ \t]*$", "", (heading.group(2) or "").strip())
+            headings.append((offset, offset + len(line), level, title))
+        offset += len(raw_line)
+
     sections: list[tuple[int, str, str]] = []
     for index, heading in enumerate(headings):
-        level = len(heading.group(1))
-        title = re.sub(r"[ \t]+#+[ \t]*$", "", (heading.group(2) or "").strip())
+        _start, end, level, title = heading
         body_end = len(text)
         for following in headings[index + 1:]:
-            if len(following.group(1)) <= level:
-                body_end = following.start()
+            if following[2] <= level:
+                body_end = following[0]
                 break
-        sections.append((level, title, text[heading.end():body_end]))
+        sections.append((level, title, text[end:body_end]))
     return sections
 
 
@@ -2103,7 +2128,7 @@ def meaningful_markdown_body(body: str) -> bool:
     body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
     for line in body.splitlines():
         stripped = line.strip()
-        if not stripped or re.fullmatch(r"[-*+]", stripped):
+        if not stripped or re.fullmatch(r"(?:[-*+]|\d+[.)])", stripped):
             continue
         if re.fullmatch(r"[-*+]\s+[^:]+:\s*", stripped):
             continue
@@ -2313,6 +2338,7 @@ def audit_artifact_contract_errors(
             continue
         if schema_errors:
             continue
+        errors.extend(audit_finding_id_errors(metadata.get("findings", []) or []))
         if metadata.get("scope") != scope:
             errors.append(f"canonical audit {path.relative_to(d)} scope must be {scope}")
         if "phase" in metadata:
@@ -2582,6 +2608,17 @@ def audit_verdict_errors(
     return errors
 
 
+def audit_finding_id_errors(findings: list[dict[str, Any]]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for finding in findings:
+        finding_id = str(finding["id"])
+        if finding_id in seen:
+            duplicates.add(finding_id)
+        seen.add(finding_id)
+    return [f"duplicate audit finding id: {finding_id}" for finding_id in sorted(duplicates)]
+
+
 def audit_closure_contract(
     metadata: dict[str, Any],
     prior_metadata: dict[str, Any] | None,
@@ -2661,8 +2698,7 @@ def validate_audit_metadata(
 
     findings = metadata["findings"]
     finding_ids = [str(finding["id"]) for finding in findings]
-    for finding_id in sorted({finding_id for finding_id in finding_ids if finding_ids.count(finding_id) > 1}):
-        errors.append(f"duplicate audit finding id: {finding_id}")
+    errors.extend(audit_finding_id_errors(findings))
 
     closure = metadata.get("closure", []) or []
     closure_by_id: dict[str, dict[str, Any]] = {}
