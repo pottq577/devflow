@@ -435,16 +435,39 @@ def case_legacy_120_domain_defaults_to_delivery(root: Path) -> None:
     devflow(root, "init", "billing")
     state_file = root / "docs/domains/billing/STATE.yaml"
     legacy = yaml.safe_load(state_file.read_text())
+    legacy["protocol_version"] = "1.2.0"
     legacy.pop("workflow_type", None)
+    check(
+        "legacy 1.2 fixture explicitly uses protocol 1.2.0",
+        legacy.get("protocol_version") == "1.2.0",
+        repr(legacy.get("protocol_version")),
+    )
     dump(state_file, legacy)
     before = state_file.read_text()
     out = devflow(root, "status", "billing", "--json")
     reported = json.loads(out.stdout) if out.returncode == 0 else {}
     check(
         "legacy protocol 1.2.0 STATE reads as delivery without a migration write",
-        reported.get("workflow_type") == "delivery" and state_file.read_text() == before,
+        reported.get("workflow_type") == "delivery"
+        and (reported.get("protocol_versions") or {}).get("state") == "1.2.0"
+        and state_file.read_text() == before,
         out.stdout + out.stderr + state_file.read_text(),
     )
+
+    for version in ["1.0.0", "1.1.0"]:
+        legacy["protocol_version"] = version
+        dump(state_file, legacy)
+        before = state_file.read_text()
+        out = devflow(root, "status", "billing", "--json")
+        reported = json.loads(out.stdout) if out.returncode == 0 else {}
+        check(
+            f"legacy protocol {version} STATE reads as delivery without a migration write",
+            out.returncode == 0
+            and reported.get("workflow_type") == "delivery"
+            and (reported.get("protocol_versions") or {}).get("state") == version
+            and state_file.read_text() == before,
+            out.stdout + out.stderr + state_file.read_text(),
+        )
 
 
 def case_init_reports_runtime_and_domain_paths(root: Path) -> None:
@@ -2458,6 +2481,47 @@ def case_audit_remediation_full_lifecycle_with_decision(root: Path) -> None:
         and rendered_closure.returncode == 0
         and devflow(root, "validate", "billing").returncode == 0,
         rendered_run.stdout + rendered_run.stderr + started.stdout + started.stderr + done.stdout + done.stderr + status.stdout + status.stderr + rendered_closure.stdout + rendered_closure.stderr + repr(after_work),
+    )
+
+
+def case_decision_resolve_rejects_open_record_atomically(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    write_open_decision(d / "DECISIONS.md", "DEC-001")
+    finding = audit_finding(
+        "F-01",
+        classification="DECISION_REQUIRED",
+        severity="major",
+        severity_reason="The retention behavior requires a product decision.",
+        disposition={"action": "decision", "work_ids": [], "decision_ids": ["DEC-001"]},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="conditional_pass", findings=[finding]))
+    applied = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+
+    selected = v2_item("INT-I01")
+    selected["decision_dependencies"] = ["DEC-001"]
+    dump(d / "work/integration.yaml", work_v2("integration", selected))
+    state_file = d / "STATE.yaml"
+    before = state_file.read_bytes()
+
+    rejected = devflow(root, "decision", "resolve", "billing", "DEC-001")
+    after_rejection = yaml.safe_load(state_file.read_text(encoding="utf-8"))
+    status = devflow(root, "status", "billing", "--json")
+    reported = json.loads(status.stdout) if status.returncode == 0 else {}
+    rendered = devflow(root, "render", "run", "billing", "--task", "INT-I01")
+    check(
+        "decision resolve requires a valid resolved record before releasing WORK",
+        applied.returncode == 0
+        and rejected.returncode == 2
+        and "DEC-001" in rejected.stderr
+        and "resolved" in rejected.stderr.lower()
+        and state_file.read_bytes() == before
+        and after_rejection["unresolved_decisions"] == ["DEC-001"]
+        and status.returncode == 0
+        and reported["next_action"]["role"] == "human"
+        and reported["next_action"]["command"] == "decision"
+        and rendered.returncode == 2
+        and rendered.stdout == "",
+        applied.stdout + applied.stderr + rejected.stdout + rejected.stderr + status.stdout + status.stderr + rendered.stdout + rendered.stderr,
     )
 
 
@@ -4926,6 +4990,7 @@ CASES = [
     case_audit_remediation_full_lifecycle_without_findings,
     case_audit_remediation_full_lifecycle_with_remediation,
     case_audit_remediation_full_lifecycle_with_decision,
+    case_decision_resolve_rejects_open_record_atomically,
     case_audit_remediation_full_lifecycle_with_reopened_finding,
     case_delivery_lifecycle_regression_after_protocol_130,
     case_audit_apply_rolls_back_work_when_state_write_fails,

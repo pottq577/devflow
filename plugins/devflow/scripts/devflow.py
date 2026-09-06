@@ -1803,13 +1803,29 @@ def set_integration(args: argparse.Namespace) -> int:
 
 def decision_update(args: argparse.Namespace) -> int:
     root = repo_root()
+    d = domain_dir(root, args.domain)
     path = state_path(root, args.domain)
     state = load_yaml(path, {}) or {}
-    unresolved = [str(x) for x in state.setdefault("unresolved_decisions", [])]
+    unresolved = [str(x) for x in state.get("unresolved_decisions", []) or []]
     if args.decision_command == "add" and args.decision not in unresolved:
         unresolved.append(args.decision)
     if args.decision_command == "resolve":
         unresolved = [x for x in unresolved if x != args.decision]
+        open_ids, resolved_ids, _ = decision_document_records(d / "DECISIONS.md")
+        if args.decision in open_ids:
+            errors = [
+                f"DECISIONS.md decision {args.decision} is still open; record a valid entry under ## Resolved first"
+            ]
+        elif args.decision not in resolved_ids:
+            errors = [f"DECISIONS.md has no valid resolved decision record for {args.decision}"]
+        else:
+            errors = []
+        prospective = dict(state)
+        prospective["unresolved_decisions"] = unresolved
+        decision_errors, _ = decision_state_errors(prospective, d)
+        errors.extend(decision_errors)
+        if errors:
+            return reject_transition(f"decision {args.decision}", "be resolved", errors)
     state["unresolved_decisions"] = unresolved
     dump_yaml(path, state)
     refresh_state(root, args.domain)
