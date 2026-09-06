@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- **Brownfield audit/remediation workflow.** `init --workflow audit-remediation` creates a
+  phase-free `audit_remediation` lifecycle that can move from integration initial audit through
+  decisions or `work/integration.yaml` remediation, required WORK review, integration closure, and
+  project completion without a fake phase.
+- **Machine-readable audit outcomes.** The single canonical audit Markdown now carries
+  `devflow-audit-v1` YAML front matter for scope, mode, verdict, immutable SHAs, executed
+  verification, findings, and closure outcomes. `devflow audit apply` validates the complete
+  outcome and commits accepted STATE and WORK changes atomically.
+- **WORK v2 acceptance coverage.** New WORK gives acceptance criteria and verification commands
+  unique IDs and requires each command to declare `covers`, with every acceptance ID covered by at
+  least one executable verification command.
+- **Finding, decision, and WORK traceability.** Audit dispositions and WORK origins must link in
+  both directions. Decision findings block ready code WORK, and multi-finding WORK requires an
+  explicit aggregation rationale for its shared change and verification boundary.
+- **End-to-end regression coverage.** Tests exercise no-finding, remediation, decision, reopened
+  finding, and delivery lifecycles through real CLI subprocesses.
+
+### Changed
+
+- `render` is lifecycle-aware and rejects a plan, run, or audit request that differs from the exact
+  next action before printing a packet or creating an artifact.
+- Cross-artifact validation rejects placeholder contracts, orphan or mismatched phase manifests,
+  unsupported runtime config versions, invalid audit lifecycle evidence, and findings without an
+  evidence-backed `severity_reason`.
+- `.devflow/config.yaml` is the project runtime configuration and protocol compatibility guard.
+  Domain PRD, PLAN, STATE, PITFALLS, DECISIONS, WORK, and AUDIT artifacts remain under
+  `docs/domains/<domain>/` by default. `init` and `status` report both paths explicitly.
+
+### Compatibility and migration
+
+- Plugin version is `0.5.0`. Protocol version is `1.3.0`. These are separate version domains: the
+  plugin identifies the distribution, while the protocol identifies the artifact contract.
+- The protocol minor bump records contract additions that a 1.2 runtime cannot safely mutate:
+  explicit workflow type, audit metadata and apply transitions, WORK v2 coverage, and new lifecycle
+  states and traceability rules.
+- Protocol 1.0 through 1.2 STATE and WORK artifacts remain backward-readable. Missing
+  `workflow_type` reads as `delivery`, WORK v1 keeps its legacy string shape, and existing review
+  defaults are supplied in memory without rewriting artifacts.
+- Legacy audit Markdown without front matter remains readable as historical evidence, but cannot
+  authorize a protocol 1.3 verified transition. No bulk migration command is required. A fresh
+  project initialization records protocol `1.3.0` in runtime config and STATE, while existing
+  artifacts migrate only when a user intentionally adopts the new workflow or audit transition
+  contract.
+
 ## 0.4.0
 
 ### Added

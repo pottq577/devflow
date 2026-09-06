@@ -32,7 +32,7 @@ python3 -m pip install -r requirements.txt
 ## Runtime commands
 
 ```bash
-devflow init <domain> --prd <path> [--risk low|medium|high|critical] [--extension <name>]
+devflow init <domain> [--prd <path>] [--risk low|medium|high|critical] [--workflow delivery|audit-remediation] [--extension <name>]
 devflow status <domain> [--json]
 devflow next <domain> [--json]
 devflow validate <domain>
@@ -40,6 +40,7 @@ devflow validate <domain>
 devflow render plan  <domain>
 devflow render run   <domain> [--task <ID>]
 devflow render audit <domain> --scope plan|work|phase|integration [--task <ID>] [--phase XX] [--mode initial|closure]
+devflow audit apply  <domain> --scope plan|work|phase|integration [--task <ID>] [--phase XX] [--mode initial|closure]
 
 devflow work start <domain> <ID>
 devflow work done  <domain> <ID> --commit <sha> --command '<cmd> -> <result>' [--changed-file ...]
@@ -52,6 +53,15 @@ devflow plan-review set <domain> pending|verified|skipped
 devflow integration set <domain> <status>
 devflow decision add|resolve <domain> <ID>
 ```
+
+`render` and `audit apply` accept only the exact scope, mode, phase, and WORK target reported by
+`status`. A mismatch exits before a packet or lifecycle mutation is produced. `audit apply` reads
+the canonical audit Markdown selected by STATE or WORK, validates its YAML front matter and traced
+artifacts, and commits the accepted lifecycle transition atomically.
+
+The legacy `plan-review set`, `work review`, `phase set`, and `integration set` commands remain
+available for protocol 1.2 and older artifacts. Protocol 1.3 verified audit transitions go through
+`audit apply` so they cannot bypass audit metadata validation.
 
 `phase set` and `phase ref` operate on a phase that already exists in `STATE.yaml`, or on one whose
 `work/phase-XX.yaml` is on disk. They refuse anything else rather than inventing a phase entry, since
@@ -81,8 +91,9 @@ devflow render run billing --task P01-I01
 devflow work start billing P01-I01
 devflow work done billing P01-I01 --command "python3 tests/test_billing.py -> pass"
 devflow render audit billing --scope work --task P01-I01 --mode initial
-devflow work review billing P01-I01 verified
+devflow audit apply billing --scope work --task P01-I01 --mode initial
 devflow render audit billing --scope phase --phase 01 --mode initial
+devflow audit apply billing --scope phase --phase 01 --mode initial
 ```
 
 For high or critical WORK, the initial work audit must verify the review before dependent WORK can
@@ -93,11 +104,30 @@ The lifecycle is: PRD, plan, optional required high-risk plan audit, run WORK, h
 initial audit, remediation when confirmed, work closure audit, dependent release, phase initial
 and closure audits, integration initial and closure audits, then project completion.
 
+## Audit and remediation flow
+
+Use `audit-remediation` to inspect an existing codebase and convert findings into traced decisions
+or integration WORK without inventing a phase:
+
+```bash
+devflow init billing-prod-readiness --risk high --workflow audit-remediation
+devflow status billing-prod-readiness
+devflow render audit billing-prod-readiness --scope integration --mode initial
+# auditor writes canonical audit + WORK/DECISIONS
+devflow audit apply billing-prod-readiness --scope integration --mode initial
+devflow validate billing-prod-readiness
+```
+
+The initial audit may complete immediately, request a human decision, or release traced remediation,
+evidence, or documentation WORK from `work/integration.yaml`. After that WORK and any required work
+reviews are complete, `status` selects the integration closure audit. A passing closure completes
+the project. DevFlow computes each next action but never executes or audits it autonomously.
+
 ## Project artifacts
 
 ```text
 .devflow/
-├── config.yaml            # domains_root, default extension
+├── config.yaml            # runtime protocol compatibility, domains_root, default extension
 └── extensions/            # optional project-local audit extensions
 docs/domains/<domain>/
 ├── PRD.md                 # product and domain contract
@@ -109,10 +139,17 @@ docs/domains/<domain>/
 └── audits/                # one file per audit scope
 ```
 
+These roots have different jobs. `.devflow/config.yaml` configures the runtime and checks whether
+the CLI can safely read or mutate project artifacts. `.devflow/extensions/` contains optional local
+audit guidance. The PRD, PLAN, STATE, PITFALLS, DECISIONS, WORK, and AUDIT artifacts live under
+`docs/domains/<domain>/` by default. `init` and `status` print `runtime_config`, `domains_root`, and
+`domain_dir` so the boundary is visible. Normal initialization does not place domain artifacts
+inside `.devflow/`.
+
 Initialize a domain with the `plan` skill, or directly:
 
 ```bash
-python3 scripts/devflow.py init <domain> --prd <path> --risk high
+devflow init <domain> --prd <path> --risk high --workflow delivery
 ```
 
 If `docs/` is gitignored in your repository, point `domains_root` in `.devflow/config.yaml` at a
@@ -144,25 +181,23 @@ Set the name per domain in `STATE.yaml` (`extension:`) or per project in `.devfl
 
 ## What `validate` enforces
 
-- STATE required fields, and every status value against its allowed set
-- `STATE.yaml` `protocol_version` against the runtime's own, rejecting a different major version and
-  warning on a newer minor one
-- The schema's required phase entry fields: `status`, `work_file`, and `audit_file`
-- Duplicate phase entries, including two raw keys that normalize to the same phase
-- A phase marked `verified` while its own work is unfinished, and an integration marked `verified`
-  while a phase is not
-- Duplicate WORK ids, unresolved dependencies, and dependency cycles
-- Empty `acceptance` or `verification.commands`
-- A `ready` item blocked by an unresolved decision
-- `premise_checks` present on every `high` and `critical` risk item
-- `done` backed by `evidence.commands`, except for `kind: documentation`
-- `transferred` items linked through `transfer.to`, with the receiving item carrying the same
-  `origin.requirements`
-- Requirement ids that do not appear verbatim in the PRD (warning)
+- Runtime config and STATE protocol compatibility, with malformed or different-major versions
+  rejected and newer config versions blocked from mutation
+- STATE workflow, lifecycle statuses, required fields, phase keys, and referenced artifact paths
+- Delivery placeholder contracts and phase/WORK mismatches, including orphan phase manifests
+- Delivery integration gates requiring real verified phases, while audit/remediation can complete
+  without fake phases
+- Canonical audit front matter, verdict rubric, closure coverage, and evidence for protocol 1.3
+  verified states
+- Bidirectional finding, decision, and WORK links, including explicit rationale for a WORK that
+  aggregates multiple findings
+- WORK v2 unique acceptance and verification IDs, nonblank commands, and complete `covers` mappings
+- WORK dependencies, decisions, transfers, risk premise checks, review gates, and completion evidence
+- Legacy WORK v1 string-shaped acceptance and verification commands without rewriting the file
 
-`validate` is not only a report. `phase set <phase> verified` and `integration set verified` refuse
-the transition while the domain has validation errors, so a structurally broken manifest cannot ride
-through to project completion.
+`validate` is not only a report. Lifecycle mutations reject structural errors before writing, so a
+broken manifest cannot ride through to project completion. For protocol 1.3 audits, `audit apply`
+performs the same validation against the prospective state before it commits the transition.
 
 ## Optional peer skill composition
 
@@ -194,18 +229,24 @@ completion, so a nested controller would duplicate the lifecycle.
 
 ## Compatibility and protocol version
 
-Plugin version 0.4.0 keeps protocol version `1.2.0`, which 0.3.1 introduced. The artifact contract
-stays backward-readable in the same direction as before: a `1.0.0` or `1.1.0` domain validates unchanged,
-existing WORK without `review` remains readable, legacy high or critical done WORK requires review
-before dependents, and a legacy `plan_review` without `audit_file` reads as `audits/plan.md`. Runtime
-normalization supplies these defaults, so no migration command is required.
+Plugin version `0.5.0` ships protocol version `1.3.0`. These are separate version domains: the plugin
+version identifies the distributed implementation, while the protocol version identifies the
+artifact contract that runtime config and STATE declare.
 
-The minor bump exists because `project_status` gained the derived value `work_audit`. A `1.1.0`
-runtime validates that field against its own allowed set and would reject a STATE this runtime wrote,
-so the version now carries that signal. `validate` reads `protocol_version` rather than only
-recording it: a different major version is an error, and a newer minor version is a warning that the
-artifact came from a newer runtime.
+Protocol 1.3 adds explicit workflow type, audit front matter and `audit apply`, lifecycle-aware
+render guards, finding/decision/WORK traceability, and WORK v2 acceptance coverage. A protocol 1.2
+runtime cannot safely create or mutate those artifacts, which is why this is a protocol minor bump
+instead of a plugin-only release.
 
-`STATE.yaml` is the domain artifact source of truth for `protocol_version`. `.devflow/config.yaml`
-contains project-local runtime configuration only. Older configs that still contain `protocol_version`
-remain readable; that value does not override STATE.
+Protocol 1.0 through 1.2 artifacts remain backward-readable. Missing `workflow_type` defaults to
+`delivery` without rewriting STATE. WORK v1 keeps its string-shaped acceptance and verification
+commands, existing WORK without `review` retains the required high-risk review gate, and a legacy
+`plan_review` without `audit_file` reads as `audits/plan.md`. Existing audit Markdown without YAML
+front matter remains readable as a legacy artifact, but it cannot authorize a protocol 1.3 verified
+transition. No bulk migration or automatic rewrite is required.
+
+A fresh project initialization records `1.3.0` in both `.devflow/config.yaml` and the domain's
+`STATE.yaml`. The config value is a project runtime compatibility guard, while STATE identifies the
+domain artifact contract. Older same-major versions are readable. A malformed or different-major
+version is an error, and a newer config minor permits read-only status and validation but blocks
+mutation.

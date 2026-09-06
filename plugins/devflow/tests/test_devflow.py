@@ -3886,7 +3886,7 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
     entries = [entry for entry in marketplace.get("plugins", []) if entry.get("name") == manifest.get("name")]
     check(
         "marketplace plugin version matches manifest",
-        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.4.0",
+        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.5.0",
         repr(entries),
     )
 
@@ -3904,8 +3904,8 @@ def case_codex_adapter_uses_shared_plugin(root: Path) -> None:
         repr(entries),
     )
     check(
-        "Codex plugin discovers the shared 0.4.0 skills",
-        manifest.get("version") == "0.4.0"
+        "Codex plugin discovers the shared 0.5.0 skills",
+        manifest.get("version") == "0.5.0"
         and skills_root.resolve() == (PLUGIN / "skills").resolve()
         and {path.parent.name for path in skills_root.glob("*/SKILL.md")} == {"plan", "run", "audit", "status"},
         repr(manifest),
@@ -4100,6 +4100,9 @@ def case_integration_next_action_guards(root: Path) -> None:
 def case_plan_review_gate(root: Path) -> None:
     devflow(root, "init", "billing", "--risk", "critical")
     d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["protocol_version"] = "1.2.0"
+    dump(d / "STATE.yaml", state_doc)
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
     out = devflow(root, "status", "billing").stdout
     check("critical risk gates on a plan audit before any run", "next.command: audit" in out and "next.scope: plan" in out, out)
@@ -4108,7 +4111,7 @@ def case_plan_review_gate(root: Path) -> None:
     (d / "audits/plan.md").write_text("# plan audit\n")
     devflow(root, "plan-review", "set", "billing", "verified")
     out = devflow(root, "status", "billing").stdout
-    check("a verified plan review releases the gate", "next.command: run" in out, out)
+    check("a legacy verified plan review releases the gate", "next.command: run" in out, out)
 
 
 def high_done(item_id: str, **over: Any) -> dict[str, Any]:
@@ -4353,9 +4356,12 @@ def case_plan_review_rejects_required_skip(root: Path) -> None:
 def case_plan_review_requires_audit_artifact(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["protocol_version"] = "1.2.0"
+    dump(d / "STATE.yaml", state_doc)
     out = devflow(root, "plan-review", "set", "billing", "verified")
 
-    check("plan review cannot verify without audit artifact", out.returncode == 2 and "plan audit artifact" in out.stderr, out.stdout + out.stderr)
+    check("legacy plan review cannot verify without audit artifact", out.returncode == 2 and "plan audit artifact" in out.stderr, out.stdout + out.stderr)
     check("plan-review guard defaults legacy audit path", not (d / "audits/plan.md").exists())
 
 
@@ -4532,10 +4538,13 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
     state_path = root / "docs/domains/billing/STATE.yaml"
     config = yaml.safe_load(config_path.read_text())
     state_doc = yaml.safe_load(state_path.read_text())
+    state_template = yaml.safe_load((PLUGIN / "core/templates/STATE.yaml").read_text())
     check(
-        "new init records the current runtime protocol in config and STATE",
-        config.get("protocol_version") == "1.2.0" and state_doc.get("protocol_version") == "1.2.0",
-        repr(config) + repr(state_doc),
+        "new init and the STATE template record the current runtime protocol",
+        config.get("protocol_version") == "1.3.0"
+        and state_doc.get("protocol_version") == "1.3.0"
+        and state_template.get("protocol_version") == "1.3.0",
+        repr(config) + repr(state_doc) + repr(state_template),
     )
 
     for value, expected in [("1.2", "Invalid config protocol_version"), ("2.0.0", "Unsupported config protocol_version")]:
@@ -4557,12 +4566,12 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
         older.stdout + older.stderr,
     )
 
-    config["protocol_version"] = "1.2.0"
+    config["protocol_version"] = "1.3.0"
     dump(config_path, config)
     human = devflow(root, "status", "billing")
     machine = devflow(root, "status", "billing", "--json")
     report = json.loads(machine.stdout) if machine.returncode == 0 else {}
-    expected_versions = {"runtime": "1.2.0", "config": "1.2.0", "state": "1.2.0", "effective": "1.2.0"}
+    expected_versions = {"runtime": "1.3.0", "config": "1.3.0", "state": "1.3.0", "effective": "1.3.0"}
     check(
         "human and JSON status expose runtime, config, state, and effective protocol versions",
         human.returncode == 0
