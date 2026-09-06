@@ -22,13 +22,14 @@
       "Write"
     ],
     "shortDescription": "Plan, execute, audit, and resume agentic development",
-    "longDescription": "A state-based development protocol that turns an approved PRD into repository-grounded plans and work items, executes one verified change at a time, and performs independent phase and integration audits without repeated handoff prompt authoring.",
+    "longDescription": "A state-based protocol for approved-PRD delivery and phase-free brownfield audit/remediation. It plans repository-grounded WORK, executes one verified change at a time, and applies machine-readable integration audit outcomes without autonomous orchestration.",
     "developerName": "DevFlow Team",
     "category": "Productivity",
     "defaultPrompt": [
       "Plan this PRD with DevFlow.",
       "Execute the next DevFlow work item.",
-      "Audit the current DevFlow phase."
+      "Audit the current DevFlow phase.",
+      "Audit and remediate this brownfield codebase through a phase-free DevFlow integration audit."
     ],
     "brandColor": "#3B82F6"
   }
