@@ -151,6 +151,12 @@ audit guidance. The PRD, PLAN, STATE, PITFALLS, DECISIONS, WORK, and AUDIT artif
 `domain_dir` so the boundary is visible. Normal initialization does not place domain artifacts
 inside `.devflow/`.
 
+A domain must resolve inside `domains_root`. Every command exits `2` for a domain argument whose
+resolved directory escapes the configured root (for example `../escaped` or `../../../x`), naming
+the root in the error, and creates nothing. A nested domain such as `team/billing` that stays inside
+the root works normally, and `domains_root` itself stays configurable, including a custom value
+outside `docs/`.
+
 Initialize a domain with the `plan` skill, or directly:
 
 ```bash

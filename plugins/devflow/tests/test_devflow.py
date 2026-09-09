@@ -379,6 +379,62 @@ def case_init_creates_artifacts(root: Path) -> None:
     check("high risk requires a plan review", doc["plan_review"] == {"required": True, "status": "pending", "audit_file": "audits/plan.md"}, repr(doc.get("plan_review")))
 
 
+def case_domain_must_stay_inside_domains_root(root: Path) -> None:
+    def cli(*args: str) -> subprocess.CompletedProcess:
+        return sh([sys.executable, str(CLI), *args], root)
+
+    external = root.parent / f"devflow-escape-{root.name}"
+    shutil.rmtree(external, ignore_errors=True)
+    deep = cli("init", str(Path("..") / ".." / ".." / external.name))
+    check(
+        "AC-01: init rejects a domain that resolves outside the repository and creates nothing there",
+        deep.returncode == 2 and "domains_root" in deep.stderr and not external.exists(),
+        deep.stdout + deep.stderr,
+    )
+
+    single = cli("init", "../escaped")
+    check(
+        "AC-02: init rejects a single-.. domain that stays in the repo but leaves domains_root",
+        single.returncode == 2 and "domains_root" in single.stderr and not (root / "docs/escaped").exists(),
+        single.stdout + single.stderr,
+    )
+
+    status_escape = cli("status", "../escaped")
+    check(
+        "AC-03: status rejects an escaping domain with the same class of message",
+        status_escape.returncode == 2 and "domains_root" in status_escape.stderr,
+        status_escape.stdout + status_escape.stderr,
+    )
+
+    flat = cli("init", "billing")
+    nested = cli("init", "team/billing")
+    check(
+        "AC-04: a flat domain and a nested domain that stay inside domains_root still initialize",
+        flat.returncode == 0
+        and nested.returncode == 0
+        and (root / "docs/domains/billing/STATE.yaml").exists()
+        and (root / "docs/domains/team/billing/STATE.yaml").exists(),
+        flat.stdout + flat.stderr + nested.stdout + nested.stderr,
+    )
+
+    config_path = root / ".devflow/config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["domains_root"] = "areas/devflow"
+    dump(config_path, config)
+    custom_ok = cli("init", "shipping")
+    custom_escape = cli("init", "../../secret")
+    check(
+        "AC-05: a custom domains_root still admits a contained domain and still rejects an escaping one",
+        custom_ok.returncode == 0
+        and (root / "areas/devflow/shipping/STATE.yaml").exists()
+        and custom_escape.returncode == 2
+        and "areas/devflow" in custom_escape.stderr
+        and not (root / "areas/secret").exists(),
+        custom_ok.stdout + custom_ok.stderr + custom_escape.stdout + custom_escape.stderr,
+    )
+    shutil.rmtree(external, ignore_errors=True)
+
+
 def case_audit_remediation_init_projects_integration_audit(root: Path) -> None:
     out = devflow(root, "init", "billing", "--risk", "high", "--workflow", "audit-remediation")
     state_file = root / "docs/domains/billing/STATE.yaml"
@@ -5622,6 +5678,7 @@ CASES = [
     case_fixtures_are_valid_yaml,
     case_timeout_diagnostics,
     case_init_creates_artifacts,
+    case_domain_must_stay_inside_domains_root,
     case_audit_remediation_init_projects_integration_audit,
     case_audit_remediation_init_uses_mode_specific_templates,
     case_legacy_120_domain_defaults_to_delivery,

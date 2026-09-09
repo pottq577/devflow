@@ -732,7 +732,16 @@ def reported_protocol_versions(root: Path, state: dict[str, Any]) -> dict[str, s
 
 
 def domain_dir(root: Path, domain: str) -> Path:
-    return root / runtime_config(root)["domains_root"] / domain
+    # Every command routes through here, so one containment check covers all call sites. A domain
+    # argument with `..` segments (or an absolute path) otherwise places artifacts outside the
+    # configured root, where nothing else in the repository looks for them.
+    domains_root_rel = runtime_config(root)["domains_root"]
+    base = root / domains_root_rel
+    try:
+        (base / domain).resolve().relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Domain escapes domains_root: {domain!r} resolves outside {domains_root_rel}") from exc
+    return base / domain
 
 
 def state_path(root: Path, domain: str) -> Path:

@@ -35,6 +35,11 @@
 
 ### Fixed
 
+- **A domain is constrained to `domains_root`.** `domain_dir()` now rejects a domain argument whose
+  resolved directory escapes the configured root (`../escaped`, `../../../x`, an absolute path),
+  exiting `2` with a message naming the root and creating nothing. One guard in the function every
+  command routes through covers all call sites. A nested domain that stays inside the root, and a
+  custom `domains_root`, keep working.
 - **A work closure audit reports `project_status: work_audit`.** `project_status_for_action()` now
   returns `work_audit` for a `scope: work` audit in both modes. A phaseless work closure audit was
   reported as `integration_closure`, and a phase work closure as `remediation`, contradicting the
