@@ -31,6 +31,7 @@ Initial audit application writes only `findings`. Closure audit application writ
 ```yaml
 audit_provenance:
   findings:
+    F-01: major
     F-02: major
   applied_against:
     F-01: major
