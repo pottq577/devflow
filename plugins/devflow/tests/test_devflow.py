@@ -1688,7 +1688,6 @@ def case_validate_closure_reuses_apply_finding_coverage(root: Path) -> None:
         closure: list[dict[str, Any]],
     ) -> tuple[subprocess.CompletedProcess, bool]:
         state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
-        state_doc["protocol_version"] = "1.3.0"
         state_doc["integration"]["status"] = status
         state_doc["integration"]["audit_provenance"] = {"findings": {"F-01": "blocker"}}
         dump(state_path, state_doc)
@@ -2826,6 +2825,7 @@ def case_audit_remediation_full_lifecycle_with_reopened_finding(root: Path) -> N
 
 def case_delivery_lifecycle_regression_after_protocol_130(root: Path) -> None:
     initialized = devflow(root, "init", "billing")
+    legacy_config(root, "1.3.0")
     d = root / "docs/domains/billing"
     state_path = d / "STATE.yaml"
     state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
@@ -4526,7 +4526,7 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
     entries = [entry for entry in marketplace.get("plugins", []) if entry.get("name") == manifest.get("name")]
     check(
         "marketplace plugin version matches manifest",
-        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.5.0",
+        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.6.0",
         repr(entries),
     )
 
@@ -4544,8 +4544,8 @@ def case_codex_adapter_uses_shared_plugin(root: Path) -> None:
         repr(entries),
     )
     check(
-        "Codex plugin discovers the shared 0.5.0 skills",
-        manifest.get("version") == "0.5.0"
+        "Codex plugin discovers the shared 0.6.0 skills",
+        manifest.get("version") == "0.6.0"
         and skills_root.resolve() == (PLUGIN / "skills").resolve()
         and {path.parent.name for path in skills_root.glob("*/SKILL.md")} == {"plan", "run", "audit", "status"},
         repr(manifest),
@@ -5243,6 +5243,23 @@ def case_protocol_version_is_enforced(root: Path) -> None:
         out.stdout + out.stderr,
     )
 
+    # The audit-apply gate threshold is 1.3.0, not the runtime version. A genuine 1.3.0 project
+    # (config and STATE both 1.3.0) still cannot use a legacy verified transition under a 1.4.0
+    # runtime.
+    devflow(root, "init", "legacy13")
+    legacy_config(root, "1.3.0")
+    ld = root / "docs/domains/legacy13"
+    doc = yaml.safe_load((ld / "STATE.yaml").read_text(encoding="utf-8"))
+    doc["protocol_version"] = "1.3.0"
+    doc["phases"] = {"01": phase("audit", "01")}
+    dump(ld / "STATE.yaml", doc)
+    gated = devflow(root, "phase", "set", "legacy13", "01", "verified")
+    check(
+        "a 1.3.0 STATE still requires audit apply under the 1.4.0 runtime",
+        gated.returncode == 2 and "protocol 1.3+ requires devflow audit apply" in gated.stderr,
+        gated.stdout + gated.stderr,
+    )
+
 
 def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> None:
     def verifiable_phase(domain: str) -> Path:
@@ -5258,7 +5275,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
         (dd / "audits/phase-01.md").write_text("# phase audit\n")
         return dd
 
-    # config 1.3.0 (from init), STATE hand-downgraded to 1.2.0
+    # config 1.4.0 (from init), STATE hand-downgraded to 1.2.0
     d = verifiable_phase("billing")
     high = high_done("P01-I02")
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01"), high))
@@ -5275,7 +5292,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
     work_v = devflow(root, "work", "review", "billing", "P01-I02", "verified")
     validated = devflow(root, "validate", "billing")
     check(
-        "AC-01/AC-02: a STATE downgrade under a 1.3.0 config cannot re-enable any legacy verified transition",
+        "AC-01/AC-02: a STATE downgrade under a 1.4.0 config cannot re-enable any legacy verified transition",
         all(
             out.returncode == 2 and "protocol 1.3+ requires devflow audit apply" in out.stderr
             for out in (phase_v, integ_v, plan_v, work_v)
@@ -5286,7 +5303,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
     check(
         "AC-03: validate reports the STATE-older-than-config protocol downgrade",
         validated.returncode == 1
-        and "STATE protocol_version 1.2.0 is older than the project's .devflow/config.yaml protocol_version 1.3.0" in validated.stdout,
+        and "STATE protocol_version 1.2.0 is older than the project's .devflow/config.yaml protocol_version 1.4.0" in validated.stdout,
         validated.stdout + validated.stderr,
     )
 
@@ -5350,9 +5367,9 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
     state_template = yaml.safe_load((PLUGIN / "core/templates/STATE.yaml").read_text())
     check(
         "new init and the STATE template record the current runtime protocol",
-        config.get("protocol_version") == "1.3.0"
-        and state_doc.get("protocol_version") == "1.3.0"
-        and state_template.get("protocol_version") == "1.3.0",
+        config.get("protocol_version") == "1.4.0"
+        and state_doc.get("protocol_version") == "1.4.0"
+        and state_template.get("protocol_version") == "1.4.0",
         repr(config) + repr(state_doc) + repr(state_template),
     )
 
@@ -5375,12 +5392,12 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
         older.stdout + older.stderr,
     )
 
-    config["protocol_version"] = "1.3.0"
+    config["protocol_version"] = "1.4.0"
     dump(config_path, config)
     human = devflow(root, "status", "billing")
     machine = devflow(root, "status", "billing", "--json")
     report = json.loads(machine.stdout) if machine.returncode == 0 else {}
-    expected_versions = {"runtime": "1.3.0", "config": "1.3.0", "state": "1.3.0", "effective": "1.3.0"}
+    expected_versions = {"runtime": "1.4.0", "config": "1.4.0", "state": "1.4.0", "effective": "1.4.0"}
     check(
         "human and JSON status expose runtime, config, state, and effective protocol versions",
         human.returncode == 0

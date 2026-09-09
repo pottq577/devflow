@@ -254,8 +254,8 @@ Inspect the archive for required adapter/plugin files and reject repository/cach
 Current baseline:
 
 ```text
-plugin version:   0.5.0
-protocol version: 1.3.0
+plugin version:   0.6.0
+protocol version: 1.4.0
 ```
 
 Treat these as separate version domains.

@@ -1,4 +1,4 @@
-protocol_version: "1.3.0"
+protocol_version: "1.4.0"
 workflow_type: delivery
 domain: example
 risk_profile: medium

@@ -243,23 +243,29 @@ completion, so a nested controller would duplicate the lifecycle.
 
 ## Compatibility and protocol version
 
-Plugin version `0.5.0` ships protocol version `1.3.0`. These are separate version domains: the plugin
+Plugin version `0.6.0` ships protocol version `1.4.0`. These are separate version domains: the plugin
 version identifies the distributed implementation, while the protocol version identifies the
 artifact contract that runtime config and STATE declare.
 
-Protocol 1.3 adds explicit workflow type, audit front matter and `audit apply`, lifecycle-aware
-render guards, finding/decision/WORK traceability, and WORK v2 acceptance coverage. A protocol 1.2
-runtime cannot safely create or mutate those artifacts, which is why this is a protocol minor bump
-instead of a plugin-only release.
+Protocol 1.4 makes closure provenance a machine-owned artifact field. `audit apply` records an
+`audit_provenance` finding-to-severity mapping on the audited scope's own STATE or WORK metadata,
+and a later closure reads it instead of Git history. A protocol 1.3 runtime does not know that
+field and cannot safely mutate an artifact that carries it, which is why this is a protocol minor
+bump instead of a plugin-only release. Protocol 1.3 added explicit workflow type, audit front
+matter and `audit apply`, lifecycle-aware render guards, finding/decision/WORK traceability, and
+WORK v2 acceptance coverage.
 
-Protocol 1.0 through 1.2 artifacts remain backward-readable. Missing `workflow_type` defaults to
+Protocol 1.0 through 1.3 artifacts remain backward-readable. `audit_provenance` is optional and is
+required only when a closure audit is applied or validated. Missing `workflow_type` defaults to
 `delivery` without rewriting STATE. WORK v1 keeps its string-shaped acceptance and verification
 commands, existing WORK without `review` retains the required high-risk review gate, and a legacy
 `plan_review` without `audit_file` reads as `audits/plan.md`. Existing audit Markdown without YAML
-front matter remains readable as a legacy artifact, but it cannot authorize a protocol 1.3 verified
-transition. No bulk migration or automatic rewrite is required.
+front matter remains readable as a legacy artifact, but it cannot authorize a protocol 1.3 or newer
+verified transition. No bulk migration or automatic rewrite is required. A protocol 1.3.0 domain
+sitting mid-closure re-runs its scope's initial audit through the scope's recovery command to
+record provenance, then the closure proceeds.
 
-A fresh project initialization records `1.3.0` in both `.devflow/config.yaml` and the domain's
+A fresh project initialization records `1.4.0` in both `.devflow/config.yaml` and the domain's
 `STATE.yaml`. The config value is a project runtime compatibility guard, while STATE identifies the
 domain artifact contract. Older same-major versions are readable. A malformed or different-major
 version is an error, and a newer config minor permits read-only status and validation but blocks

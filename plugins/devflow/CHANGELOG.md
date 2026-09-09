@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
+
+### Added
+
+- **`devflow work review <domain> <ID> pending`.** A `blocked` work review can be returned to
+  `pending` and re-audited, the work-scope equivalent of `plan-review set pending`,
+  `phase set <n> audit` and `integration set <d> audit`.
+- **Machine-owned `audit_provenance`.** `STATE.plan_review`, `STATE.phases.<key>`,
+  `STATE.integration` and a WORK item's `review` carry an optional `audit_provenance.findings`
+  mapping of finding ID to severity, written by `devflow audit apply` and read by a later closure.
+- `render audit --mode closure` emits a `prior_findings` line so the auditor can cover the recorded
+  prior findings without reading Git.
 
 ### Changed
 
@@ -61,12 +72,28 @@
 
 ### Compatibility and migration
 
-- STATE and WORK without `audit_provenance` stay readable. The field is required only at the moment
-  a closure audit is applied or validated.
-- A protocol 1.3.0 domain that is mid-closure when this runtime arrives is refused at closure with a
-  named recovery command. Re-running the scope's initial audit records provenance and the closure
-  then proceeds. This is the one deliberate migration cost, and it is deterministic rather than
-  inferred. No bulk migration command is required.
+- Plugin version is `0.6.0`. Protocol version is `1.4.0`. These remain separate version domains: the
+  plugin identifies the distribution, the protocol identifies the artifact contract.
+- **Why the protocol minor moved to `1.4.0`.** Closure provenance became a machine-owned artifact
+  field (`audit_provenance`). A protocol 1.3 runtime does not know that field and cannot safely
+  mutate a STATE or WORK artifact that carries it, so this is a protocol minor bump rather than a
+  plugin-only release.
+- Protocol 1.0 through 1.3 STATE and WORK remain backward-readable. `audit_provenance` is optional
+  everywhere and is required only at the moment a closure audit is applied or validated.
+- **The one deliberate migration cost.** A protocol 1.3.0 domain that is sitting mid-closure when
+  this runtime arrives has no recorded provenance, so its closure is refused with a named recovery
+  command. Re-run the scope's initial audit through that command and the closure then proceeds:
+  `devflow plan-review set <domain> pending` for plan scope,
+  `devflow work review <domain> <WORK-ID> pending` for work scope,
+  `devflow phase set <domain> <phase> audit` for phase scope, and
+  `devflow integration set <domain> audit` for integration scope. The refusal is deterministic, not
+  inferred, and no bulk migration command is required.
+- A project whose `.devflow/config.yaml` records `1.3.0` or newer and whose `STATE.yaml` was
+  hand-edited to an older protocol now fails `validate` with a STATE-older-than-config error, and
+  the audit-apply gate decides from the higher of the two versions. A project with no config file,
+  or one whose config genuinely records the older version, is unaffected.
+- WORK v1 string shapes, missing `workflow_type`, missing `plan_review.audit_file` and missing
+  `review` metadata all continue to read as before.
 
 ## 0.5.0
 

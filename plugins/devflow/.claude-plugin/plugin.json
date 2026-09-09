@@ -1,6 +1,6 @@
 {
   "name": "devflow",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "State-based agent development protocol for repository-grounded planning, one-item execution, independent audits, and deterministic handoffs.",
   "author": {
     "name": "DevFlow Team"
