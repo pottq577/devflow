@@ -2803,7 +2803,9 @@ def case_audit_remediation_full_lifecycle_with_reopened_finding(root: Path) -> N
         audit_metadata(d, mode="closure", verdict="fail", findings=[first_finding, reopened_finding], closure=first_closure),
     )
     applied_first_closure = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    validated_first_closure = devflow(root, "validate", "billing")
     reopened_state = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    persisted_provenance = reopened_state["integration"]["audit_provenance"]
     reopened_work = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
     check(
         "full reopen lifecycle returns to traced integration remediation",
@@ -2813,6 +2815,9 @@ def case_audit_remediation_full_lifecycle_with_reopened_finding(root: Path) -> N
         and done_first.returncode == 0
         and rendered_first_closure.returncode == 0
         and applied_first_closure.returncode == 0
+        and validated_first_closure.returncode == 0
+        and persisted_provenance["applied_against"] == {"F-01": "blocker"}
+        and persisted_provenance["findings"] == {"F-01": "blocker", "F-02": "blocker"}
         and read_audit(d / "audits/integration.md")["closure"] == first_closure
         and reopened_state["integration"]["status"] == "remediation"
         and reopened_state["next_action"]["work_item"] == "INT-R02"
@@ -2821,7 +2826,7 @@ def case_audit_remediation_full_lifecycle_with_reopened_finding(root: Path) -> N
             "INT-R01": ["F-01"],
             "INT-R02": ["F-02"],
         },
-        applied_first_closure.stdout + applied_first_closure.stderr + repr(reopened_state) + repr(reopened_work),
+        applied_first_closure.stdout + applied_first_closure.stderr + validated_first_closure.stdout + validated_first_closure.stderr + repr(reopened_state) + repr(reopened_work),
     )
 
     commit_paths(root, "record reopened closure", d / "audits/integration.md")
@@ -3224,6 +3229,25 @@ def case_recorded_provenance_closure_is_deterministic(root: Path) -> None:
         and before_state == mid_state == after_state
         and before_work == after_work,
         first.stdout + first.stderr + "\n---\n" + second.stdout + second.stderr,
+    )
+
+
+def case_audit_provenance_validation_basis_is_structural(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["integration"]["audit_provenance"] = {
+        "findings": {"F-01": "major"},
+        "applied_against": "not-a-mapping",
+    }
+    dump(d / "STATE.yaml", state_doc)
+
+    validated = devflow(root, "validate", "billing")
+    check(
+        "validate rejects a non-mapping applied closure basis",
+        validated.returncode == 1
+        and "integration.audit_provenance.applied_against must be a mapping" in validated.stdout,
+        validated.stdout + validated.stderr,
     )
 
 
@@ -5806,6 +5830,7 @@ CASES = [
     case_audit_closure_uses_recorded_provenance,
     case_lifecycle_completes_with_gitignored_docs,
     case_recorded_provenance_closure_is_deterministic,
+    case_audit_provenance_validation_basis_is_structural,
     case_provenance_write_failure_is_atomic,
     case_legacy_closure_without_provenance,
     case_plan_audit_remediation_reaches_closure,

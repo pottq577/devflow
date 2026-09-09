@@ -422,6 +422,7 @@ def recorded_audit_provenance(
     work_item: str | None,
     *,
     work_docs: dict[Path, dict[str, Any]] | None = None,
+    for_applied_audit: bool = False,
 ) -> dict[str, str] | None:
     """The {finding_id: severity} recorded by `audit apply` when the audit for this scope was
     applied, or None when no audit has been applied there. Reads STATE and WORK only, never Git."""
@@ -446,7 +447,12 @@ def recorded_audit_provenance(
                     record = review.get("audit_provenance") if isinstance(review, dict) else None
     if not isinstance(record, dict):
         return None
-    findings = record.get("findings")
+    field = (
+        "applied_against"
+        if for_applied_audit and isinstance(record.get("applied_against"), dict)
+        else "findings"
+    )
+    findings = record.get(field)
     return {str(key): str(value) for key, value in findings.items()} if isinstance(findings, dict) else {}
 
 
@@ -461,15 +467,23 @@ def audit_provenance_errors(label: str, record: Any) -> list[str]:
         return []
     if not isinstance(record, dict):
         return [f"{label}.audit_provenance must be a mapping"]
-    findings = record.get("findings")
-    if not isinstance(findings, dict):
-        return [f"{label}.audit_provenance.findings must be a mapping of finding id to severity"]
     errors: list[str] = []
-    for key, value in findings.items():
-        if not isinstance(key, str) or not key.strip():
-            errors.append(f"{label}.audit_provenance.findings has a blank finding id")
-        if value not in SEVERITY_RANK:
-            errors.append(f"{label}.audit_provenance.findings[{key}] has an invalid severity: {value!r}")
+    for field in ["findings", "applied_against"]:
+        if field == "applied_against" and field not in record:
+            continue
+        findings = record.get(field)
+        if not isinstance(findings, dict):
+            errors.append(
+                f"{label}.audit_provenance.{field} must be a mapping of finding id to severity"
+            )
+            continue
+        for key, value in findings.items():
+            if not isinstance(key, str) or not key.strip():
+                errors.append(f"{label}.audit_provenance.{field} has a blank finding id")
+            if value not in SEVERITY_RANK:
+                errors.append(
+                    f"{label}.audit_provenance.{field}[{key}] has an invalid severity: {value!r}"
+                )
     return errors
 
 
@@ -2539,7 +2553,14 @@ def audit_artifact_contract_errors(
         if metadata.get("mode") == "closure":
             domain = str(state.get("domain"))
             prior_severities = recorded_audit_provenance(
-                root, domain, state, scope, phase, task, work_docs=docs
+                root,
+                domain,
+                state,
+                scope,
+                phase,
+                task,
+                work_docs=docs,
+                for_applied_audit=True,
             )
             if prior_severities is None:
                 errors.append(closure_without_provenance_error(domain, scope, phase, task))
@@ -3093,11 +3114,21 @@ def audit_apply(args: argparse.Namespace) -> int:
     prospective["unresolved_decisions"] = unresolved
     closes_scope = metadata["verdict"] == "pass" and not generated_work and not new_decisions and not has_stop
     work_overrides: dict[Path, dict[str, Any]] = {}
-    # Machine-owned closure provenance: the finding set a later closure at this scope compares
-    # against. It is written for both initial and closure modes, but only after this apply's own
-    # validation runs, so a closure is checked against the PRIOR applied audit, never the record
-    # this apply is about to write. `provenance_target` is the dict that receives it.
+    # Machine-owned closure provenance: findings is the next closure basis, while applied_against
+    # preserves the basis used to accept the current closure. This projected record is validated
+    # before the transaction writes anything.
     provenance = {"findings": audit_provenance_findings(metadata)}
+    if args.mode == "closure":
+        applied_against = recorded_audit_provenance(
+            root,
+            args.domain,
+            state,
+            args.scope,
+            args.phase,
+            args.task,
+        )
+        if applied_against is not None:
+            provenance["applied_against"] = applied_against
     provenance_target: dict[str, Any]
 
     if args.scope == "plan":
@@ -3137,6 +3168,7 @@ def audit_apply(args: argparse.Namespace) -> int:
         provenance_target = integration
     if args.mode == "closure" and not closes_scope:
         prospective["next_action"] = {}
+    provenance_target["audit_provenance"] = provenance
 
     if closes_scope and args.scope == "plan" and not (domain_dir(root, args.domain) / "PLAN.md").exists():
         errors.append(f"PLAN.md not found: {domain_dir(root, args.domain) / 'PLAN.md'}")
@@ -3156,9 +3188,6 @@ def audit_apply(args: argparse.Namespace) -> int:
     errors.extend(f"validation: {error}" for error in validation_errors)
     if errors:
         return reject_transition("audit", "be applied", errors)
-
-    # Validation passed: now record the provenance this apply establishes for a later closure.
-    provenance_target["audit_provenance"] = provenance
 
     documents: dict[Path, Any] = dict(work_overrides)
     documents[path] = prospective

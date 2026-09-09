@@ -82,10 +82,13 @@ prerequisites, and closure coverage before any mutation. Invalid input exits wit
 STATE, WORK, DECISIONS, and audit artifacts unchanged.
 
 On success, the command registers new unresolved decision IDs, updates the audited lifecycle scope,
-records the applied finding set as machine-owned `audit_provenance` on that scope's own metadata,
-and computes derived fields against prospective STATE and WORK before writing. Closure provenance is
-machine-owned: no lifecycle artifact's history is delegated to Git, and a later closure recovers
-the prior finding set from `audit_provenance`, not from `git log` or `git show`. When both STATE and
+records the applied finding set as machine-owned `audit_provenance.findings` on that scope's own
+metadata, and computes derived fields against prospective STATE and WORK before writing. Closure
+provenance is machine-owned: no lifecycle artifact's history is delegated to Git, and a later
+closure recovers the prior finding set from `audit_provenance.findings`, not from `git log` or
+`git show`. A closure also records the previous mapping in `audit_provenance.applied_against`, so
+`validate` can recheck the persisted closure after `findings` advances for the next closure.
+Existing records without `applied_against` remain readable. When both STATE and
 WORK change, same-directory backups preserve the original bytes before commit; a commit writer
 failure restores replaced files through an independent rename path. This is process-local failure
 rollback, not crash recovery or concurrent-writer isolation. Linked

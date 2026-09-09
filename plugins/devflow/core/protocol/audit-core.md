@@ -217,11 +217,14 @@ incomplete closure coverage, unfinished remediation, and any request that differ
 next action. It validates the prospective domain before writing lifecycle state. The auditor never edits STATE to
 apply an outcome.
 
-Closure coverage comes from the provenance the runtime recorded when the initial audit for this
-scope was applied. `devflow audit apply` writes an `audit_provenance` mapping of finding ID to
-severity onto the audited scope's machine-owned metadata (`STATE.plan_review`,
+Closure coverage comes from the provenance the runtime recorded when the prior audit for this
+scope was applied. `devflow audit apply` writes `audit_provenance.findings`, a mapping of finding ID
+to severity, onto the audited scope's machine-owned metadata (`STATE.plan_review`,
 `STATE.phases.<key>`, `STATE.integration`, or the WORK item's `review`) on every applied audit,
-and a later closure reads it. No Git history is consulted, so the lifecycle completes with `docs/`
+and a later closure reads it. A closure application also writes `applied_against` with the previous
+mapping it was validated against. `validate` uses `applied_against` for that persisted closure while
+the next closure render and apply continue to use `findings`. No Git history is consulted, so the
+lifecycle completes with `docs/`
 fully gitignored and the canonical audit never committed. Every recorded finding needs one closure
 outcome. Findings present only in the current file are new findings, and `reopened_as` may
 reference only those current-only IDs. A closure at a scope with no recorded audit fails cleanly
@@ -234,7 +237,8 @@ cannot shrink the prior finding set. The record still lives in STATE and WORK, w
 machine-owned but on-disk and editable, so its integrity has the same trust boundary as every other
 lifecycle gate: a hand-edited STATE that removes a recorded finding is undetected here, exactly as a
 hand-edited phase status or review status would be. `validate` rejects a structurally malformed
-`audit_provenance` record but does not attest that its contents match a real prior audit.
+`audit_provenance` record but does not attest that its contents match a real prior audit. Existing
+records without `applied_against` remain readable and use `findings` for both purposes.
 
 `disposition.action: stop` is an explicit lifecycle block. Applying it marks the audited scope
 blocked and makes the next action a human decision for plan, work, phase, and integration audits.
