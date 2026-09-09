@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.1
+
+### Fixed
+
+- A closure apply now records `audit_provenance.applied_against` before its atomic validation and
+  write. Persisted closures validate against that prior finding set, while
+  `audit_provenance.findings` remains the basis for a later closure.
+- The recovery command printed for a legacy work closure now accepts a `remediation` review only
+  when it has no provenance. Work and plan recovery clear stale `remediation_work_ids`, so the
+  documented commands reach a fresh initial audit without weakening normal review guards.
+- A closed `DECISION_REQUIRED` finding now validates its linked resolved decision instead of
+  requiring the record to remain open. An `accepted_risk` closure can therefore complete after its
+  decision is resolved, while active decision findings still require open records.
+- The timeout diagnostic test allows two seconds for process startup while its child continues to
+  sleep for five seconds, reducing environment-sensitive failures.
+
+### Changed
+
+- Current marketplace documentation now reports plugin `0.6.1` and protocol `1.5.0` consistently.
+
+### Compatibility and migration
+
+- Plugin version is `0.6.1`. Protocol version is `1.5.0`. The plugin identifies the distribution,
+  while the protocol identifies the artifact contract.
+- The protocol minor moved to `1.5.0` because `audit_provenance.applied_against` adds a validation
+  basis that a 1.4 runtime does not understand. An older runtime cannot safely claim full support
+  for artifacts carrying this field.
+- Protocol 1.0 through 1.4 STATE and WORK remain backward-readable. Existing provenance records
+  containing only `findings` use the previous fallback behavior, and no bulk migration is required.
+
 ## 0.6.0
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "devflow-team",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "DevFlow development protocol plugins",
   "owner": {
     "name": "DevFlow Team"
@@ -10,7 +10,7 @@
       "name": "devflow",
       "source": "./plugins/devflow",
       "description": "State-based agent development protocol for repository-grounded planning, one-item execution, independent audits, and deterministic handoffs.",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "author": {
         "name": "DevFlow Team"
       },

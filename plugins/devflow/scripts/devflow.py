@@ -18,7 +18,7 @@ except ImportError:
     print("DevFlow requires PyYAML. Install with: python3 -m pip install PyYAML", file=sys.stderr)
     raise SystemExit(2)
 
-PROTOCOL_VERSION = "1.4.0"
+PROTOCOL_VERSION = "1.5.0"
 HIGH_RISK = {"high", "critical"}
 REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.I)
 PROTOCOL_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
