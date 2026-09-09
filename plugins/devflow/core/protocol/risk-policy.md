@@ -33,6 +33,11 @@ configuration, operations, or maintenance risk remains. Use `nit` only for optio
 A missing development switch with a safe `false` default is normally `minor`; evidence that the default
 is unsafe or already failed in production can justify `major` or `blocker`.
 
+A closure audit may raise a finding's severity with new evidence, but it cannot lower a finding it
+records as `still_open` or `reopened` below the severity that finding carried when its initial audit
+was applied. The runtime holds that floor against the recorded provenance. `resolved` and
+`accepted_risk` findings leave the active set and may be re-evaluated at any severity.
+
 The audit scopes are `plan`, `work`, `phase`, and `integration`. Initial and closure modes apply to
 work, phase, and integration; a high-risk plan review is initial before WORK begins.
 

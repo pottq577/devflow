@@ -52,4 +52,5 @@ Closure mode verifies previous findings and regressions; it does not repeat spec
 The prior finding set comes from the rendered packet's `prior_findings` line, which the runtime
 reads from the machine-owned `audit_provenance` recorded when the initial audit was applied. It is
 not read from a committed file version. Reopen a finding only to a current-only finding ID when
-evidence disproves closure.
+evidence disproves closure. A finding you keep `still_open`, or reopen into a new one, must stay at
+least at its recorded severity; you may raise it with new evidence but not lower it.

@@ -95,7 +95,9 @@ authoritative record. Do not trigger `requesting-code-review` from an audit.
 ## Closure mode
 
 Verify that the prior finding is actually closed, acceptance still holds, and no new regression was
-introduced. Reopen or create a finding when evidence disproves closure.
+introduced. Reopen or create a finding when evidence disproves closure. A finding kept `still_open`,
+and any finding a `reopened` entry points at, must stay at least at its recorded severity; raising a
+severity with new evidence is fine, lowering an active one is refused.
 
 When a `SPEC_DRIFT` or other `stop` finding blocked a scope, resolve the specification conflict
 first, then return the scope to a fresh initial audit with its recovery command: `plan-review set

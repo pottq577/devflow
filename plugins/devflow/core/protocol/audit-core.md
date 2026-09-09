@@ -251,6 +251,13 @@ It cannot be treated as an empty remediation set or projected back to the same c
 **Never write `pass` without evidence.** Only a command that was actually executed, with its
 output, is grounds for a pass.
 
+In a closure audit, a finding recorded as `still_open`, and every finding a `reopened` entry lists
+in `reopened_as`, must keep a severity at least as high as the severity recorded for that prior
+finding when its initial audit was applied. The auditor may raise a severity with new evidence, but
+cannot lower a still-open or reopened finding past the verdict rubric. `resolved` and
+`accepted_risk` leave the active set, so re-evaluating a closed finding's severity is allowed. The
+severity order is read from `finding.schema.yaml`.
+
 ## 10. Review timing
 
 A closure audit after every single item costs more than it returns, and batching a whole phase lets

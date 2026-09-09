@@ -2747,6 +2747,7 @@ def audit_closure_contract(
 ) -> tuple[list[str], dict[str, dict[str, Any]], set[str]]:
     findings = metadata.get("findings", []) or []
     current_ids = {str(finding["id"]) for finding in findings}
+    severity_by_id = {str(finding["id"]): str(finding["severity"]) for finding in findings}
     closure = metadata.get("closure", []) or []
     closure_by_id = {str(entry["finding_id"]): entry for entry in closure}
     errors: list[str] = []
@@ -2782,6 +2783,33 @@ def audit_closure_contract(
     invalid_reopened = sorted(reopened_ids - current_only_ids)
     if invalid_reopened:
         errors.append(f"closure reopened_as must reference current-only findings: {', '.join(invalid_reopened)}")
+
+    # A finding that is still open, or reopened into a new finding, cannot pass the verdict rubric
+    # below the severity recorded when the audit that raised it was applied. Rank comes from the
+    # finding schema (SEVERITY_RANK), so the schema stays the trust anchor. An auditor may raise a
+    # severity; only lowering an active finding is refused. resolved and accepted_risk are exempt
+    # because they leave active_ids, so their severity never reaches the rubric.
+    def below_recorded(current: str | None, recorded: str | None) -> bool:
+        return (
+            current in SEVERITY_RANK
+            and recorded in SEVERITY_RANK
+            and SEVERITY_RANK[current] > SEVERITY_RANK[recorded]
+        )
+
+    for finding_id, entry in closure_by_id.items():
+        recorded = prior_severities.get(finding_id)
+        if entry.get("outcome") == "still_open" and below_recorded(severity_by_id.get(finding_id), recorded):
+            errors.append(
+                f"closure {finding_id}: still_open severity {severity_by_id.get(finding_id)} "
+                f"is lower than the recorded severity {recorded}"
+            )
+        if entry.get("outcome") == "reopened":
+            for reopened_id in (str(value) for value in entry.get("reopened_as", []) or []):
+                if below_recorded(severity_by_id.get(reopened_id), recorded):
+                    errors.append(
+                        f"closure {finding_id}: reopened finding {reopened_id} severity "
+                        f"{severity_by_id.get(reopened_id)} is lower than the recorded severity {recorded}"
+                    )
 
     active_ids = current_only_ids | {
         finding_id

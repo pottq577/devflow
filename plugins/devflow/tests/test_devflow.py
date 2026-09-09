@@ -1690,6 +1690,148 @@ def case_validate_closure_reuses_apply_finding_coverage(root: Path) -> None:
     )
 
 
+def case_closure_cannot_lower_a_recorded_finding_severity(root: Path) -> None:
+    d = audit_remediation_fixture(root)
+    state_path = d / "STATE.yaml"
+    devflow(root, "status", "billing")
+
+    def run_closure(
+        recorded_severity: str,
+        findings: list[dict[str, Any]],
+        closure: list[dict[str, Any]],
+        verdict: str,
+        *,
+        via_validate: bool = False,
+    ) -> tuple[subprocess.CompletedProcess, bool]:
+        state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+        state_doc["integration"]["status"] = "closure"
+        state_doc["integration"]["audit_provenance"] = {"findings": {"F-01": recorded_severity}}
+        dump(state_path, state_doc)
+        write_audit(
+            d / "audits/integration.md",
+            audit_metadata(d, mode="closure", verdict=verdict, findings=findings, closure=closure),
+        )
+        before_state = state_path.read_bytes()
+        before_work = (d / "work/integration.yaml").read_bytes() if (d / "work/integration.yaml").exists() else b""
+        out = devflow(root, "validate", "billing") if via_validate else devflow(
+            root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure"
+        )
+        after_state = state_path.read_bytes()
+        after_work = (d / "work/integration.yaml").read_bytes() if (d / "work/integration.yaml").exists() else b""
+        return out, before_state == after_state and before_work == after_work
+
+    def finding(fid: str, severity: str) -> dict[str, Any]:
+        return audit_finding(fid, severity=severity, severity_reason=f"{fid} severity is {severity} by evidence.")
+
+    still_open_low, unchanged = run_closure(
+        "blocker",
+        [finding("F-01", "nit")],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["not fixed"], "reopened_as": []}],
+        "pass",
+    )
+    check(
+        "AC-01: a still_open finding cannot drop below its recorded severity",
+        still_open_low.returncode == 2
+        and "closure F-01: still_open severity nit is lower than the recorded severity blocker" in still_open_low.stderr
+        and unchanged,
+        still_open_low.stdout + still_open_low.stderr + f" unchanged={unchanged}",
+    )
+
+    reopened_low, unchanged = run_closure(
+        "blocker",
+        [finding("F-01", "blocker"), finding("F-02", "nit")],
+        [{"finding_id": "F-01", "outcome": "reopened", "evidence": ["still fails"], "reopened_as": ["F-02"]}],
+        "pass",
+    )
+    check(
+        "AC-02: a reopened target cannot drop below the reopened finding's recorded severity",
+        reopened_low.returncode == 2
+        and "closure F-01: reopened finding F-02 severity nit is lower than the recorded severity blocker" in reopened_low.stderr
+        and unchanged,
+        reopened_low.stdout + reopened_low.stderr + f" unchanged={unchanged}",
+    )
+
+    still_open_same_fail, unchanged = run_closure(
+        "blocker",
+        [finding("F-01", "blocker")],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["not fixed"], "reopened_as": []}],
+        "fail",
+    )
+    final = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    check(
+        "AC-03: a still_open blocker at its recorded severity applies and leaves the scope unverified",
+        still_open_same_fail.returncode == 0 and final["integration"]["status"] != "verified",
+        still_open_same_fail.stdout + still_open_same_fail.stderr + repr(final),
+    )
+
+    still_open_minor, _ = run_closure(
+        "minor",
+        [finding("F-01", "minor")],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["accepted"], "reopened_as": []}],
+        "pass",
+    )
+    closed = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    check(
+        "AC-04: a still_open minor recorded as minor still closes the scope",
+        still_open_minor.returncode == 0 and closed["integration"]["status"] == "verified",
+        still_open_minor.stdout + still_open_minor.stderr + repr(closed),
+    )
+
+    devflow(root, "status", "billing")
+    state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_doc["integration"]["status"] = "closure"
+    dump(state_path, state_doc)
+    raised, _ = run_closure(
+        "minor",
+        [finding("F-01", "blocker")],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["worse than thought"], "reopened_as": []}],
+        "fail",
+    )
+    check(
+        "AC-05: raising a still_open finding above its recorded severity is accepted and needs a fail verdict",
+        raised.returncode == 0,
+        raised.stdout + raised.stderr,
+    )
+    raised_wrong_verdict, _ = run_closure(
+        "minor",
+        [finding("F-01", "blocker")],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["worse than thought"], "reopened_as": []}],
+        "pass",
+    )
+    check(
+        "AC-05: the raised still_open blocker is still forced through the verdict rubric",
+        raised_wrong_verdict.returncode == 2 and "verdict pass forbids finding severity: blocker" in raised_wrong_verdict.stderr,
+        raised_wrong_verdict.stdout + raised_wrong_verdict.stderr,
+    )
+
+    resolved_low, _ = run_closure(
+        "blocker",
+        [finding("F-01", "nit")],
+        [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["fixed"], "reopened_as": []}],
+        "pass",
+    )
+    check(
+        "AC-06: a resolved finding is not active, so its severity may be re-evaluated downward",
+        resolved_low.returncode == 0,
+        resolved_low.stdout + resolved_low.stderr,
+    )
+
+    on_disk, unchanged = run_closure(
+        "blocker",
+        [finding("F-01", "nit")],
+        [{"finding_id": "F-01", "outcome": "still_open", "evidence": ["not fixed"], "reopened_as": []}],
+        "pass",
+        via_validate=True,
+    )
+    check(
+        "AC-08: devflow validate reports the same severity floor error for an on-disk closure audit",
+        on_disk.returncode == 1
+        and "closure F-01: still_open severity nit is lower than the recorded severity blocker" in on_disk.stdout
+        and unchanged,
+        on_disk.stdout + on_disk.stderr + f" unchanged={unchanged}",
+    )
+
+
 def case_delivery_markdown_sections_follow_commonmark_boundaries(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -5260,6 +5402,7 @@ CASES = [
     case_delivery_placeholder_contract_requires_trusted_sections,
     case_audit_remediation_required_sections_survive_template_tampering,
     case_validate_closure_reuses_apply_finding_coverage,
+    case_closure_cannot_lower_a_recorded_finding_severity,
     case_delivery_markdown_sections_follow_commonmark_boundaries,
     case_audit_remediation_markdown_sections_reject_empty_duplicates,
     case_markdown_sections_ignore_fenced_required_headings,

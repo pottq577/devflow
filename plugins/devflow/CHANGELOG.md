@@ -20,6 +20,11 @@
   `devflow integration set <domain> audit`). Provenance is never inferred and never reconstructed
   from Git.
 - `render audit --mode closure` prints a `prior_findings` line with the recorded prior finding IDs.
+- A closure audit can no longer lower the severity the verdict rubric evaluates. A finding recorded
+  as `still_open`, and every ID a `reopened` entry names in `reopened_as`, must carry a severity at
+  least as high as the severity recorded for that prior finding. Raising a severity with new
+  evidence is still allowed; `resolved` and `accepted_risk` findings leave the active set and are
+  exempt. The severity order is read from `finding.schema.yaml`, not hardcoded.
 
 ### Fixed
 
