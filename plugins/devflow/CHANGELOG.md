@@ -15,6 +15,14 @@
 
 ### Changed
 
+- **Duplicate YAML keys are rejected on every read.** `load_yaml` parses STATE, WORK, DECISIONS
+  and `.devflow/config.yaml` through a unique-key loader, so a second `phases:` or `items:` block
+  in a hand-edited file fails loudly instead of silently keeping the last value. Audit front matter
+  already rejected duplicates; this extends the same rule to the rest.
+- The refusal for a closure at a scope with no recorded provenance now spells out the whole
+  recovery in one message: run the scope's recovery command, re-render and re-apply the initial
+  audit, then retry the closure. `lifecycle.md` carries the same as a "Closure without recorded
+  provenance" migration subsection.
 - **Closure provenance is machine-owned, not read from Git.** `devflow audit apply` now records the
   applied finding set as an `audit_provenance` mapping of finding ID to severity on the audited
   scope's own machine-owned metadata (`STATE.plan_review`, `STATE.phases.<key>`,
