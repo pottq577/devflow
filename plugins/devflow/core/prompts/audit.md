@@ -49,5 +49,7 @@ next action. Re-run `devflow status` instead of auditing another lifecycle posit
     STATE directly.
 
 Closure mode verifies previous findings and regressions; it does not repeat speculative planning.
-Use the committed initial version of the same canonical audit file as the prior finding set. Reopen
-a finding only to a current-only finding ID when evidence disproves closure.
+The prior finding set comes from the rendered packet's `prior_findings` line, which the runtime
+reads from the machine-owned `audit_provenance` recorded when the initial audit was applied. It is
+not read from a committed file version. Reopen a finding only to a current-only finding ID when
+evidence disproves closure.

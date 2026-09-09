@@ -69,8 +69,9 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 14. After writing the audit artifact and linked WORK or decisions, run
     `devflow audit apply <domain> --scope <scope> --mode <mode>` with `--task <WORK-ID>` or
     `--phase <PHASE>` when required. Do not edit STATE or use a legacy verified transition to apply
-    the audit. Commit the initial canonical audit before a later closure so the runtime can identify
-    the prior finding set from Git history. Then run validation and status.
+    the audit. `audit apply` records the applied finding set as machine-owned provenance, so a later
+    closure needs no documentation commit and works with `docs/` gitignored. Then run validation and
+    status.
 
 ## Peer audit lenses
 

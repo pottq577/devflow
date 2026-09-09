@@ -152,9 +152,12 @@ Initialize a domain with the `plan` skill, or directly:
 devflow init <domain> --prd <path> --risk high --workflow delivery
 ```
 
-If `docs/` is gitignored in your repository, point `domains_root` in `.devflow/config.yaml` at a
-tracked directory. `STATE.yaml` is the coordination substrate, and an untracked one cannot hand off
-to another machine.
+`docs/` is your personal working directory. DevFlow works with it fully gitignored and never
+committed: no lifecycle operation, closure audits included, reads Git history for a file under
+`domains_root`. A gitignored `docs/` simply is not shared between machines, which is a handoff
+consideration, not a correctness one. Source-code Git use is unchanged: baseline and target SHAs,
+phase diff ranges, `devflow phase ref` ancestry checks, and `git show <ref>:<path>` for reading
+source all still apply.
 
 ## Why PITFALLS is its own artifact
 

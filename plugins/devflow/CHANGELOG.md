@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- **Closure provenance is machine-owned, not read from Git.** `devflow audit apply` now records the
+  applied finding set as an `audit_provenance` mapping of finding ID to severity on the audited
+  scope's own machine-owned metadata (`STATE.plan_review`, `STATE.phases.<key>`,
+  `STATE.integration`, or the WORK item's `review`), for both initial and closure modes. A later
+  closure recovers the prior finding set from that record. The former Git-history reader for the
+  canonical audit file, and its `git log` / `git show` reads, are removed. No DevFlow lifecycle
+  operation reads Git history for any file under `domains_root`, so the full delivery and
+  audit-remediation lifecycle completes with `docs/` fully gitignored and the canonical audit never
+  committed. Source-code Git use (baseline/target SHAs, phase diff ranges, `devflow phase ref`
+  ancestry checks, `git show <ref>:<path>` for reading source) is unchanged.
+- A closure requested at a scope with no recorded `audit_provenance` is refused deterministically
+  and names that scope's recovery command (`devflow plan-review set <domain> pending`,
+  `devflow work review <domain> <WORK-ID> pending`, `devflow phase set <domain> <phase> audit`, or
+  `devflow integration set <domain> audit`). Provenance is never inferred and never reconstructed
+  from Git.
+- `render audit --mode closure` prints a `prior_findings` line with the recorded prior finding IDs.
+
 ### Fixed
 
 - **A stop-blocked WORK review can be re-audited.** `devflow work review <domain> <ID> pending`
@@ -10,6 +29,15 @@
   verified, so a `SPEC_DRIFT` or other `stop` finding no longer strands its phase. This mirrors the
   existing `plan-review set pending`, `phase set <n> audit` and `integration set <d> audit`
   recoveries, which previously had no work-scope equivalent.
+
+### Compatibility and migration
+
+- STATE and WORK without `audit_provenance` stay readable. The field is required only at the moment
+  a closure audit is applied or validated.
+- A protocol 1.3.0 domain that is mid-closure when this runtime arrives is refused at closure with a
+  named recovery command. Re-running the scope's initial audit records provenance and the closure
+  then proceeds. This is the one deliberate migration cost, and it is deterministic rather than
+  inferred. No bulk migration command is required.
 
 ## 0.5.0
 

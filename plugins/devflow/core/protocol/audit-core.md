@@ -217,10 +217,17 @@ incomplete closure coverage, unfinished remediation, and any request that differ
 next action. It validates the prospective domain before writing lifecycle state. The auditor never edits STATE to
 apply an outcome.
 
-Closure coverage comes from the canonical file's committed initial Git version. Every initial
-finding needs one closure outcome. Findings present only in the current file are new findings, and
-`reopened_as` may reference only those current-only IDs. Closure fails cleanly when the canonical
-file has no committed initial version.
+Closure coverage comes from the provenance the runtime recorded when the initial audit for this
+scope was applied. `devflow audit apply` writes an `audit_provenance` mapping of finding ID to
+severity onto the audited scope's machine-owned metadata (`STATE.plan_review`,
+`STATE.phases.<key>`, `STATE.integration`, or the WORK item's `review`) on every applied audit,
+and a later closure reads it. No Git history is consulted, so the lifecycle completes with `docs/`
+fully gitignored and the canonical audit never committed. Every recorded finding needs one closure
+outcome. Findings present only in the current file are new findings, and `reopened_as` may
+reference only those current-only IDs. A closure at a scope with no recorded audit fails cleanly
+and names its recovery command: `devflow plan-review set <domain> pending`,
+`devflow work review <domain> <WORK-ID> pending`, `devflow phase set <domain> <phase> audit`, or
+`devflow integration set <domain> audit`.
 
 `disposition.action: stop` is an explicit lifecycle block. Applying it marks the audited scope
 blocked and makes the next action a human decision for plan, work, phase, and integration audits.

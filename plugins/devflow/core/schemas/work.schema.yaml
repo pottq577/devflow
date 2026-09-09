@@ -25,10 +25,11 @@ optional_item_fields:
   blocks: WORK ids that depend on this one. Informational mirror of their dependencies.
   transfer: Where a transferred requirement went, as {to, requirements}. Mandatory when status is transferred.
   references: External document ids or paths the Executor should read.
-  review: Optional work-level review metadata, as {required, status, audit_file, remediation_work_ids}. Runtime defaults preserve legacy WORK files.
+  review: Optional work-level review metadata, as {required, status, audit_file, remediation_work_ids, audit_provenance}. review.audit_provenance is machine-owned closure provenance, a mapping with a findings sub-mapping of finding id to severity, written by 'devflow audit apply' on every applied work audit and read by a later work closure. Runtime defaults preserve legacy WORK files.
 backward_compatibility:
   legacy_shape: Version 1 acceptance and verification.commands remain string lists and are not rewritten.
   legacy_review: Existing WORK without review remains readable; high/critical done WORK defaults to pending required review.
+  legacy_audit_provenance: WORK without review.audit_provenance stays readable. The field is required only when a work closure audit is applied or validated; a stop-blocked work review that lost its scope re-records it by re-running the work initial audit after 'devflow work review <domain> <ID> pending'.
   migration: No migration command is required; runtime normalization preserves readability.
 version_2:
   acceptance:

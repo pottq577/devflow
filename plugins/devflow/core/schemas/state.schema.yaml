@@ -17,10 +17,14 @@ optional:
     status: Plan review status, one of pending, remediation, blocked, verified, or skipped.
     audit_file: Plan audit artifact path. Defaults to audits/plan.md for legacy STATE.
     remediation_work_ids: WORK IDs linked by a plan audit. Optional for legacy STATE.
+    audit_provenance: Machine-owned closure provenance, a mapping with a findings sub-mapping of finding id to severity. Written by 'devflow audit apply' on every applied plan audit and read by a later plan closure. Optional; required only at closure.
+  phase_entry.audit_provenance: Machine-owned closure provenance for the phase, a mapping with a findings sub-mapping of finding id to severity. Written by 'devflow audit apply' on every applied phase audit. Optional; required only at closure.
+  integration.audit_provenance: Machine-owned closure provenance for integration, a mapping with a findings sub-mapping of finding id to severity. Written by 'devflow audit apply' on every applied integration audit. Optional; required only at closure.
 backward_compatibility:
   legacy_workflow_type: Existing STATE without workflow_type reads as delivery without a migration write.
   legacy_plan_review_audit_file: Existing plan_review without audit_file reads as audits/plan.md.
   legacy_plan_review_remediation: Existing pending plan_review with remediation_work_ids keeps the remediation gate.
+  legacy_audit_provenance: STATE without audit_provenance stays readable. The field is required only when a plan, phase, or integration closure audit is applied or validated. A protocol 1.3.0 domain that is mid-closure re-runs its initial audit through the scope's recovery command to record it.
   migration: No migration command is required; runtime normalization preserves readability.
 protocol_compatibility:
   runtime_config: .devflow/config.yaml protocol_version is checked before artifact mutation.
@@ -52,6 +56,7 @@ phase_entry:
     base_sha: Immutable commit the diff starts at.
     head_sha: Immutable commit the diff ends at.
     diff_range: The auditable range. Written by 'devflow phase ref', which refuses a 3-dot range when base is not an ancestor of head.
+    audit_provenance: Machine-owned closure provenance, a mapping with a findings sub-mapping of finding id to severity. Written by 'devflow audit apply' on every applied phase audit; read by a later phase closure.
   key_format: >
     Zero-padded two-digit strings ("01", "05"). The runtime normalizes on read, so "5" also resolves,
     but validate reports two raw keys that normalize to the same phase as an error.

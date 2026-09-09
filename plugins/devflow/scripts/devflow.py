@@ -386,62 +386,75 @@ def canonical_audit_has_mode(
         return False
 
 
-def prior_audit_metadata(
+def audit_scope_recovery_command(domain: str, scope: str, phase: str | None, work_item: str | None) -> str:
+    """The command that returns a scope to a fresh initial audit, named in a closure refusal."""
+    if scope == "plan":
+        return f"devflow plan-review set {domain} pending"
+    if scope == "phase":
+        return f"devflow phase set {domain} {phase_key(phase) if phase is not None else '<phase>'} audit"
+    if scope == "work":
+        return f"devflow work review {domain} {work_item or '<WORK-ID>'} pending"
+    return f"devflow integration set {domain} audit"
+
+
+def recorded_audit_provenance(
     root: Path,
-    path: Path,
-    audit_schema: dict[str, Any],
-    references: dict[str, dict[str, Any]],
+    domain: str,
+    state: dict[str, Any],
     scope: str,
-) -> dict[str, Any]:
-    try:
-        relative = path.resolve().relative_to(root.resolve())
-    except ValueError as exc:
-        raise ValueError(f"Canonical audit file is outside the repository: {path}") from exc
-    history = run_git(["log", "--format=%H", "--", str(relative)], root)
-    if not history:
-        raise ValueError(f"Closure audit has no initial Git history for canonical file: {relative}")
-    commits = history.splitlines()
+    phase: str | None,
+    work_item: str | None,
+    *,
+    work_docs: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, str] | None:
+    """The {finding_id: severity} recorded by `audit apply` when the audit for this scope was
+    applied, or None when no audit has been applied there. Reads STATE and WORK only, never Git."""
+    record: Any = None
+    if scope == "plan":
+        review = state.get("plan_review")
+        record = review.get("audit_provenance") if isinstance(review, dict) else None
+    elif scope == "phase":
+        key = phase_key(phase) if phase is not None else None
+        entry = normalized_phases(state).get(key) if key is not None else None
+        record = entry.get("audit_provenance") if isinstance(entry, dict) else None
+    elif scope == "integration":
+        integration = state.get("integration")
+        record = integration.get("audit_provenance") if isinstance(integration, dict) else None
+    elif scope == "work":
+        if work_docs is None:
+            work_docs, _, _ = load_work_index(domain_dir(root, domain))
+        for doc in work_docs.values():
+            for item in doc.get("items", []) or []:
+                if str(item.get("id")) == str(work_item):
+                    review = item.get("review")
+                    record = review.get("audit_provenance") if isinstance(review, dict) else None
+    if not isinstance(record, dict):
+        return None
+    findings = record.get("findings")
+    return {str(key): str(value) for key, value in findings.items()} if isinstance(findings, dict) else {}
 
-    def read_committed_metadata(commit_sha: str) -> dict[str, Any]:
-        proc = subprocess.run(
-            ["git", "show", f"{commit_sha}:{relative}"],
-            cwd=root,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if proc.returncode != 0:
-            raise ValueError(f"Closure audit cannot read Git version {commit_sha} for canonical file: {relative}")
-        return parse_audit_text(proc.stdout, f"{commit_sha}:{relative}")
 
-    latest = read_committed_metadata(commits[0])
-    latest_errors = validate_schema_value(latest, audit_schema, f"latest prior audit for {relative}", references)
-    if not latest_errors:
-        latest_errors.extend(audit_finding_id_errors(latest.get("findings", []) or []))
-    if latest_errors:
-        raise ValueError(f"Latest prior audit for canonical file {relative} is invalid: {'; '.join(latest_errors)}")
-    if latest.get("scope") != scope:
-        raise ValueError(f"latest prior audit scope {latest.get('scope')!r} does not match closure scope {scope!r}")
+def audit_provenance_findings(metadata: dict[str, Any]) -> dict[str, str]:
+    """The provenance record `audit apply` writes onto the audited scope's machine-owned metadata."""
+    return {str(finding["id"]): str(finding["severity"]) for finding in metadata.get("findings", []) or []}
 
-    initial_found = latest.get("mode") == "initial"
-    for commit_sha in ([] if initial_found else commits[1:]):
-        try:
-            candidate = read_committed_metadata(commit_sha)
-        except ValueError:
-            continue
-        if candidate.get("mode") != "initial":
-            continue
-        if candidate.get("scope") != scope:
-            continue
-        candidate_errors = validate_schema_value(candidate, audit_schema, f"initial audit for {relative}", references)
-        if not candidate_errors:
-            candidate_errors.extend(audit_finding_id_errors(candidate.get("findings", []) or []))
-        if not candidate_errors:
-            initial_found = True
-            break
-    if not initial_found:
-        raise ValueError(f"Closure audit has no valid initial Git version for canonical file: {relative}")
-    return latest
+
+def audit_provenance_errors(label: str, record: Any) -> list[str]:
+    """Structural check for a stored audit_provenance record. An invalid record is never normalized away."""
+    if record is None:
+        return []
+    if not isinstance(record, dict):
+        return [f"{label}.audit_provenance must be a mapping"]
+    findings = record.get("findings")
+    if not isinstance(findings, dict):
+        return [f"{label}.audit_provenance.findings must be a mapping of finding id to severity"]
+    errors: list[str] = []
+    for key, value in findings.items():
+        if not isinstance(key, str) or not key.strip():
+            errors.append(f"{label}.audit_provenance.findings has a blank finding id")
+        if value not in SEVERITY_RANK:
+            errors.append(f"{label}.audit_provenance.findings[{key}] has an invalid severity: {value!r}")
+    return errors
 
 
 def validate_schema_value(
@@ -535,6 +548,10 @@ def configure_work_schema() -> None:
 
 STATE_SCHEMA = load_schema("state")
 STATE_REQUIRED_FIELDS = STATE_SCHEMA["required"]
+FINDING_SCHEMA = load_schema("finding")
+# Severity order is highest-first, taken from the finding schema so it stays the trust anchor.
+SEVERITY_ORDER: list[str] = list(FINDING_SCHEMA["severity"]["allowed"])
+SEVERITY_RANK: dict[str, int] = {name: index for index, name in enumerate(SEVERITY_ORDER)}
 WORKFLOW_TYPES = set(STATE_SCHEMA["workflow_type"]["allowed"])
 PHASE_ENTRY_REQUIRED_FIELDS = STATE_SCHEMA["phase_entry"]["required"]
 PROJECT_STATUSES = set(STATE_SCHEMA["project_status"]["allowed"])
@@ -877,12 +894,16 @@ def effective_review(item: dict[str, Any]) -> dict[str, Any]:
     status = raw.get("status")
     if status not in REVIEW_STATUSES or (high_risk and implemented and raw and raw.get("required") is not True) or (required and status == "skipped"):
         status = "pending" if required else "skipped"
-    return {
+    review = {
         "required": required,
         "status": status,
         "audit_file": raw.get("audit_file") or f"audits/work/{item.get('id')}.md",
         "remediation_work_ids": list(raw.get("remediation_work_ids") or []),
     }
+    # Machine-owned closure provenance rides on the review dict; carry it through every rebuild.
+    if isinstance(raw.get("audit_provenance"), dict):
+        review["audit_provenance"] = raw["audit_provenance"]
+    return review
 
 
 def effective_plan_review(state: dict[str, Any]) -> dict[str, Any]:
@@ -895,6 +916,8 @@ def effective_plan_review(state: dict[str, Any]) -> dict[str, Any]:
     }
     if "remediation_work_ids" in raw:
         review["remediation_work_ids"] = raw.get("remediation_work_ids")
+    if isinstance(raw.get("audit_provenance"), dict):
+        review["audit_provenance"] = raw["audit_provenance"]
     return review
 
 
@@ -1982,6 +2005,11 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
                 errors.append("plan_review.remediation_work_ids must contain nonblank strings")
             elif plan_review.get("status") == "remediation" and not remediation_ids:
                 errors.append("plan_review.status=remediation requires remediation_work_ids")
+            errors.extend(audit_provenance_errors("plan_review", plan_review.get("audit_provenance")))
+
+    integration = state.get("integration")
+    if isinstance(integration, dict):
+        errors.extend(audit_provenance_errors("integration", integration.get("audit_provenance")))
 
     seen: dict[str, str] = {}
     for raw in (state.get("phases", {}) or {}):
@@ -2001,6 +2029,8 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
             warnings.append(f"Phase {key} work file not created yet: {wf}")
         if phase.get("status") in {"audit", "verified"} and not phase.get("diff_range"):
             warnings.append(f"Phase {key} has no diff_range. Run 'devflow phase ref' before auditing.")
+        if isinstance(phase, dict):
+            errors.extend(audit_provenance_errors(f"phase {key}", phase.get("audit_provenance")))
 
     istatus = (state.get("integration", {}) or {}).get("status")
     if istatus not in INTEGRATION_STATUSES:
@@ -2127,6 +2157,7 @@ def validate_item(
                 errors.append(f"{item_id}: review.required must be boolean")
             if not review.get("audit_file"):
                 errors.append(f"{item_id}: review.audit_file is required")
+            errors.extend(audit_provenance_errors(f"{item_id}: review", review.get("audit_provenance")))
             remediation_ids = review.get("remediation_work_ids")
             if not isinstance(remediation_ids, list):
                 errors.append(f"{item_id}: review.remediation_work_ids must be a list")
@@ -2458,19 +2489,17 @@ def audit_artifact_contract_errors(
             errors.append(
                 f"canonical audit {path.relative_to(d)} mode must match lifecycle {expected.get('mode')}"
             )
-        initial_metadata: dict[str, Any] | None = None
         if metadata.get("mode") == "closure":
-            try:
-                initial_metadata = prior_audit_metadata(
-                    root,
-                    path,
-                    audit_schema,
-                    {"finding": finding_schema},
-                    scope,
+            domain = str(state.get("domain"))
+            prior_severities = recorded_audit_provenance(
+                root, domain, state, scope, phase, task, work_docs=docs
+            )
+            if prior_severities is None:
+                errors.append(
+                    f"Closure audit has no recorded initial audit for {scope}. Re-apply the initial "
+                    f"audit first: {audit_scope_recovery_command(domain, scope, phase, task)}"
                 )
-            except ValueError as exc:
-                errors.append(str(exc))
-            closure_errors, _closure_by_id, active_ids = audit_closure_contract(metadata, initial_metadata)
+            closure_errors, _closure_by_id, active_ids = audit_closure_contract(metadata, prior_severities)
             errors.extend(closure_errors)
         else:
             active_ids = {str(finding["id"]) for finding in metadata.get("findings", [])}
@@ -2714,7 +2743,7 @@ def audit_finding_id_errors(findings: list[dict[str, Any]]) -> list[str]:
 
 def audit_closure_contract(
     metadata: dict[str, Any],
-    prior_metadata: dict[str, Any] | None,
+    prior_severities: dict[str, str] | None,
 ) -> tuple[list[str], dict[str, dict[str, Any]], set[str]]:
     findings = metadata.get("findings", []) or []
     current_ids = {str(finding["id"]) for finding in findings}
@@ -2723,10 +2752,10 @@ def audit_closure_contract(
     errors: list[str] = []
     if len(closure_by_id) != len(closure):
         errors.append("closure contains duplicate finding_id entries")
-    if prior_metadata is None:
+    if prior_severities is None:
         return errors, closure_by_id, current_ids
 
-    prior_ids = {str(finding["id"]) for finding in prior_metadata.get("findings", []) or []}
+    prior_ids = set(prior_severities)
     current_only_ids = current_ids - prior_ids
     missing_findings = sorted(prior_ids - current_ids)
     missing = sorted(prior_ids - set(closure_by_id))
@@ -2797,13 +2826,13 @@ def validate_audit_metadata(
     closure_by_id: dict[str, dict[str, Any]] = {}
     active_ids = set(finding_ids)
     if mode == "closure":
-        prior_metadata: dict[str, Any] | None = None
-        try:
-            audit_path = canonical_audit_path(root, domain, state, scope, phase, work_item)
-            prior_metadata = prior_audit_metadata(root, audit_path, audit_schema, references, scope)
-        except ValueError as exc:
-            errors.append(str(exc))
-        closure_errors, closure_by_id, active_ids = audit_closure_contract(metadata, prior_metadata)
+        prior_severities = recorded_audit_provenance(root, domain, state, scope, phase, work_item)
+        if prior_severities is None:
+            errors.append(
+                f"Closure audit has no recorded initial audit for {scope}. Re-apply the initial audit "
+                f"first: {audit_scope_recovery_command(domain, scope, phase, work_item)}"
+            )
+        closure_errors, closure_by_id, active_ids = audit_closure_contract(metadata, prior_severities)
         errors.extend(closure_errors)
     elif closure:
         errors.append("initial audit closure must be empty")
@@ -2981,6 +3010,12 @@ def audit_apply(args: argparse.Namespace) -> int:
     prospective["unresolved_decisions"] = unresolved
     closes_scope = metadata["verdict"] == "pass" and not generated_work and not new_decisions and not has_stop
     work_overrides: dict[Path, dict[str, Any]] = {}
+    # Machine-owned closure provenance: the finding set a later closure at this scope compares
+    # against. It is written for both initial and closure modes, but only after this apply's own
+    # validation runs, so a closure is checked against the PRIOR applied audit, never the record
+    # this apply is about to write. `provenance_target` is the dict that receives it.
+    provenance = {"findings": audit_provenance_findings(metadata)}
+    provenance_target: dict[str, Any]
 
     if args.scope == "plan":
         review = effective_plan_review(prospective)
@@ -2990,6 +3025,7 @@ def audit_apply(args: argparse.Namespace) -> int:
         else:
             review.pop("remediation_work_ids", None)
         prospective["plan_review"] = review
+        provenance_target = review
     elif args.scope == "work":
         work_path, work_doc, _ = find_item(root, args.domain, str(args.task))
         next_doc = copy.deepcopy(work_doc)
@@ -3004,14 +3040,18 @@ def audit_apply(args: argparse.Namespace) -> int:
             review["status"] = "blocked"
         next_item_doc["review"] = review
         work_overrides[work_path] = next_doc
+        provenance_target = review
     elif args.scope == "phase":
         key = phase_key(args.phase)
         raw = raw_phase_key(prospective, key)
-        prospective["phases"][raw if raw is not None else key]["status"] = "verified" if closes_scope else ("remediation" if generated_work and not has_stop else "blocked")
+        phase_entry_doc = prospective["phases"][raw if raw is not None else key]
+        phase_entry_doc["status"] = "verified" if closes_scope else ("remediation" if generated_work and not has_stop else "blocked")
+        provenance_target = phase_entry_doc
     else:
         integration = dict(prospective.get("integration") or {})
         integration["status"] = "verified" if closes_scope else ("blocked" if has_stop else "remediation")
         prospective["integration"] = integration
+        provenance_target = integration
     if args.mode == "closure" and not closes_scope:
         prospective["next_action"] = {}
 
@@ -3033,6 +3073,9 @@ def audit_apply(args: argparse.Namespace) -> int:
     errors.extend(f"validation: {error}" for error in validation_errors)
     if errors:
         return reject_transition("audit", "be applied", errors)
+
+    # Validation passed: now record the provenance this apply establishes for a later closure.
+    provenance_target["audit_provenance"] = provenance
 
     documents: dict[Path, Any] = dict(work_overrides)
     documents[path] = prospective
@@ -3196,6 +3239,9 @@ def render(args: argparse.Namespace) -> int:
         phases = normalized_phases(state)
         print(f"- audit_scope: {args.scope}")
         print(f"- audit_mode: {args.mode}")
+        if args.mode == "closure":
+            prior = recorded_audit_provenance(root, args.domain, state, args.scope, args.phase, args.task)
+            print(f"- prior_findings: {', '.join(sorted(prior)) if prior else '<none recorded>'}")
         if args.scope == "plan":
             review = effective_plan_review(state)
             print(f"- current_head: {current_sha(root) or '<none>'}")
