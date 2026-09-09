@@ -229,6 +229,13 @@ and names its recovery command: `devflow plan-review set <domain> pending`,
 `devflow work review <domain> <WORK-ID> pending`, `devflow phase set <domain> <phase> audit`, or
 `devflow integration set <domain> audit`.
 
+The runtime writes `audit_provenance`, and a closure author who only edits the canonical audit file
+cannot shrink the prior finding set. The record still lives in STATE and WORK, which are
+machine-owned but on-disk and editable, so its integrity has the same trust boundary as every other
+lifecycle gate: a hand-edited STATE that removes a recorded finding is undetected here, exactly as a
+hand-edited phase status or review status would be. `validate` rejects a structurally malformed
+`audit_provenance` record but does not attest that its contents match a real prior audit.
+
 `disposition.action: stop` is an explicit lifecycle block. Applying it marks the audited scope
 blocked and makes the next action a human decision for plan, work, phase, and integration audits.
 It cannot be treated as an empty remediation set or projected back to the same closure audit.

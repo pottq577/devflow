@@ -260,7 +260,7 @@ protocol version: 1.4.0
 
 Treat these as separate version domains.
 
-- Keep the plugin version synchronized wherever it is represented in marketplace/plugin manifests and current documentation.
+- Keep the plugin version synchronized wherever it is represented in marketplace/plugin manifests and current documentation. It is represented in `.claude-plugin/marketplace.json` (twice), `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json`. `.agents/plugins/marketplace.json` is a discovery pointer only: it deliberately carries no `version` or `description`, because the Codex plugin's full metadata lives in `.codex-plugin/plugin.json`. Do not add version or description fields to it.
 - Do not automatically set protocol version equal to plugin version.
 - Change protocol version only after evaluating artifact-contract compatibility.
 - Record the protocol-version decision and compatibility rationale in `CHANGELOG.md` when protocol behavior changes materially.

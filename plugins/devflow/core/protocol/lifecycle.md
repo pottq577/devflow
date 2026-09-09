@@ -144,6 +144,23 @@ treated as pending required review before a dependent can start, without rewriti
 to normalize it. Existing `plan_review` metadata without `audit_file` defaults to `audits/plan.md`.
 No migration command is required because the runtime supplies these defaults while reading.
 
+### Closure without recorded provenance
+
+A closure audit reads its prior finding set from `audit_provenance`, recorded by the initial
+`audit apply` for that scope. A project that predates machine-owned provenance, or whose STATE was
+reset, has none, so the closure is refused rather than evaluated against an empty prior set. There
+is no bulk migration. Recover the one affected scope in place:
+
+1. Return the scope to a fresh initial audit with its recovery command: `plan-review set <domain>
+   pending`, `work review <domain> <WORK-ID> pending`, `phase set <domain> <phase> audit`, or
+   `integration set <domain> audit`.
+2. Re-render the initial audit packet: `devflow render audit <domain> --scope <scope> ... --mode
+   initial`.
+3. Rewrite the canonical audit file's front matter back to `mode: initial` with its original
+   findings, then `devflow audit apply <domain> --scope <scope> ... --mode initial`. This records
+   the provenance.
+4. Rewrite the canonical audit file as the closure again and re-run `audit apply --mode closure`.
+
 ## Artifact budget
 
 Project artifacts are limited to:

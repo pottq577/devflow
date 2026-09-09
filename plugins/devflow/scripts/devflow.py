@@ -83,7 +83,7 @@ def repo_root() -> Path:
 def load_yaml(path: Path, default: Any = None) -> Any:
     if not path.exists():
         return default
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=UniqueKeyLoader)
     return default if data is None else data
 
 
@@ -95,26 +95,28 @@ def load_schema(name: str) -> dict[str, Any]:
     return data
 
 
-class AuditMetadataLoader(yaml.SafeLoader):
-    """Safe YAML loader that rejects duplicate keys in audit front matter only."""
+class UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate mapping keys. `yaml.safe_load` silently keeps the
+    last value, so a second `phases:` or `items:` block in a hand-edited STATE or WORK file would
+    discard the first without warning. Every DevFlow YAML read goes through here."""
 
 
-def construct_unique_mapping(loader: AuditMetadataLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+def construct_unique_mapping(loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
     mapping: dict[Any, Any] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
         if key in mapping:
             raise yaml.constructor.ConstructorError(
-                "while constructing audit front matter",
+                "while constructing a mapping",
                 node.start_mark,
-                f"duplicate key: {key}",
+                f"found duplicate key: {key}",
                 key_node.start_mark,
             )
         mapping[key] = loader.construct_object(value_node, deep=deep)
     return mapping
 
 
-AuditMetadataLoader.add_constructor(
+UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
     construct_unique_mapping,
 )
@@ -128,7 +130,7 @@ def parse_audit_text(text: str, source: str) -> dict[str, Any]:
     if end is None:
         raise ValueError(f"Audit YAML front matter is not closed: {source}")
     try:
-        metadata = yaml.load("".join(lines[1:end]), Loader=AuditMetadataLoader)
+        metadata = yaml.load("".join(lines[1:end]), Loader=UniqueKeyLoader)
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid audit YAML front matter: {exc}") from exc
     if not isinstance(metadata, dict):
@@ -395,6 +397,20 @@ def audit_scope_recovery_command(domain: str, scope: str, phase: str | None, wor
     if scope == "work":
         return f"devflow work review {domain} {work_item or '<WORK-ID>'} pending"
     return f"devflow integration set {domain} audit"
+
+
+def closure_without_provenance_error(domain: str, scope: str, phase: str | None, work_item: str | None) -> str:
+    """One message, used by both the apply and validate paths, spelling out the whole recovery: a
+    project that predates machine-owned provenance, or whose STATE was reset, records no prior
+    finding set for this scope, so the closure cannot be checked and the initial audit must be
+    re-applied first."""
+    recovery = audit_scope_recovery_command(domain, scope, phase, work_item)
+    return (
+        f"Closure audit for {scope} has no recorded initial-audit provenance. "
+        f"Recover: run '{recovery}', re-render and re-apply the scope's initial audit "
+        f"(devflow render audit ... --mode initial, then devflow audit apply ... --mode initial), "
+        f"then retry this closure."
+    )
 
 
 def recorded_audit_provenance(
@@ -2526,10 +2542,7 @@ def audit_artifact_contract_errors(
                 root, domain, state, scope, phase, task, work_docs=docs
             )
             if prior_severities is None:
-                errors.append(
-                    f"Closure audit has no recorded initial audit for {scope}. Re-apply the initial "
-                    f"audit first: {audit_scope_recovery_command(domain, scope, phase, task)}"
-                )
+                errors.append(closure_without_provenance_error(domain, scope, phase, task))
             closure_errors, _closure_by_id, active_ids = audit_closure_contract(metadata, prior_severities)
             errors.extend(closure_errors)
         else:
@@ -2894,16 +2907,16 @@ def validate_audit_metadata(
     finding_ids = [str(finding["id"]) for finding in findings]
     errors.extend(audit_finding_id_errors(findings))
 
+    d = domain_dir(root, domain)
+    work_docs, work_index, _ = load_work_index(d)
+
     closure = metadata.get("closure", []) or []
     closure_by_id: dict[str, dict[str, Any]] = {}
     active_ids = set(finding_ids)
     if mode == "closure":
-        prior_severities = recorded_audit_provenance(root, domain, state, scope, phase, work_item)
+        prior_severities = recorded_audit_provenance(root, domain, state, scope, phase, work_item, work_docs=work_docs)
         if prior_severities is None:
-            errors.append(
-                f"Closure audit has no recorded initial audit for {scope}. Re-apply the initial audit "
-                f"first: {audit_scope_recovery_command(domain, scope, phase, work_item)}"
-            )
+            errors.append(closure_without_provenance_error(domain, scope, phase, work_item))
         closure_errors, closure_by_id, active_ids = audit_closure_contract(metadata, prior_severities)
         errors.extend(closure_errors)
     elif closure:
@@ -2913,8 +2926,6 @@ def validate_audit_metadata(
     verdict = str(metadata["verdict"])
     errors.extend(audit_verdict_errors(audit_schema, verdict, severities))
 
-    d = domain_dir(root, domain)
-    work_docs, work_index, _ = load_work_index(d)
     open_decisions, resolved_decisions, decision_errors = decision_document_records(d / "DECISIONS.md")
     errors.extend(decision_errors)
     finding_by_id = {str(finding["id"]): finding for finding in findings}
