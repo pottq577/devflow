@@ -3374,6 +3374,109 @@ def case_legacy_closure_without_provenance(root: Path) -> None:
         and (sd / "work/phase-01.yaml").read_bytes() == before_work_doc,
         wrefused.stdout + wrefused.stderr,
     )
+    wrecovered = devflow(root, "work", "review", "shipping", "P01-I01", "pending")
+    wrendered_initial = devflow(
+        root, "render", "audit", "shipping", "--scope", "work", "--task", "P01-I01", "--mode", "initial"
+    )
+    write_audit(
+        sd / "audits/work/P01-I01.md",
+        audit_metadata(sd, scope="work", verdict="conditional_pass", findings=[wfinding]),
+    )
+    wreapplied_initial = devflow(
+        root, "audit", "apply", "shipping", "--scope", "work", "--task", "P01-I01", "--mode", "initial"
+    )
+    protected_before = (sd / "work/phase-01.yaml").read_bytes()
+    protected_reset = devflow(root, "work", "review", "shipping", "P01-I01", "pending")
+    protected_unchanged = (sd / "work/phase-01.yaml").read_bytes() == protected_before
+    write_audit(
+        sd / "audits/work/P01-I01.md",
+        audit_metadata(sd, scope="work", mode="closure", findings=[wfinding], closure=wclosure),
+    )
+    wreapplied_closure = devflow(
+        root, "audit", "apply", "shipping", "--scope", "work", "--task", "P01-I01", "--mode", "closure"
+    )
+    wvalidated = devflow(root, "validate", "shipping")
+    recovered_review = yaml.safe_load(
+        (sd / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )["items"][0]["review"]
+    check(
+        "the advertised work recovery command completes a fresh audit lifecycle",
+        wrecovered.returncode == 0
+        and wrendered_initial.returncode == 0
+        and wreapplied_initial.returncode == 0
+        and protected_reset.returncode == 2
+        and protected_unchanged
+        and wreapplied_closure.returncode == 0
+        and wvalidated.returncode == 0
+        and recovered_review["status"] == "verified",
+        wrecovered.stdout + wrecovered.stderr
+        + wrendered_initial.stdout + wrendered_initial.stderr
+        + wreapplied_initial.stdout + wreapplied_initial.stderr
+        + protected_reset.stdout + protected_reset.stderr
+        + wreapplied_closure.stdout + wreapplied_closure.stderr
+        + wvalidated.stdout + wvalidated.stderr,
+    )
+
+    # Plan scope: pending must clear stale remediation ids before re-running the initial audit.
+    devflow(root, "init", "planning", "--risk", "high")
+    pd = root / "docs/domains/planning"
+    pstate = yaml.safe_load((pd / "STATE.yaml").read_text(encoding="utf-8"))
+    pstate["phases"] = {"01": phase("executing", "01")}
+    pstate["plan_review"].update(status="remediation", remediation_work_ids=["P01-R01"])
+    dump(pd / "STATE.yaml", pstate)
+    prem = item(
+        "P01-R01",
+        kind="documentation",
+        status="done",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+    )
+    dump(pd / "work/phase-01.yaml", work("01", prem))
+    pfinding = audit_finding(
+        "F-01",
+        classification="DOCUMENTATION_DRIFT",
+        severity="major",
+        severity_reason="The plan documentation violates the approved contract.",
+        disposition={"action": "documentation_work", "work_ids": ["P01-R01"], "decision_ids": []},
+    )
+    pclosure = [{"finding_id": "F-01", "outcome": "resolved", "evidence": ["documentation verified"], "reopened_as": []}]
+    write_audit(
+        pd / "audits/plan.md",
+        audit_metadata(pd, scope="plan", mode="closure", findings=[pfinding], closure=pclosure),
+    )
+    prefused = devflow(root, "audit", "apply", "planning", "--scope", "plan", "--mode", "closure")
+    precovered = devflow(root, "plan-review", "set", "planning", "pending")
+    recovered_plan_state = yaml.safe_load((pd / "STATE.yaml").read_text(encoding="utf-8"))
+    prendered_initial = devflow(root, "render", "audit", "planning", "--scope", "plan", "--mode", "initial")
+    write_audit(
+        pd / "audits/plan.md",
+        audit_metadata(pd, scope="plan", verdict="conditional_pass", findings=[pfinding]),
+    )
+    preapplied_initial = devflow(root, "audit", "apply", "planning", "--scope", "plan", "--mode", "initial")
+    write_audit(
+        pd / "audits/plan.md",
+        audit_metadata(pd, scope="plan", mode="closure", findings=[pfinding], closure=pclosure),
+    )
+    preapplied_closure = devflow(root, "audit", "apply", "planning", "--scope", "plan", "--mode", "closure")
+    pvalidated = devflow(root, "validate", "planning")
+    completed_plan = yaml.safe_load((pd / "STATE.yaml").read_text(encoding="utf-8"))["plan_review"]
+    check(
+        "the advertised plan recovery command completes a fresh audit lifecycle",
+        prefused.returncode == 2
+        and "devflow plan-review set planning pending" in prefused.stderr
+        and precovered.returncode == 0
+        and not recovered_plan_state["plan_review"].get("remediation_work_ids")
+        and prendered_initial.returncode == 0
+        and preapplied_initial.returncode == 0
+        and preapplied_closure.returncode == 0
+        and pvalidated.returncode == 0
+        and completed_plan["status"] == "verified",
+        prefused.stdout + prefused.stderr
+        + precovered.stdout + precovered.stderr
+        + prendered_initial.stdout + prendered_initial.stderr
+        + preapplied_initial.stdout + preapplied_initial.stderr
+        + preapplied_closure.stdout + preapplied_closure.stderr
+        + pvalidated.stdout + pvalidated.stderr,
+    )
 
 
 def case_plan_audit_remediation_reaches_closure(root: Path) -> None:

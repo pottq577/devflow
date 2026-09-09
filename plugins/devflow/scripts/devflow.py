@@ -1739,9 +1739,14 @@ def work_review(args: argparse.Namespace) -> int:
     elif args.review_status == "pending":
         # The stop-blocked recovery: return a `blocked` work review to `pending` so the scope
         # can be audited again, mirroring `plan-review set pending`, `phase set <n> audit` and
-        # `integration set <d> audit`. Only `blocked` may reopen; it never sets anything verified.
-        if review["status"] != "blocked":
-            print(f"{args.item}: review pending requires a blocked review, not {review['status']}", file=sys.stderr)
+        # `integration set <d> audit`. Legacy remediation without provenance uses the same path.
+        legacy_mid_closure = review["status"] == "remediation" and "audit_provenance" not in review
+        if review["status"] != "blocked" and not legacy_mid_closure:
+            print(
+                f"{args.item}: review pending requires a blocked review or legacy remediation "
+                f"without provenance, not {review['status']}",
+                file=sys.stderr,
+            )
             return 2
         review["status"] = "pending"
         review["remediation_work_ids"] = []
@@ -1866,6 +1871,8 @@ def set_plan_review(args: argparse.Namespace) -> int:
         if errors:
             return reject_transition("plan review", "be verified", errors)
         pr["audit_file"] = audit_file
+    if args.status == "pending" and isinstance(pr.get("remediation_work_ids"), list):
+        pr["remediation_work_ids"] = []
     pr["status"] = args.status
     state["plan_review"] = pr
     commit_lifecycle_mutation(root, args.domain, state)

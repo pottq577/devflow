@@ -29,7 +29,7 @@ optional_item_fields:
 backward_compatibility:
   legacy_shape: Version 1 acceptance and verification.commands remain string lists and are not rewritten.
   legacy_review: Existing WORK without review remains readable; high/critical done WORK defaults to pending required review.
-  legacy_audit_provenance: WORK without review.audit_provenance stays readable. Existing records with only findings validate the persisted audit against that mapping. The field is required only when a work closure audit is applied or validated; a stop-blocked work review that lost its scope re-records it by re-running the work initial audit after 'devflow work review <domain> <ID> pending'.
+  legacy_audit_provenance: WORK without review.audit_provenance stays readable. Existing records with only findings validate the persisted audit against that mapping. The field is required only when a work closure audit is applied or validated; blocked reviews and legacy remediation reviews without provenance clear stale remediation_work_ids and re-run the initial audit after 'devflow work review <domain> <ID> pending'.
   migration: No migration command is required; runtime normalization preserves readability.
 version_2:
   acceptance:

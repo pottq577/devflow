@@ -133,7 +133,7 @@ concurrent-writer isolation.
 
 - `work start` requires ready status, completed dependencies with required reviews verified, resolved decisions, an unverified containing phase, and a verified required plan review. Integration WORK also waits for all project phases.
 - `work done` requires `in_progress` and completion evidence. `work block` is limited to `ready` and `in_progress` with a non-empty reason.
-- `work review pending` is accepted only when the current effective review status is `blocked`. It clears `remediation_work_ids` and returns the review to `pending` so a stop-blocked WORK can be re-audited. It never sets a review verified and is not gated on `audit apply`.
+- `work review pending` is accepted when the current effective review status is `blocked`, or when a legacy `remediation` review has no `audit_provenance`. It clears `remediation_work_ids` and returns the review to `pending` so the WORK can be re-audited. A remediation review with provenance cannot use this reset. The command never sets a review verified and is not gated on `audit apply`.
 - A verified plan review requires `PLAN.md` and its audit artifact. Required plan reviews cannot be skipped.
 - A phase verification requires terminal phase WORK, completed high-risk WORK reviews, a diff range, a phase audit artifact, and no unresolved phase decision. Verified phases cannot be reopened through `phase set`.
 - Integration verification requires verified phases, terminal integration WORK, completed high-risk integration WORK reviews, its audit artifact, and no unresolved project decision. Verified integration cannot be reopened through `integration set`.
@@ -156,7 +156,9 @@ is no bulk migration. Recover the one affected scope in place:
 
 1. Return the scope to a fresh initial audit with its recovery command: `plan-review set <domain>
    pending`, `work review <domain> <WORK-ID> pending`, `phase set <domain> <phase> audit`, or
-   `integration set <domain> audit`.
+   `integration set <domain> audit`. Plan and work recovery clear their stale
+   `remediation_work_ids`; work recovery accepts a legacy `remediation` review only when it has no
+   provenance.
 2. Re-render the initial audit packet: `devflow render audit <domain> --scope <scope> ... --mode
    initial`.
 3. Rewrite the canonical audit file's front matter back to `mode: initial` with its original
