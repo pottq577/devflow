@@ -1645,6 +1645,15 @@ def work_review(args: argparse.Namespace) -> int:
                 return 2
         review["status"] = "remediation"
         review["remediation_work_ids"] = list(dict.fromkeys(args.remediation_work))
+    elif args.review_status == "pending":
+        # The stop-blocked recovery: return a `blocked` work review to `pending` so the scope
+        # can be audited again, mirroring `plan-review set pending`, `phase set <n> audit` and
+        # `integration set <d> audit`. Only `blocked` may reopen; it never sets anything verified.
+        if review["status"] != "blocked":
+            print(f"{args.item}: review pending requires a blocked review, not {review['status']}", file=sys.stderr)
+            return 2
+        review["status"] = "pending"
+        review["remediation_work_ids"] = []
     else:
         review["status"] = "blocked"
     item["review"] = review
@@ -3343,7 +3352,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = worksub.add_parser("block")
     s.add_argument("domain"); s.add_argument("item"); s.add_argument("--reason", required=True); s.set_defaults(func=work_update)
     s = worksub.add_parser("review")
-    s.add_argument("domain"); s.add_argument("item"); s.add_argument("review_status", choices=["verified", "remediation", "blocked"])
+    s.add_argument("domain"); s.add_argument("item"); s.add_argument("review_status", choices=["verified", "remediation", "blocked", "pending"])
     s.add_argument("--remediation-work", action="append", default=[])
     s.set_defaults(func=work_review)
 

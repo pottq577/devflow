@@ -59,7 +59,10 @@ marks the plan review verified and releases ordinary planned WORK.
 
 An audit finding with `disposition.action: stop` blocks its audited plan, WORK, phase, or integration
 scope and projects a human decision. It never loops directly back to closure and never releases
-other remediation until the specification conflict is resolved and the scope is audited again.
+other remediation until the specification conflict is resolved and the scope is audited again. Every
+scope has a command that returns it to a fresh initial audit once the conflict is resolved:
+`plan-review set <domain> pending`, `work review <domain> <WORK-ID> pending`,
+`phase set <domain> <phase> audit`, and `integration set <domain> audit`.
 
 Independent low and medium WORK remains batch-reviewed in the phase audit. A work audit uses
 `--scope work --task <WORK-ID>` and `--mode initial|closure`; plan, phase, and integration audits
@@ -114,6 +117,7 @@ Mutation commands reject invalid transitions with exit code `2` before writing S
 
 - `work start` requires ready status, completed dependencies with required reviews verified, resolved decisions, an unverified containing phase, and a verified required plan review. Integration WORK also waits for all project phases.
 - `work done` requires `in_progress` and completion evidence. `work block` is limited to `ready` and `in_progress` with a non-empty reason.
+- `work review pending` is accepted only when the current effective review status is `blocked`. It clears `remediation_work_ids` and returns the review to `pending` so a stop-blocked WORK can be re-audited. It never sets a review verified and is not gated on `audit apply`.
 - A verified plan review requires `PLAN.md` and its audit artifact. Required plan reviews cannot be skipped.
 - A phase verification requires terminal phase WORK, completed high-risk WORK reviews, a diff range, a phase audit artifact, and no unresolved phase decision. Verified phases cannot be reopened through `phase set`.
 - Integration verification requires verified phases, terminal integration WORK, completed high-risk integration WORK reviews, its audit artifact, and no unresolved project decision. Verified integration cannot be reopened through `integration set`.

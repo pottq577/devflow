@@ -45,7 +45,7 @@ devflow audit apply  <domain> --scope plan|work|phase|integration [--task <ID>] 
 devflow work start <domain> <ID>
 devflow work done  <domain> <ID> --commit <sha> --command '<cmd> -> <result>' [--changed-file ...]
 devflow work block <domain> <ID> --reason "..."
-devflow work review <domain> <ID> verified|remediation|blocked [--remediation-work <ID>]
+devflow work review <domain> <ID> verified|remediation|blocked|pending [--remediation-work <ID>]
 
 devflow phase set <domain> <phase> <status>
 devflow phase ref <domain> <phase> --base <ref> --head <ref> [--range <explicit>]

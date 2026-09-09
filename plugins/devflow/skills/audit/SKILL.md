@@ -96,5 +96,10 @@ authoritative record. Do not trigger `requesting-code-review` from an audit.
 Verify that the prior finding is actually closed, acceptance still holds, and no new regression was
 introduced. Reopen or create a finding when evidence disproves closure.
 
+When a `SPEC_DRIFT` or other `stop` finding blocked a scope, resolve the specification conflict
+first, then return the scope to a fresh initial audit with its recovery command: `plan-review set
+<domain> pending`, `work review <domain> <WORK-ID> pending`, `phase set <domain> <phase> audit`, or
+`integration set <domain> audit`.
+
 Finish with verdict, SHAs and diff range, finding counts by classification and severity, generated
 WORK IDs, unresolved decisions, residual risk, and next action.

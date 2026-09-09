@@ -3259,6 +3259,85 @@ def case_spec_drift_stop_blocks_every_audit_scope(root: Path) -> None:
         )
 
 
+def case_stop_blocked_work_review_can_be_reopened(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    state_path = d / "STATE.yaml"
+    state_doc = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    dump(state_path, state_doc)
+    delivery_work = v2_item("P01-I01")
+    delivery_work.update(
+        risk={"level": "high", "axes": ["correctness"]},
+        premise_checks=["Confirm the delivery contract at current HEAD."],
+    )
+    dump(d / "work/phase-01.yaml", work_v2("01", delivery_work))
+    devflow(root, "work", "start", "billing", "P01-I01")
+    devflow(root, "work", "done", "billing", "P01-I01", "--command", "true -> passed")
+
+    stop = audit_finding(
+        "F-01",
+        classification="SPEC_DRIFT",
+        severity="blocker",
+        severity_reason="The approved specification conflicts with repository evidence.",
+        axis="correctness",
+        expected="The approved specification and the repository agree.",
+        actual="The approved specification contradicts the repository.",
+        evidence=["specification and code disagree at the module boundary"],
+        root_cause="The specification was approved against a stale interface.",
+        disposition={"action": "stop", "work_ids": [], "decision_ids": []},
+    )
+    write_audit(d / "audits/work/P01-I01.md", audit_metadata(d, scope="work", verdict="fail", findings=[stop]))
+    applied = devflow(root, "audit", "apply", "billing", "--scope", "work", "--task", "P01-I01", "--mode", "initial")
+    after_apply = yaml.safe_load((d / "work/phase-01.yaml").read_text(encoding="utf-8"))["items"][0]
+    state_after_apply = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    check(
+        "SPEC_DRIFT stop on a work initial audit blocks the review and projects a human decision",
+        applied.returncode == 0
+        and after_apply["review"]["status"] == "blocked"
+        and state_after_apply["next_action"]["role"] == "human"
+        and state_after_apply["next_action"]["command"] == "decision",
+        applied.stdout + applied.stderr + repr(after_apply) + repr(state_after_apply),
+    )
+
+    reopened = devflow(root, "work", "review", "billing", "P01-I01", "pending")
+    after_reopen = yaml.safe_load((d / "work/phase-01.yaml").read_text(encoding="utf-8"))["items"][0]
+    status_out = devflow(root, "status", "billing").stdout
+    check(
+        "work review pending reopens a stop-blocked review with an empty remediation set (AC-01, AC-02)",
+        reopened.returncode == 0
+        and after_reopen["review"]["status"] == "pending"
+        and after_reopen["review"]["remediation_work_ids"] == [],
+        reopened.stdout + reopened.stderr + repr(after_reopen),
+    )
+    check(
+        "a reopened stop-blocked review projects the work initial audit (AC-03)",
+        "next.command: audit" in status_out
+        and "next.scope: work" in status_out
+        and "next.mode: initial" in status_out
+        and "next.work_item: P01-I01" in status_out,
+        status_out,
+    )
+
+    verified = devflow(root, "work", "review", "billing", "P01-I01", "verified")
+    check(
+        "work review verified is still refused under protocol 1.3 (AC-05)",
+        verified.returncode == 2 and "protocol 1.3+ requires devflow audit apply" in verified.stderr,
+        verified.stdout + verified.stderr,
+    )
+
+    work_bytes = (d / "work/phase-01.yaml").read_bytes()
+    state_bytes = state_path.read_bytes()
+    second = devflow(root, "work", "review", "billing", "P01-I01", "pending")
+    check(
+        "work review pending is refused from a non-blocked status and mutates neither WORK nor STATE (AC-04)",
+        second.returncode == 2
+        and (d / "work/phase-01.yaml").read_bytes() == work_bytes
+        and state_path.read_bytes() == state_bytes,
+        second.stdout + second.stderr,
+    )
+
+
 def case_schema_required_fields_are_enforced(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -5006,6 +5085,7 @@ CASES = [
     case_delivery_integration_prioritizes_unresolved_decisions,
     case_plan_review_remediation_metadata_is_validated,
     case_spec_drift_stop_blocks_every_audit_scope,
+    case_stop_blocked_work_review_can_be_reopened,
     case_schema_required_fields_are_enforced,
     case_phase_key_normalization,
     case_phase_set_no_duplicate,

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A stop-blocked WORK review can be re-audited.** `devflow work review <domain> <ID> pending`
+  returns a `blocked` work review to `pending`, clears its `remediation_work_ids`, and projects a
+  fresh work initial audit. It is refused from any other review status and never sets a review
+  verified, so a `SPEC_DRIFT` or other `stop` finding no longer strands its phase. This mirrors the
+  existing `plan-review set pending`, `phase set <n> audit` and `integration set <d> audit`
+  recoveries, which previously had no work-scope equivalent.
+
 ## 0.5.0
 
 ### Added
