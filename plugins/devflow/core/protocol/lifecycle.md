@@ -92,7 +92,12 @@ rollback, not crash recovery or concurrent-writer isolation. Linked
 remediation remains ordinary WORK and becomes executable only after the outcome is applied. Existing protocol 1.2 and older
 `plan-review set`, `work review`, `phase set`, and `integration set` transitions remain readable.
 Protocol 1.3 and newer verified transitions must use `audit apply`, so the legacy commands cannot
-bypass metadata validation.
+bypass metadata validation. When `.devflow/config.yaml` exists, its `protocol_version` is a floor:
+the audit-apply gate decides from the higher of the STATE and config versions, and `validate`
+errors when STATE declares an older protocol than the config. Hand-editing `STATE.protocol_version`
+downward cannot re-enable a legacy verified transition on a project that `init` recorded at 1.3 or
+newer. A project with no config file, or one whose config genuinely records the older version,
+keeps the legacy path.
 
 ## Render guards
 

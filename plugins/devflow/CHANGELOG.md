@@ -25,6 +25,13 @@
   least as high as the severity recorded for that prior finding. Raising a severity with new
   evidence is still allowed; `resolved` and `accepted_risk` findings leave the active set and are
   exempt. The severity order is read from `finding.schema.yaml`, not hardcoded.
+- **The project config protocol version is a floor.** When `.devflow/config.yaml` exists, the 1.3
+  audit-apply gate decides from the higher of the STATE and config `protocol_version`. Hand-editing
+  `STATE.protocol_version` below the config no longer re-enables `plan-review set`, `work review`,
+  `phase set`, or `integration set` `verified`, and `validate` reports a STATE protocol older than
+  the config as an error. A project with no config file, or one whose config genuinely records the
+  older version, keeps the legacy verified transitions unchanged; a newer-than-runtime config keeps
+  its existing read-only-plus-mutation-block behavior.
 
 ### Fixed
 

@@ -32,6 +32,7 @@ protocol_compatibility:
   newer_same_major: Read-only status and validate are allowed with a warning; artifact mutation is blocked.
   older_same_major: Backward-compatible read is allowed.
   new_state: New init records the current runtime protocol version in config and STATE.
+  config_is_a_floor: When .devflow/config.yaml exists, its protocol_version is a floor. The audit-apply gate decides from the higher of the STATE and config versions, so hand-editing STATE.protocol_version below the config cannot re-enable a legacy verified transition. validate reports an error when STATE declares a protocol older than the config. A project with no config file, or whose config genuinely records the older version, keeps the legacy path.
 workflow_type:
   allowed: [delivery, audit_remediation]
 project_status:

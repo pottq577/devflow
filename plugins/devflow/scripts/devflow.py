@@ -779,9 +779,24 @@ def effective_workflow_type(state: dict[str, Any]) -> str:
     return str(state["workflow_type"]) if "workflow_type" in state else "delivery"
 
 
-def requires_audit_apply(state: dict[str, Any]) -> bool:
-    version = parsed_protocol_version(state.get("protocol_version"))
-    return bool(version and version >= (1, 3, 0))
+def config_protocol_floor(root: Path) -> tuple[int, int, int] | None:
+    """The project's recorded config protocol version, only when .devflow/config.yaml exists on
+    disk. Unlike runtime_config(), this does not fabricate the runtime version for a config-less
+    project, so a project with no config keeps the legacy verified-transition path."""
+    if not (root / ".devflow" / "config.yaml").exists():
+        return None
+    return parsed_protocol_version(runtime_config(root).get("protocol_version"))
+
+
+def requires_audit_apply(state: dict[str, Any], root: Path | None = None) -> bool:
+    """The 1.3 audit-apply gate. It fires from the higher of the STATE protocol version and the
+    project config's, so a STATE downgrade cannot disable the gate that init recorded."""
+    candidates = [
+        version
+        for version in (parsed_protocol_version(state.get("protocol_version")), config_protocol_floor(root) if root is not None else None)
+        if version is not None
+    ]
+    return bool(candidates and max(candidates) >= (1, 3, 0))
 
 
 def raw_phase_key(state: dict[str, Any], key: str) -> str | None:
@@ -1612,7 +1627,7 @@ def work_review(args: argparse.Namespace) -> int:
     root = repo_root()
     d = domain_dir(root, args.domain)
     state = load_yaml(state_path(root, args.domain), {}) or {}
-    if args.review_status == "verified" and requires_audit_apply(state):
+    if args.review_status == "verified" and requires_audit_apply(state, root):
         return reject_transition(args.item, "be verified", ["protocol 1.3+ requires devflow audit apply"])
     try:
         path, doc, item = find_item(root, args.domain, args.item)
@@ -1720,7 +1735,7 @@ def set_phase(args: argparse.Namespace) -> int:
         return reject_transition(f"phase {key}", "be created", creation_errors)
     if existing and existing.get("status") == "verified" and args.status != "verified":
         return reject_transition(f"phase {key}", "change", ["a verified phase cannot be reopened"])
-    if args.status == "verified" and requires_audit_apply(state):
+    if args.status == "verified" and requires_audit_apply(state, root):
         return reject_transition(f"phase {key}", "be verified", ["protocol 1.3+ requires devflow audit apply"])
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
@@ -1788,7 +1803,7 @@ def set_plan_review(args: argparse.Namespace) -> int:
     audit_file = pr["audit_file"]
     if args.status == "skipped" and required:
         return reject_transition("plan review", "be skipped", ["review is required"])
-    if args.status == "verified" and requires_audit_apply(state):
+    if args.status == "verified" and requires_audit_apply(state, root):
         return reject_transition("plan review", "be verified", ["protocol 1.3+ requires devflow audit apply"])
     if args.status == "verified":
         d = domain_dir(root, args.domain)
@@ -1817,7 +1832,7 @@ def set_integration(args: argparse.Namespace) -> int:
     integ = dict(state.get("integration", {}) or {})
     if integ.get("status") == "verified" and args.status != "verified":
         return reject_transition("integration", "change", ["a verified integration cannot be reopened"])
-    if args.status == "verified" and requires_audit_apply(state):
+    if args.status == "verified" and requires_audit_apply(state, root):
         return reject_transition("integration", "be verified", ["protocol 1.3+ requires devflow audit apply"])
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
@@ -2385,7 +2400,7 @@ def audit_artifact_contract_errors(
     docs: dict[Path, dict[str, Any]],
 ) -> list[str]:
     errors: list[str] = []
-    metadata_required = requires_audit_apply(state)
+    metadata_required = requires_audit_apply(state, root)
     candidates: list[tuple[Path, tuple[str, str | None, str | None, bool]]] = []
     plan_review = effective_plan_review(state)
     candidates.append(
@@ -2530,6 +2545,19 @@ def collect_validation(
     warnings.extend(config_warnings)
     state = state_override if state_override is not None else load_yaml(d / "STATE.yaml", {}) or {}
     validate_state(state, d, errors, warnings)
+    floor = config_protocol_floor(root)
+    state_version = parsed_protocol_version(state.get("protocol_version"))
+    runtime_version = parsed_protocol_version(PROTOCOL_VERSION)
+    if (
+        floor is not None
+        and floor <= runtime_version
+        and state_version is not None
+        and state_version < floor
+    ):
+        errors.append(
+            f"STATE protocol_version {state.get('protocol_version')} is older than the project's "
+            f".devflow/config.yaml protocol_version {runtime_config(root).get('protocol_version')}"
+        )
     decision_errors, open_decisions = decision_state_errors(state, d)
     errors.extend(decision_errors)
 

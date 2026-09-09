@@ -253,3 +253,10 @@ A fresh project initialization records `1.3.0` in both `.devflow/config.yaml` an
 domain artifact contract. Older same-major versions are readable. A malformed or different-major
 version is an error, and a newer config minor permits read-only status and validation but blocks
 mutation.
+
+When `.devflow/config.yaml` exists, its `protocol_version` is a floor. The audit-apply gate decides
+from the higher of the STATE and config versions, so hand-editing `STATE.protocol_version` below the
+config cannot re-enable `plan-review set`, `work review`, `phase set`, or `integration set`
+`verified` on a project `init` recorded at 1.3 or newer, and `validate` reports STATE declaring an
+older protocol than the config as an error. A project with no config file, or one whose config
+genuinely records the older version, keeps the legacy verified transitions.

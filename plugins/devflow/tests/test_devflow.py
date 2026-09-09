@@ -122,6 +122,16 @@ def phase(status: str, num: str = "05") -> dict[str, Any]:
     return {"status": status, "work_file": f"work/phase-{num}.yaml", "audit_file": f"audits/phase-{num}.md"}
 
 
+def legacy_config(root: Path, version: str = "1.1.0") -> None:
+    """Pin .devflow/config.yaml to a pre-1.3 protocol so a fixture built with the pre-1.3 `state()`
+    helper is a genuine legacy project, not an inconsistent 1.1.0-STATE / 1.3.0-config one. The
+    1.3 audit-apply gate now reads the higher of the STATE and config protocol versions."""
+    cfg = root / ".devflow/config.yaml"
+    doc = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    doc["protocol_version"] = version
+    dump(cfg, doc)
+
+
 def state(phases: dict[str, Any], *, integration: str = "pending", **extra: Any) -> dict[str, Any]:
     doc: dict[str, Any] = {
         "protocol_version": "1.1.0",
@@ -810,6 +820,7 @@ def case_multi_finding_work_requires_aggregation_reason(root: Path) -> None:
 
 def case_multi_finding_work_accepts_coherent_explicit_aggregation(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     combined = item(
@@ -1834,6 +1845,7 @@ def case_closure_cannot_lower_a_recorded_finding_severity(root: Path) -> None:
 
 def case_delivery_markdown_sections_follow_commonmark_boundaries(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
@@ -1975,6 +1987,7 @@ def case_audit_remediation_markdown_sections_reject_empty_duplicates(root: Path)
 
 def case_markdown_sections_ignore_fenced_required_headings(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
@@ -3760,6 +3773,7 @@ def case_status_is_side_effect_free(root: Path) -> None:
 
 def case_premise_checks_required(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
 
@@ -4314,6 +4328,7 @@ def case_render_context_marks_missing_ids(root: Path) -> None:
 
 def case_audit_scopes_use_their_own_artifacts(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     phase_doc = phase("audit", "01")
     phase_doc.update({"base_sha": "base", "head_sha": "head", "diff_range": "base...head"})
@@ -4424,6 +4439,7 @@ def case_status_reports_inputs(root: Path) -> None:
 def case_lifecycle_walk(root: Path) -> None:
     """One pass through the lifecycle: run the work, audit the phase, verify, then integration."""
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
@@ -4454,6 +4470,7 @@ def case_lifecycle_walk(root: Path) -> None:
 
 def case_derived_lifecycle_state(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
@@ -4588,6 +4605,7 @@ def case_integration_next_action_guards(root: Path) -> None:
 
 def case_plan_review_gate(root: Path) -> None:
     devflow(root, "init", "billing", "--risk", "critical")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
     state_doc["protocol_version"] = "1.2.0"
@@ -4620,6 +4638,7 @@ def case_high_risk_dependency_is_gated(root: Path) -> None:
 
 def case_verified_review_releases_dependent(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work("01", high_done("A"), item("B", dependencies=["A"])))
@@ -4644,6 +4663,7 @@ def case_medium_dependency_keeps_old_behavior(root: Path) -> None:
 
 def case_remediation_returns_to_work_closure_audit(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
     dump(d / "work/phase-01.yaml", work(
@@ -4844,6 +4864,7 @@ def case_plan_review_rejects_required_skip(root: Path) -> None:
 
 def case_plan_review_requires_audit_artifact(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
     state_doc["protocol_version"] = "1.2.0"
@@ -4856,6 +4877,7 @@ def case_plan_review_requires_audit_artifact(root: Path) -> None:
 
 def case_phase_verification_rejects_open_work(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     phase_doc = phase("audit", "01")
     phase_doc["diff_range"] = "HEAD^..HEAD"
@@ -4869,6 +4891,7 @@ def case_phase_verification_rejects_open_work(root: Path) -> None:
 
 def case_phase_verification_rejects_pending_review(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     phase_doc = phase("audit", "01")
     phase_doc["diff_range"] = "HEAD^..HEAD"
@@ -4882,6 +4905,7 @@ def case_phase_verification_rejects_pending_review(root: Path) -> None:
 
 def case_phase_verification_requires_diff_range(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("audit", "01")}))
     dump(d / "work/phase-01.yaml", work("01", item("A", status="done", commands=["true -> ok"])))
@@ -4893,6 +4917,7 @@ def case_phase_verification_requires_diff_range(root: Path) -> None:
 
 def case_phase_verification_requires_audit_artifact(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     phase_doc = phase("audit", "01")
     phase_doc["diff_range"] = "HEAD^..HEAD"
@@ -4905,6 +4930,7 @@ def case_phase_verification_requires_audit_artifact(root: Path) -> None:
 
 def case_integration_verification_rejects_unverified_phase(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("audit", "01")}))
 
@@ -4914,6 +4940,7 @@ def case_integration_verification_rejects_unverified_phase(root: Path) -> None:
 
 def case_integration_verification_requires_audit_artifact(root: Path) -> None:
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     dump(d / "STATE.yaml", state({"01": phase("verified", "01")}))
 
@@ -4948,6 +4975,7 @@ def case_work_block_requires_active_status_and_reason(root: Path) -> None:
 def case_verification_is_gated_by_validation(root: Path) -> None:
     """A structurally invalid manifest used to reach project completion untouched."""
     devflow(root, "init", "billing")
+    legacy_config(root)
     d = root / "docs/domains/billing"
     broken = item("P01-I01", status="done", commands=["true -> ok"])
     broken.pop("stop_conditions")
@@ -5016,6 +5044,101 @@ def case_protocol_version_is_enforced(root: Path) -> None:
         "validate warns about a newer minor protocol version without failing",
         out.returncode == 0 and "newer than this runtime" in out.stdout,
         out.stdout + out.stderr,
+    )
+
+
+def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> None:
+    def verifiable_phase(domain: str) -> Path:
+        devflow(root, "init", domain)
+        dd = root / f"docs/domains/{domain}"
+        dump(dd / "STATE.yaml", state({"01": phase("executing", "01")}))
+        dump(dd / "work/phase-01.yaml", work("01", item("P01-I01")))
+        devflow(root, "work", "start", domain, "P01-I01")
+        devflow(root, "work", "done", domain, "P01-I01", "--command", "true -> ok")
+        state_doc = yaml.safe_load((dd / "STATE.yaml").read_text(encoding="utf-8"))
+        state_doc["phases"]["01"]["diff_range"] = "HEAD^..HEAD"
+        dump(dd / "STATE.yaml", state_doc)
+        (dd / "audits/phase-01.md").write_text("# phase audit\n")
+        return dd
+
+    # config 1.3.0 (from init), STATE hand-downgraded to 1.2.0
+    d = verifiable_phase("billing")
+    high = high_done("P01-I02")
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01"), high))
+    (d / "audits/work").mkdir(parents=True, exist_ok=True)
+    (d / "audits/work/P01-I02.md").write_text("# work audit\n")
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["protocol_version"] = "1.2.0"
+    dump(d / "STATE.yaml", state_doc)
+    before_state = (d / "STATE.yaml").read_bytes()
+
+    phase_v = devflow(root, "phase", "set", "billing", "01", "verified")
+    integ_v = devflow(root, "integration", "set", "billing", "verified")
+    plan_v = devflow(root, "plan-review", "set", "billing", "verified")
+    work_v = devflow(root, "work", "review", "billing", "P01-I02", "verified")
+    validated = devflow(root, "validate", "billing")
+    check(
+        "AC-01/AC-02: a STATE downgrade under a 1.3.0 config cannot re-enable any legacy verified transition",
+        all(
+            out.returncode == 2 and "protocol 1.3+ requires devflow audit apply" in out.stderr
+            for out in (phase_v, integ_v, plan_v, work_v)
+        )
+        and (d / "STATE.yaml").read_bytes() == before_state,
+        "".join(o.stdout + o.stderr for o in (phase_v, integ_v, plan_v, work_v)),
+    )
+    check(
+        "AC-03: validate reports the STATE-older-than-config protocol downgrade",
+        validated.returncode == 1
+        and "STATE protocol_version 1.2.0 is older than the project's .devflow/config.yaml protocol_version 1.3.0" in validated.stdout,
+        validated.stdout + validated.stderr,
+    )
+
+    # AC-07: the F-003 reproduction, a narrative phase audit plus a STATE downgrade
+    narrative = verifiable_phase("shipping")
+    (narrative / "audits/phase-01.md").write_text("# Phase audit\n\nNarrative only, no front matter.\n")
+    sd = yaml.safe_load((narrative / "STATE.yaml").read_text(encoding="utf-8"))
+    sd["protocol_version"] = "1.2.0"
+    dump(narrative / "STATE.yaml", sd)
+    f003 = devflow(root, "phase", "set", "shipping", "01", "verified")
+    check(
+        "AC-07: a narrative phase audit plus a STATE downgrade no longer verifies the phase",
+        f003.returncode == 2 and "protocol 1.3+ requires devflow audit apply" in f003.stderr,
+        f003.stdout + f003.stderr,
+    )
+
+    # AC-04: no .devflow/config.yaml at all, STATE 1.2.0, legacy transition still works
+    noconfig = verifiable_phase("logistics")
+    (root / ".devflow/config.yaml").unlink()
+    sd = yaml.safe_load((noconfig / "STATE.yaml").read_text(encoding="utf-8"))
+    sd["protocol_version"] = "1.2.0"
+    dump(noconfig / "STATE.yaml", sd)
+    ac04_validate = devflow(root, "validate", "logistics")
+    ac04 = devflow(root, "phase", "set", "logistics", "01", "verified")
+    after = yaml.safe_load((noconfig / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "AC-04: with no config file and a 1.2.0 STATE the legacy verified transition still applies",
+        ac04_validate.returncode == 0
+        and ac04.returncode == 0
+        and after["phases"]["01"]["status"] == "verified",
+        ac04_validate.stdout + ac04_validate.stderr + ac04.stdout + ac04.stderr + repr(after),
+    )
+
+    # AC-05: config genuinely records 1.2.0 and STATE records 1.2.0, legacy path intact
+    legacy = verifiable_phase("procurement")
+    legacy_config(root, "1.2.0")
+    sd = yaml.safe_load((legacy / "STATE.yaml").read_text(encoding="utf-8"))
+    sd["protocol_version"] = "1.2.0"
+    dump(legacy / "STATE.yaml", sd)
+    ac05_validate = devflow(root, "validate", "procurement")
+    ac05 = devflow(root, "phase", "set", "procurement", "01", "verified")
+    after = yaml.safe_load((legacy / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "AC-05: a genuine 1.2.0 config plus 1.2.0 STATE keeps the legacy verified transition and reports no protocol error",
+        ac05_validate.returncode == 0
+        and "older than the project's" not in ac05_validate.stdout
+        and ac05.returncode == 0
+        and after["phases"]["01"]["status"] == "verified",
+        ac05_validate.stdout + ac05_validate.stderr + ac05.stdout + ac05.stderr + repr(after),
     )
 
 
@@ -5340,6 +5463,7 @@ def case_no_peer_plugin_lifecycle_state(root: Path) -> None:
 def case_lifecycle_runs_without_peer_plugins(root: Path) -> None:
     """A normal DevFlow flow must not assume Superpowers or Ponytail exists."""
     init = devflow(root, "init", "billing")
+    legacy_config(root)
     check("init succeeds without peer plugins", init.returncode == 0, init.stdout + init.stderr)
 
     d = root / "docs/domains/billing"
@@ -5496,6 +5620,7 @@ CASES = [
     case_work_block_requires_active_status_and_reason,
     case_verification_is_gated_by_validation,
     case_protocol_version_is_enforced,
+    case_state_protocol_downgrade_cannot_disable_the_audit_gate,
     case_config_protocol_version_is_checked,
     case_newer_config_protocol_blocks_mutation,
     case_finding_requires_severity_reason,
