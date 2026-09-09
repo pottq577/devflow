@@ -642,6 +642,22 @@ def commit_yaml_transaction(documents: dict[Path, Any]) -> None:
             backup_path.unlink(missing_ok=True)
 
 
+def commit_lifecycle_mutation(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+) -> None:
+    """Project derived STATE (and any changed WORK) on the prospective documents, then commit them
+    atomically, mirroring audit_apply(). project_state() raises on structurally invalid input
+    BEFORE any file is written, so a command that reports failure has changed nothing. This is
+    process-local failure rollback, not crash recovery or concurrent-writer isolation."""
+    project_state(root, domain, state, work_overrides)
+    documents: dict[Path, Any] = dict(work_overrides or {})
+    documents[state_path(root, domain)] = state
+    commit_yaml_transaction(documents)
+
+
 def has_nonblank_string(values: Any) -> bool:
     """True when `values` is a list holding at least one string with non-whitespace content."""
     return isinstance(values, list) and any(
@@ -1617,8 +1633,7 @@ def work_update(args: argparse.Namespace) -> int:
             return reject_transition(args.item, "block", ["a non-empty reason is required"])
         item["status"] = "blocked"
         item["block_reason"] = reason
-    dump_yaml(path, doc)
-    refresh_state(root, args.domain)
+    commit_lifecycle_mutation(root, args.domain, copy.deepcopy(state), {path: doc})
     print(f"{args.item}: {item['status']}")
     return 0
 
@@ -1695,8 +1710,7 @@ def work_review(args: argparse.Namespace) -> int:
     else:
         review["status"] = "blocked"
     item["review"] = review
-    dump_yaml(path, doc)
-    refresh_state(root, args.domain)
+    commit_lifecycle_mutation(root, args.domain, copy.deepcopy(state), {path: doc})
     print(f"{args.item}: review {review['status']}")
     return 0
 
@@ -1745,8 +1759,7 @@ def set_phase(args: argparse.Namespace) -> int:
             return reject_transition(f"phase {key}", "be verified", errors)
     phase = phase_entry(state, key)
     phase["status"] = args.status
-    dump_yaml(path, state)
-    refresh_state(root, args.domain)
+    commit_lifecycle_mutation(root, args.domain, state)
     print(f"phase {key}: {args.status}")
     return 0
 
@@ -1766,8 +1779,7 @@ def set_phase_ref(args: argparse.Namespace) -> int:
         phase["diff_range"] = args.range
         phase["base_ref"] = args.base
         phase["head_ref"] = args.head
-        dump_yaml(path, state)
-        refresh_state(root, args.domain)
+        commit_lifecycle_mutation(root, args.domain, state)
         print(f"phase {key} diff_range: {args.range} (explicit)")
         return 0
 
@@ -1788,8 +1800,7 @@ def set_phase_ref(args: argparse.Namespace) -> int:
     phase["base_sha"] = base_sha
     phase["head_sha"] = head_sha
     phase["diff_range"] = f"{base_sha}...{head_sha}"
-    dump_yaml(path, state)
-    refresh_state(root, args.domain)
+    commit_lifecycle_mutation(root, args.domain, state)
     print(f"phase {key} diff_range: {short_sha(base_sha)}...{short_sha(head_sha)}")
     return 0
 
@@ -1819,8 +1830,7 @@ def set_plan_review(args: argparse.Namespace) -> int:
         pr["audit_file"] = audit_file
     pr["status"] = args.status
     state["plan_review"] = pr
-    dump_yaml(path, state)
-    refresh_state(root, args.domain)
+    commit_lifecycle_mutation(root, args.domain, state)
     print(f"plan_review: {args.status}")
     return 0
 
@@ -1842,8 +1852,7 @@ def set_integration(args: argparse.Namespace) -> int:
             return reject_transition("integration", "be verified", errors)
     integ["status"] = args.status
     state["integration"] = integ
-    dump_yaml(path, state)
-    refresh_state(root, args.domain)
+    commit_lifecycle_mutation(root, args.domain, state)
     print(f"integration: {args.status}")
     return 0
 
@@ -1874,8 +1883,7 @@ def decision_update(args: argparse.Namespace) -> int:
         if errors:
             return reject_transition(f"decision {args.decision}", "be resolved", errors)
     state["unresolved_decisions"] = unresolved
-    dump_yaml(path, state)
-    refresh_state(root, args.domain)
+    commit_lifecycle_mutation(root, args.domain, state)
     print(f"unresolved_decisions: {', '.join(unresolved) or '<none>'}")
     return 0
 

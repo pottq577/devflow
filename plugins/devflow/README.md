@@ -59,6 +59,11 @@ devflow decision add|resolve <domain> <ID>
 the canonical audit Markdown selected by STATE or WORK, validates its YAML front matter and traced
 artifacts, and commits the accepted lifecycle transition atomically.
 
+Every lifecycle mutation command (`work start|done|block|review`, `phase set|ref`, `plan-review
+set`, `integration set`, `decision add|resolve`) projects its prospective state on copies and
+commits the changed STATE and WORK together in one transaction. A command that exits non-zero has
+written nothing. `validate` reports structural defects; it never rewrites STATE to normalize them.
+
 The legacy `plan-review set`, `work review`, `phase set`, and `integration set` commands remain
 available for protocol 1.2 and older artifacts. Protocol 1.3 verified audit transitions go through
 `audit apply` so they cannot bypass audit metadata validation.

@@ -121,7 +121,12 @@ never blocks a DevFlow command.
 
 ## Runtime transition guards
 
-Mutation commands reject invalid transitions with exit code `2` before writing STATE or WORK.
+Mutation commands reject invalid transitions with exit code `2` before writing STATE or WORK. Every
+mutation command projects its prospective STATE, and any WORK it changes, on copies and then commits
+the changed documents through one transaction, mirroring `audit apply`. A command that exits
+non-zero has written nothing, including when the derived-state projection itself raises on
+structurally invalid input. This is process-local failure rollback, not crash recovery or
+concurrent-writer isolation.
 
 - `work start` requires ready status, completed dependencies with required reviews verified, resolved decisions, an unverified containing phase, and a verified required plan review. Integration WORK also waits for all project phases.
 - `work done` requires `in_progress` and completion evidence. `work block` is limited to `ready` and `in_progress` with a non-empty reason.

@@ -2910,6 +2910,86 @@ def case_audit_apply_rollback_survives_atomic_writer_failure(root: Path) -> None
     )
 
 
+def case_lifecycle_mutations_are_atomic(root: Path) -> None:
+    devflow(root, "init", "billing")
+    legacy_config(root)
+    d = root / "docs/domains/billing"
+    state_path = d / "STATE.yaml"
+    base = state({"01": phase("executing", "01")})
+    dump(state_path, base)
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01"), item("P01-I02", dependencies=["P01-I01"])))
+    devflow(root, "work", "start", "billing", "P01-I01")
+
+    def with_broken_state(mutator_state: dict[str, Any]) -> None:
+        broken = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+        broken.update(mutator_state)
+        dump(state_path, broken)
+
+    commands = [
+        ("work", "done", "billing", "P01-I01", "--command", "true -> passed"),
+        ("work", "start", "billing", "P01-I02"),
+        ("work", "block", "billing", "P01-I02", "--reason", "x"),
+        ("work", "review", "billing", "P01-I01", "pending"),
+        ("phase", "set", "billing", "01", "remediation"),
+        ("phase", "ref", "billing", "01", "--base", "HEAD", "--head", "HEAD"),
+        ("plan-review", "set", "billing", "pending"),
+        ("integration", "set", "billing", "audit"),
+        ("decision", "add", "billing", "DEC-001"),
+    ]
+    # AC-01..AC-03: a structurally invalid derived-state projection makes every mutation a no-op.
+    all_atomic = True
+    detail = ""
+    for command in commands:
+        with_broken_state({"plan_review": {"required": False, "status": "skipped", "remediation_work_ids": "not-a-list"}})
+        before_state = state_path.read_bytes()
+        before_work = (d / "work/phase-01.yaml").read_bytes()
+        out = devflow(root, *command)
+        after_state = state_path.read_bytes()
+        after_work = (d / "work/phase-01.yaml").read_bytes()
+        if not (out.returncode == 2 and before_state == after_state and before_work == after_work):
+            all_atomic = False
+            detail += f"\n{command}: rc={out.returncode} state_same={before_state == after_state} work_same={before_work == after_work}\n{out.stdout}{out.stderr}"
+    check("AC-01..AC-03: a failed projection leaves every mutation command's WORK and STATE unchanged", all_atomic, detail)
+
+    # AC-04: a STATE whose phases value is a string, not a mapping.
+    dump(state_path, base)
+    devflow(root, "work", "done", "billing", "P01-I01", "--command", "true -> passed")
+    with_broken_state({"phases": {"01": "not-a-mapping"}})
+    before_state = state_path.read_bytes()
+    before_work = (d / "work/phase-01.yaml").read_bytes()
+    out = devflow(root, "phase", "set", "billing", "01", "remediation")
+    check(
+        "AC-04: a phases entry that is a string, not a mapping, makes phase set a no-op",
+        out.returncode == 2
+        and state_path.read_bytes() == before_state
+        and (d / "work/phase-01.yaml").read_bytes() == before_work,
+        out.stdout + out.stderr,
+    )
+
+    # AC-05: an injected atomic_write_text failure on the STATE write during work done.
+    dump(state_path, base)
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01", status="in_progress")))
+    before_state = state_path.read_bytes()
+    before_work = (d / "work/phase-01.yaml").read_bytes()
+    runtime = load_runtime_module()
+    original_write = runtime.atomic_write_text
+
+    def fail_state_write(path: Path, content: str) -> None:
+        if Path(path) == state_path:
+            raise OSError("injected STATE write failure")
+        original_write(path, content)
+
+    with mock.patch.object(runtime, "atomic_write_text", side_effect=fail_state_write):
+        out = invoke_runtime(root, runtime, "work", "done", "billing", "P01-I01", "--command", "true -> passed")
+    check(
+        "AC-05: an injected STATE write failure during work done leaves WORK and STATE byte-identical",
+        out.returncode == 2
+        and state_path.read_bytes() == before_state
+        and (d / "work/phase-01.yaml").read_bytes() == before_work,
+        out.stdout + out.stderr,
+    )
+
+
 def case_audit_closure_uses_recorded_provenance(root: Path) -> None:
     devflow(root, "init", "billing", "--workflow", "audit-remediation")
     devflow(root, "init", "bypass", "--workflow", "audit-remediation")
@@ -5545,6 +5625,7 @@ CASES = [
     case_delivery_lifecycle_regression_after_protocol_130,
     case_audit_apply_rolls_back_work_when_state_write_fails,
     case_audit_apply_rollback_survives_atomic_writer_failure,
+    case_lifecycle_mutations_are_atomic,
     case_audit_closure_uses_recorded_provenance,
     case_lifecycle_completes_with_gitignored_docs,
     case_recorded_provenance_closure_is_deterministic,

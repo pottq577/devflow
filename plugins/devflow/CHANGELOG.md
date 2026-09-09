@@ -35,6 +35,14 @@
 
 ### Fixed
 
+- **Every lifecycle mutation is atomic.** `work start|done|block|review`, `phase set|ref`,
+  `plan-review set`, `integration set` and `decision add|resolve` now project their prospective
+  STATE (and any changed WORK) on copies and commit the changed documents through one
+  `commit_yaml_transaction()`, mirroring `audit apply`. Previously each wrote its primary artifact
+  and only then refreshed derived STATE, so a projection failure on structurally invalid input left
+  the artifact mutated while the command reported failure. A command that exits non-zero now leaves
+  WORK and STATE byte-identical. This remains process-local failure rollback, not crash recovery or
+  concurrent-writer isolation.
 - **A stop-blocked WORK review can be re-audited.** `devflow work review <domain> <ID> pending`
   returns a `blocked` work review to `pending`, clears its `remediation_work_ids`, and projects a
   fresh work initial audit. It is refused from any other review status and never sets a review
