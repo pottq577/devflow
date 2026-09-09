@@ -2956,11 +2956,14 @@ def validate_audit_metadata(
 
     open_decisions, resolved_decisions, decision_errors = decision_document_records(d / "DECISIONS.md")
     errors.extend(decision_errors)
+    unresolved_decisions = {str(value) for value in state.get("unresolved_decisions", []) or []}
     finding_by_id = {str(finding["id"]): finding for finding in findings}
     disposition_contracts = finding_schema["classification"]["disposition"]
     for finding in findings:
         disposition = finding["disposition"]
         classification = str(finding["classification"])
+        closure_outcome = (closure_by_id.get(str(finding["id"])) or {}).get("outcome")
+        decision_is_closed = mode == "closure" and closure_outcome in {"resolved", "reopened", "accepted_risk"}
         contract = disposition_contracts[classification]
         if disposition["action"] != contract["action"]:
             errors.append(
@@ -2993,7 +2996,12 @@ def validate_audit_metadata(
                     f"{finding['id']}: linked WORK {linked_work} must use kind {expected_kind}, not {work_item_doc.get('kind')}"
                 )
         for decision_id in disposition["decision_ids"]:
-            if str(decision_id) not in open_decisions:
+            decision_id = str(decision_id)
+            if decision_is_closed and (decision_id not in resolved_decisions or decision_id in unresolved_decisions):
+                errors.append(
+                    f"{finding['id']}: linked decision {decision_id} must be a resolved DECISIONS.md record"
+                )
+            elif not decision_is_closed and decision_id not in open_decisions:
                 errors.append(
                     f"{finding['id']}: linked decision {decision_id} must be an open DECISIONS.md record with at least two nonblank options"
                 )
@@ -3049,7 +3057,7 @@ def validate_audit_metadata(
             outcome = entry["outcome"]
             if outcome == "accepted_risk":
                 decision_ids = [str(value) for value in finding["disposition"]["decision_ids"]]
-                resolved = [value for value in decision_ids if value in resolved_decisions and value not in (state.get("unresolved_decisions") or [])]
+                resolved = [value for value in decision_ids if value in resolved_decisions and value not in unresolved_decisions]
                 if not resolved:
                     errors.append(f"closure {finding_id}: accepted_risk requires a resolved decision")
             for linked_work in finding["disposition"]["work_ids"]:

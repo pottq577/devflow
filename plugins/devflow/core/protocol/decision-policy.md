@@ -16,9 +16,12 @@ The runtime exposes a computed next action, not autonomous orchestration. A huma
 chooses whether to execute that action and records any decision that needs product authority.
 
 A `DECISION_REQUIRED` audit finding must use `disposition.action: decision`, list at least one ID in
-`decision_ids`, and leave `work_ids` empty. Every listed ID must already exist with its options in
-`DECISIONS.md`. Successful `devflow audit apply` atomically adds those IDs to
-`STATE.yaml.unresolved_decisions`. Do not create ready code-changing WORK for the unresolved
+`decision_ids`, and leave `work_ids` empty. An initial, current-only, or `still_open` finding
+requires every listed ID to exist as an open record with options in `DECISIONS.md`. Successful
+initial `devflow audit apply` atomically adds those IDs to `STATE.yaml.unresolved_decisions`. A
+closure outcome of `resolved`, `reopened`, or `accepted_risk` instead requires the prior finding's
+linked IDs to be resolved and absent from `STATE.yaml.unresolved_decisions`; `accepted_risk`
+requires at least one such decision. Do not create ready code-changing WORK for an unresolved
 finding. After resolution, create WORK for only the selected path and carry the decision ID in
 `decision_dependencies`; unresolved dependencies cannot be `ready`.
 

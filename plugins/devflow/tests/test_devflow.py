@@ -2721,6 +2721,30 @@ def case_audit_remediation_full_lifecycle_with_decision(root: Path) -> None:
         rendered_run.stdout + rendered_run.stderr + started.stdout + started.stderr + done.stdout + done.stderr + status.stdout + status.stderr + rendered_closure.stdout + rendered_closure.stderr + repr(after_work),
     )
 
+    closure = [{
+        "finding_id": "F-01",
+        "outcome": "accepted_risk",
+        "evidence": ["the approved decision records the accepted residual risk"],
+        "reopened_as": [],
+    }]
+    write_audit(
+        d / "audits/integration.md",
+        audit_metadata(d, mode="closure", findings=[finding], closure=closure),
+    )
+    applied_closure = devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "closure")
+    validated_closure = devflow(root, "validate", "billing")
+    completed = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "accepted risk closure uses its resolved decision and completes",
+        applied_closure.returncode == 0
+        and validated_closure.returncode == 0
+        and completed["integration"]["status"] == "verified"
+        and completed["next_action"]["command"] == "complete",
+        applied_closure.stdout + applied_closure.stderr
+        + validated_closure.stdout + validated_closure.stderr
+        + repr(completed),
+    )
+
 
 def case_decision_resolve_rejects_open_record_atomically(root: Path) -> None:
     d = audit_remediation_fixture(root)

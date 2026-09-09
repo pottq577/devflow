@@ -190,9 +190,12 @@ verification set. The runtime validates the links and the presence of this ratio
 infer semantic equivalence from prose.
 
 `DECISION_REQUIRED` uses `disposition.action: decision`, has one or more `decision_ids`, and has no
-`work_ids`. Record each ID and its options in `DECISIONS.md` before applying the audit. Audit apply
-registers it in `STATE.unresolved_decisions`; do not create ready implementation WORK from the
-finding before the decision is resolved.
+`work_ids`. An initial, current-only, or `still_open` finding requires each ID to be open with its
+options in `DECISIONS.md`. A closure outcome of `resolved`, `reopened`, or `accepted_risk` requires
+the prior finding's linked IDs to be resolved and absent from `STATE.unresolved_decisions`.
+`accepted_risk` requires at least one such resolved decision. Initial audit apply registers open IDs
+in `STATE.unresolved_decisions`; do not create ready implementation WORK from the finding before the
+decision is resolved.
 
 ## 8. Machine-readable audit outcome
 
