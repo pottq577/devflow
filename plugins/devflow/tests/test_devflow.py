@@ -4769,6 +4769,67 @@ def case_remediation_returns_to_work_closure_audit(root: Path) -> None:
     check("closure verification releases original dependent", verified.returncode == 0 and "next.work_item: B" in out, verified.stdout + verified.stderr + out)
 
 
+def case_work_closure_audit_reports_work_audit(root: Path) -> None:
+    devflow(root, "init", "billing", "--workflow", "audit-remediation")
+    d = root / "docs/domains/billing"
+    fill_audit_remediation_contract(d)
+    int_a = v2_item("INT-A")
+    int_a.update(
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-01"], "plan_items": []},
+        risk={"level": "high", "axes": ["correctness"]},
+        premise_checks=["Confirm F-01 still reproduces at current HEAD."],
+    )
+    dump(d / "work/integration.yaml", work_v2("integration", int_a))
+    f01 = audit_finding(
+        "F-01",
+        classification="CONFIRMED",
+        severity="blocker",
+        severity_reason="The integration defect blocks release.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-A"], "decision_ids": []},
+    )
+    write_audit(d / "audits/integration.md", audit_metadata(d, verdict="fail", findings=[f01]))
+    devflow(root, "audit", "apply", "billing", "--scope", "integration", "--mode", "initial")
+    devflow(root, "work", "start", "billing", "INT-A")
+    devflow(root, "work", "done", "billing", "INT-A", "--command", "true -> passed")
+
+    int_r2 = v2_item("INT-R2")
+    int_r2.update(kind="remediation", origin={"requirements": [], "findings": ["F-02"], "plan_items": []})
+    integration_work = yaml.safe_load((d / "work/integration.yaml").read_text(encoding="utf-8"))
+    integration_work["items"].append(int_r2)
+    dump(d / "work/integration.yaml", integration_work)
+    f02 = audit_finding(
+        "F-02",
+        classification="CONFIRMED",
+        severity="blocker",
+        severity_reason="The first remediation left a second defect.",
+        disposition={"action": "remediation_work", "work_ids": ["INT-R2"], "decision_ids": []},
+    )
+    write_audit(d / "audits/work/INT-A.md", audit_metadata(d, scope="work", verdict="fail", findings=[f02]))
+    devflow(root, "audit", "apply", "billing", "--scope", "work", "--task", "INT-A", "--mode", "initial")
+    devflow(root, "work", "start", "billing", "INT-R2")
+    devflow(root, "work", "done", "billing", "INT-R2", "--command", "true -> passed")
+
+    out = devflow(root, "status", "billing").stdout
+    derived = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "a phaseless work closure audit reports project_status work_audit, not integration_closure",
+        "next.command: audit" in out
+        and "next.scope: work" in out
+        and "next.mode: closure" in out
+        and "next.work_item: INT-A" in out
+        and derived["project_status"] == "work_audit"
+        and derived["next_action"]["scope"] == "work"
+        and derived["next_action"]["mode"] == "closure",
+        out + repr(derived),
+    )
+    check(
+        "validate accepts the work_audit project_status for a work closure audit",
+        devflow(root, "validate", "billing").returncode == 0,
+        devflow(root, "validate", "billing").stdout,
+    )
+
+
 def case_remediation_review_invariants(root: Path) -> None:
     """Remediation is a closed unit: no bypass, no self-referential dependency graph."""
     devflow(root, "init", "billing")
@@ -5679,6 +5740,7 @@ CASES = [
     case_verified_review_releases_dependent,
     case_medium_dependency_keeps_old_behavior,
     case_remediation_returns_to_work_closure_audit,
+    case_work_closure_audit_reports_work_audit,
     case_remediation_review_invariants,
     case_legacy_high_risk_work_is_gated_without_mutation,
     case_review_metadata_validation,

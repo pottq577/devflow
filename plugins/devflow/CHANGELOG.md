@@ -35,6 +35,10 @@
 
 ### Fixed
 
+- **A work closure audit reports `project_status: work_audit`.** `project_status_for_action()` now
+  returns `work_audit` for a `scope: work` audit in both modes. A phaseless work closure audit was
+  reported as `integration_closure`, and a phase work closure as `remediation`, contradicting the
+  `next.scope` printed beside it.
 - **Every lifecycle mutation is atomic.** `work start|done|block|review`, `phase set|ref`,
   `plan-review set`, `integration set` and `decision add|resolve` now project their prospective
   STATE (and any changed WORK) on copies and commit the changed documents through one

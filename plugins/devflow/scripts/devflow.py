@@ -1414,11 +1414,10 @@ def project_status_for_action(action: dict[str, Any]) -> str:
         if scope == "plan":
             return "plan_review"
         if scope == "work":
-            # An initial work audit is its own lifecycle position. Reporting it as phase_audit
+            # A work audit is its own lifecycle position in both modes. Reporting the initial mode
+            # as phase_audit, and the closure mode as integration_closure or remediation,
             # contradicted the next.scope printed beside it.
-            if action.get("mode") != "closure":
-                return "work_audit"
-            return "integration_closure" if action.get("phase") is None else "remediation"
+            return "work_audit"
         if scope == "phase":
             return "remediation" if action.get("mode") == "closure" else "phase_audit"
         if scope == "integration":
