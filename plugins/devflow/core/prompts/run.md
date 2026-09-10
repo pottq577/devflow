@@ -26,4 +26,21 @@ This packet is emitted only for the exact WORK item in the computed next action.
 9. If you discovered a trap that outlives this item, add it to `PITFALLS.md`.
 10. Validate DevFlow artifacts before returning.
 
-Do not redesign unrelated code and do not create additional narrative completion documents.
+Keep unrelated code outside the WORK boundary. The required branch PR and Postman files are
+explicit delivery outputs; lifecycle evidence remains in WORK.
+
+## Required source and branch handoff
+
+Before implementation, adopt legacy active work through `devflow delivery enable <domain>`.
+Start a ready WORK with `work start`; resume an `in_progress` WORK without starting it again or
+changing its recorded `start_sha`.
+Record meaningful comments in changed source and their `evidence.comments` path/line/reason.
+For pure docs/config/deletions, give the concrete `comments_note` exception. Commit verified source
+and tests; then update the cumulative branch PR from `docs/PR/templates.md` and Postman v2.1 JSON
+at `devflow delivery paths <domain>` outputs. Fill `evidence.delivery` and source metadata before
+`work done --commit HEAD`. Keep credential values empty, declare API coverage and preserve prior
+branch requests. All output fields and validation rules appear in the appended delivery protocol.
+The branch output allowance covers these files and STATE/WORK evidence. After the runtime selects
+`finalize`, render that action and follow the appended whole-work ELI5/Newman protocol. Generation
+itself sends no requests; the finalization step explicitly executes authorized isolated tests.
+Keep remote PR publication and push/merge under user control.

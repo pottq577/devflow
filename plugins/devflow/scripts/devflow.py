@@ -18,7 +18,15 @@ except ImportError:
     print("DevFlow requires PyYAML. Install with: python3 -m pip install PyYAML", file=sys.stderr)
     raise SystemExit(2)
 
-PROTOCOL_VERSION = "1.5.0"
+# Import siblings by this installed plugin location, including importlib-based test harnesses.
+SCRIPT_DIRECTORY = str(Path(__file__).resolve().parent)
+if SCRIPT_DIRECTORY not in sys.path:
+    sys.path.insert(0, SCRIPT_DIRECTORY)
+import devflow_delivery as delivery
+import devflow_finalization as finalization
+import devflow_newman as newman
+
+PROTOCOL_VERSION = "1.7.0"
 HIGH_RISK = {"high", "critical"}
 REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.I)
 PROTOCOL_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
@@ -53,9 +61,10 @@ MARKDOWN_SECTION_ANCHORS = {
 }
 
 PROMPT_PROTOCOLS = {
-    "plan": ["authority", "lifecycle", "work-item-contract", "decision-policy"],
-    "run": ["authority", "work-item-contract", "risk-policy"],
-    "audit": ["authority", "audit-core", "work-item-contract", "risk-policy", "decision-policy"],
+    "finalize": ["authority", "work-item-contract", "risk-policy", "delivery-artifacts", "finalization"],
+    "plan": ["authority", "lifecycle", "work-item-contract", "decision-policy", "delivery-artifacts", "finalization"],
+    "run": ["authority", "work-item-contract", "risk-policy", "delivery-artifacts", "finalization"],
+    "audit": ["authority", "audit-core", "work-item-contract", "risk-policy", "decision-policy", "delivery-artifacts", "finalization"],
 }
 
 
@@ -892,7 +901,11 @@ def init_domain(args: argparse.Namespace) -> int:
         if not target.exists():
             target.write_text(read_template(template), encoding="utf-8")
 
+    new_domain = not state_path(root, args.domain).exists()
     state = load_yaml(state_path(root, args.domain), {}) or {}
+    if new_domain:
+        state["delivery"] = delivery.default_policy()
+        state["delivery"]["finalization"] = finalization.default_policy()
     state.setdefault("protocol_version", PROTOCOL_VERSION)
     state.setdefault("workflow_type", workflow_type)
     state["domain"] = args.domain
@@ -1291,7 +1304,7 @@ def plan_remediation_action(
     return {"role": "human", "command": "decision", "scope": "plan", "phase": None, "work_item": None}
 
 
-def compute_next_action(
+def base_next_action(
     root: Path,
     domain: str,
     state: dict[str, Any],
@@ -1434,6 +1447,53 @@ def compute_next_action(
     return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None, "reason": "lifecycle is incomplete"}
 
 
+def compute_next_action(
+    root: Path, domain: str, state: dict[str, Any],
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Wrap the existing lifecycle with an explicit Executor-owned whole-delivery gate."""
+    action = base_next_action(root, domain, state, work_overrides)
+    if not finalization.active(state):
+        return action
+    problems = finalization.structural_errors(state)
+    if problems:
+        raise ValueError("; ".join(problems))
+    d = domain_dir(root, domain)
+    docs, index, _ = load_work_index(d, work_overrides)
+    # Global decisions and required plan review always outrank a newly registered repair.
+    if action.get("role") in {"human", "architect"} or action.get("scope") == "plan":
+        return action
+    repairs = finalization.repair_ids(state)
+    phases = normalized_phases(state)
+    eligible = all(entry.get("status") == "verified" for entry in phases.values())
+    # Registered repairs keep ordinary WORK dependency/review gates, even while integration
+    # was waiting for its initial audit. No separate repair controller or hidden commits exist.
+    if repairs and eligible and not state.get("unresolved_decisions") and (state.get("integration") or {}).get("status") not in {"blocked", "verified"}:
+        review = work_review_action(root, domain, state, work_overrides)
+        if review:
+            return review
+        for item_id in repairs:
+            target = index.get(item_id)
+            if not target:
+                continue
+            path, item = target
+            if item.get("status") in {"ready", "in_progress"} and deps_satisfied(item, index) and decision_satisfied(item, set()):
+                return {"role": "executor", "command": "run", "scope": "integration", "phase": None,
+                        "work_item": item_id, "item_kind": item.get("kind")}
+            if item.get("status") == "blocked":
+                return {"role": "human", "command": "decision", "scope": "integration", "phase": None,
+                        "work_item": item_id, "reason": "Newman repair WORK is blocked"}
+    at_integration = action.get("command") == "complete" or (action.get("command") == "audit" and action.get("scope") == "integration")
+    # A phase-free initial audit with no implemented WORK must still be allowed to discover work.
+    has_delivery = any(item.get("status") == "done" for _, item in index.values())
+    if at_integration and (has_delivery or action.get("command") == "complete"):
+        errors = finalization.final_errors(root, domain, state, docs, d, require_receipt=True)
+        if errors:
+            return {"role": "executor", "command": "finalize", "scope": "project", "phase": None,
+                    "work_item": None, "reason": errors[0]}
+    return action
+
+
 def project_status_for_action(action: dict[str, Any]) -> str:
     """Map a computed action to the schema's lifecycle projection."""
     command = action.get("command")
@@ -1442,6 +1502,8 @@ def project_status_for_action(action: dict[str, Any]) -> str:
         return "planning"
     if command == "complete":
         return "complete"
+    if command == "finalize":
+        return "delivery_finalization"
     if command == "decision" or action.get("role") == "human":
         return "blocked"
     if command == "run":
@@ -1517,6 +1579,9 @@ def action_inputs(root: Path, domain: str, state: dict[str, Any]) -> list[str]:
         inputs.append(ps.get("work_file", f"work/phase-{phase}.yaml"))
         if action.get("command") == "audit" and action.get("scope") != "work":
             inputs.append(ps.get("audit_file", f"audits/phase-{phase}.md"))
+    if action.get("command") == "finalize":
+        inputs.extend(str(path.relative_to(root)) for path in work_files(d))
+        inputs.append(finalization.html_path(domain))
     item_id = action.get("work_item")
     if item_id:
         try:
@@ -1636,6 +1701,8 @@ def work_update(args: argparse.Namespace) -> int:
             return reject_transition(args.item, "start", errors)
         item["status"] = "in_progress"
         item["block_reason"] = None
+        if delivery.active(state):
+            item.setdefault("evidence", {})["start_sha"] = current_sha(root)
     elif args.work_command == "done":
         if document_errors:
             return reject_transition(args.item, "done", document_errors)
@@ -1661,6 +1728,8 @@ def work_update(args: argparse.Namespace) -> int:
             item["review"] = review
         item["status"] = "done"
         item["block_reason"] = None
+        phase = normalized_phases(state).get(item_phase(path, doc), {})
+        delivery.prepare_completion(root, args.domain, state, item, markdown_sections, phase.get("base_ref"))
     elif args.work_command == "block":
         if document_errors:
             return reject_transition(args.item, "block", document_errors)
@@ -2672,6 +2741,14 @@ def collect_validation(
             errors.append(f"integration is verified but phases are not: {', '.join(sorted(unfinished))}")
 
     errors.extend(audit_artifact_contract_errors(root, d, state, docs))
+    errors.extend(delivery.validation_errors(
+        root, domain, state, docs, markdown_sections,
+        final=integration_state.get("status") == "verified",
+    ))
+
+    errors.extend(finalization.structural_errors(state))
+    if integration_state.get("status") == "verified":
+        errors.extend(finalization.final_errors(root, domain, state, docs, d, require_receipt=True))
 
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -3036,7 +3113,10 @@ def validate_audit_metadata(
             str(value)
             for value in (work_origin.get("findings", []) or [])
         } if isinstance(work_origin, dict) else set()
-        unknown_findings = sorted(work_findings - known_finding_ids)
+        # Registered Newman failures are external execution findings with exact WORK ownership.
+        # Ordinary audit ids still require canonical AUDIT provenance and bidirectional links.
+        execution_findings = finalization.registered_findings(state, work_item_doc)
+        unknown_findings = sorted(work_findings - known_finding_ids - execution_findings)
         if unknown_findings:
             errors.append(
                 f"{work_id}: origin.findings references finding absent from audit: {', '.join(unknown_findings)}"
@@ -3303,7 +3383,7 @@ def render_closure_audit(title: str, path: Path, mode: str) -> None:
 
 def render_request(root: Path, args: argparse.Namespace, expected: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     role = args.render_command
-    if role == "plan":
+    if role in {"plan", "finalize"}:
         return {"command": role}, None
     if role == "run":
         item_id = args.task or (expected.get("work_item") if expected.get("command") == "run" else None)
@@ -3361,6 +3441,16 @@ def render(args: argparse.Namespace) -> int:
     print(f"- target_sha: {state.get('target_sha')}")
     print(f"- risk_profile: {state.get('risk_profile')}")
     print(f"- unresolved_decisions: {', '.join(state.get('unresolved_decisions', []) or []) or '<none>'}")
+
+    print("\n## Delivery artifact context")
+    print(f"- delivery_policy: {'enabled' if delivery.active(state) else 'legacy; run devflow delivery enable ' + args.domain}")
+    print(f"- PR template: {delivery.PR_TEMPLATE}")
+    print("- artifact paths: devflow delivery paths " + args.domain)
+    pr_template = delivery.inside(root, delivery.PR_TEMPLATE)
+    if pr_template.is_file():
+        print_section("Consuming repository PR template", pr_template.read_text(encoding="utf-8-sig"))
+    else:
+        print("- PR template is missing; restore the project's template before completing implementation.")
 
     if role == "audit":
         phases = normalized_phases(state)
@@ -3470,6 +3560,14 @@ def render(args: argparse.Namespace) -> int:
 
     if role == "plan":
         render_markdown_file("Approved PRD", d / "PRD.md")
+    if role == "finalize":
+        docs, _, _ = load_work_index(d)
+        render_markdown_file("Approved PRD", d / "PRD.md")
+        render_markdown_file("Whole-work PLAN", d / "PLAN.md")
+        render_yaml_context("Whole-work scope and HTML metadata", finalization.scope(root, args.domain, state, docs, d))
+        for work_path, work_doc in docs.items():
+            render_yaml_context(str(work_path.relative_to(root)), work_doc)
+
 
     for name in PROMPT_PROTOCOLS[role]:
         print_section(f"protocol/{name}.md", read_protocol(name))
@@ -3481,6 +3579,86 @@ def render(args: argparse.Namespace) -> int:
     pitfalls = d / "PITFALLS.md"
     if pitfalls.exists():
         print_section(f"{args.domain}/PITFALLS.md", pitfalls.read_text(encoding="utf-8"))
+    return 0
+
+
+def delivery_command(args: argparse.Namespace) -> int:
+    """Adopt or inspect local handoffs without introducing a second lifecycle controller."""
+    root = repo_root()
+    d = domain_dir(root, args.domain)
+    state = load_yaml(d / "STATE.yaml", {}) or {}
+    if not state:
+        raise ValueError(f"DevFlow domain is not initialized: {args.domain}")
+    action = args.delivery_command
+    if action == "paths":
+        branch = args.branch or delivery.current_branch(root)
+        result = delivery.artifact_paths(args.domain, branch)
+        # A path preview may name another or not-yet-created branch; never label this HEAD as its head.
+        try:
+            branch_head = delivery.resolve_commit(root, "refs/heads/" + branch)
+        except ValueError:
+            policy = state.get("delivery") or {}
+            branch_head = ((policy.get("branches") or {}).get(branch) or {}).get("head_sha")
+        result.update(branch=branch, head_sha=branch_head, pr_template=delivery.PR_TEMPLATE)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    docs, index, _ = load_work_index(d)
+    if action == "enable":
+        if not delivery.active(state):
+            policy = delivery.default_policy()
+            policy["grandfathered_work_ids"] = sorted(item_id for item_id, (_, item) in index.items() if item.get("status") == "done")
+            state["delivery"] = policy
+        if not finalization.active(state):
+            state["delivery"]["finalization"] = finalization.default_policy()
+        finalization.policy(state)
+        state["protocol_version"] = PROTOCOL_VERSION
+        commit_lifecycle_mutation(root, args.domain, state)
+        print("Delivery and whole-work finalization enabled; existing WORK exemptions remain unchanged.")
+        return 0
+    if action == "context":
+        print(json.dumps(finalization.scope(root, args.domain, state, docs, d), ensure_ascii=False, indent=2))
+        return 0
+    if action == "explain":
+        ctx = finalization.scope(root, args.domain, state, docs, d)
+        finalization.record_explanation(root, ctx, state, args.skill_file, args.invocation)
+        commit_lifecycle_mutation(root, args.domain, state)
+        print("ELI5 explanation provenance recorded: " + ctx["html_file"])
+        return 0
+    if action == "newman":
+        if not 1 <= args.timeout <= 3600 or not 1 <= args.request_timeout <= args.timeout:
+            raise ValueError("Newman timeouts must satisfy 1 <= request-timeout <= timeout <= 3600 seconds")
+        result = newman.execute(root, args.domain, state, args, markdown_sections)
+        commit_lifecycle_mutation(root, args.domain, state)
+        print(json.dumps({key: result[key] for key in ("id", "branch", "status", "exit_code", "counts", "reason_codes", "summary_file")}, indent=2))
+        return 0 if result["status"] in {"passed", "not_applicable"} else 1 if result["status"] == "failed" else 2
+    if action == "triage":
+        if (state.get("integration") or {}).get("status") == "verified":
+            raise ValueError("A verified integration keeps its audit history; use a new repair domain")
+        finalization.triage(state, docs, args.run_id, args.classification, args.reason, args.work_id)
+        commit_lifecycle_mutation(root, args.domain, state)
+        print("Newman diagnosis recorded: " + args.run_id)
+        return 0
+    if action == "finalize":
+        errors = delivery.validation_errors(root, args.domain, state, docs, markdown_sections, final=True)
+        errors.extend(finalization.final_errors(root, args.domain, state, docs, d))
+        if errors:
+            return reject_transition(args.domain, "finalize whole delivery", errors)
+        ctx = finalization.scope(root, args.domain, state, docs, d)
+        fin = finalization.policy(state)
+        fin["receipt"] = {"scope_sha256": ctx["html_metadata"]["scope_sha256"],
+                          "html_sha256": fin["explanation"]["html_sha256"]}
+        commit_lifecycle_mutation(root, args.domain, state)
+        print("Whole-work delivery finalized; independent lifecycle audits retain their gates.")
+        return 0
+    if action == "refresh":
+        delivery.refresh_artifacts(root, args.domain, state, args.branch, markdown_sections)
+        commit_lifecycle_mutation(root, args.domain, state)
+        print(f"Delivery artifacts refreshed: {args.branch}")
+        return 0
+    errors = delivery.validation_errors(root, args.domain, state, docs, markdown_sections, final=args.final)
+    if errors:
+        return reject_transition(args.domain, "verify delivery artifacts", errors)
+    print("Delivery artifacts verified." if delivery.active(state) else "Legacy delivery policy is inactive; run delivery enable before implementation.")
     return 0
 
 
@@ -3510,6 +3688,36 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("domain")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=next_item)
+
+    sp = sub.add_parser("delivery")
+    dsub = sp.add_subparsers(dest="delivery_command", required=True)
+    for name in ("enable", "paths", "check", "refresh", "context", "explain", "newman", "triage", "finalize"):
+        command = dsub.add_parser(name)
+        command.add_argument("domain")
+        if name in {"paths", "refresh"}:
+            command.add_argument("--branch", required=name == "refresh")
+        if name == "check":
+            command.add_argument("--final", action="store_true")
+        if name == "explain":
+            command.add_argument("--skill-file")
+            command.add_argument("--invocation", required=True)
+        if name == "newman":
+            command.add_argument("--branch", required=True)
+            command.add_argument("--base-url")
+            command.add_argument("--environment")
+            command.add_argument("--server-sha")
+            command.add_argument("--safety-note")
+            command.add_argument("--allow-host", action="append", default=[])
+            command.add_argument("--allow-writes", action="store_true")
+            command.add_argument("--newman-bin")
+            command.add_argument("--timeout", type=int, default=120)
+            command.add_argument("--request-timeout", type=int, default=10)
+        if name == "triage":
+            command.add_argument("--run-id", required=True)
+            command.add_argument("--classification", choices=sorted(finalization.CLASSIFICATIONS), required=True)
+            command.add_argument("--reason", required=True)
+            command.add_argument("--work-id")
+        command.set_defaults(func=delivery_command)
 
     sp = sub.add_parser("work")
     worksub = sp.add_subparsers(dest="work_command", required=True)
@@ -3566,6 +3774,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("render")
     rsub = sp.add_subparsers(dest="render_command", required=True)
+    s = rsub.add_parser("finalize"); s.add_argument("domain"); s.set_defaults(func=render)
     s = rsub.add_parser("plan"); s.add_argument("domain"); s.set_defaults(func=render)
     s = rsub.add_parser("run"); s.add_argument("domain"); s.add_argument("--task"); s.set_defaults(func=render)
     s = rsub.add_parser("audit"); s.add_argument("domain"); s.add_argument("--scope", choices=["plan", "work", "phase", "integration"], required=True); s.add_argument("--task"); s.add_argument("--phase"); s.add_argument("--mode", choices=["initial", "closure"], default="initial"); s.set_defaults(func=render)
@@ -3576,7 +3785,8 @@ def main() -> int:
     try:
         configure_work_schema()
         args = build_parser().parse_args()
-        if args.func not in {validate, print_status}:
+        readonly_delivery = args.func == delivery_command and args.delivery_command in {"paths", "check", "context"}
+        if args.func not in {validate, print_status} and not readonly_delivery:
             config_errors, _config_warnings, newer_config = config_protocol_diagnostics(repo_root())
             if config_errors:
                 for error in config_errors:

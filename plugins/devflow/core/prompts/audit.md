@@ -54,3 +54,23 @@ reads from the machine-owned `audit_provenance` recorded when the initial audit 
 not read from a committed file version. Reopen a finding only to a current-only finding ID when
 evidence disproves closure. A finding you keep `still_open`, or reopen into a new one, must stay at
 least at its recorded severity; you may raise it with new evidence but not lower it.
+
+## Delivery audit axes
+
+For enabled domains, run `devflow delivery check <domain>`; use `--final` at integration closure.
+Review the appended delivery-artifacts contract. Verify comments explain actual intent/constraints,
+PR body follows the consuming project's template and source range, and cumulative Postman requests
+match real routes/DTO/auth/error responses. Check credential hygiene, realistic synthetic data,
+request dependencies and any no-HTTP assessment. Structural acceptance verifies only the documented
+offline profile. Credit API execution only when an actual run produced evidence. Remediation WORK
+updates the same branch artifacts; local docs need no Git history.
+
+## Whole-work finalization review
+
+For enabled finalization, apply `finalization.md`. Compare the single ELI5 HTML to all WORK and
+branches, including cancelled/transferred outcomes, cross-branch behavior, final commits and actual
+test results. Verify genuine installed-skill invocation and useful explanation beyond metadata.
+Check Newman target/build isolation, complete request/assertion coverage, raw/summary integrity,
+secret hygiene and no-HTTP rationale. Inspect every failed run's contract-based diagnosis,
+regression, repair commit and later passing server build. Preserve independent audit gates;
+finalization evidence authorizes handoff, and the Auditor verifies its truth.

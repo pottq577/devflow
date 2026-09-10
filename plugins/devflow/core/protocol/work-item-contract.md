@@ -158,3 +158,27 @@ normalizes that shape for reading and preserves its lifecycle without rewriting 
 `review` is optional for existing WORK. The runtime reads legacy high or critical done WORK as
 requiring review before a dependent starts, without requiring an artifact migration. New high and
 critical WORK should record the review metadata explicitly.
+
+## Protocol 1.6 delivery evidence
+
+When `STATE.delivery` is enabled, every new completion obeys `delivery-artifacts.md`.
+`work start` records `evidence.start_sha`. Before completion, commit source/tests, record source
+comment anchors and intent, and generate the cumulative branch PR and Postman outputs. `work done`
+requires current HEAD, refuses uncommitted executable source, derives changed files, and validates
+source-comment existence and delivery provenance in the existing atomic transaction. Semantic
+usefulness and API correctness remain audited. No executable change requires an explained
+`comments_note`; no HTTP surface requires an explained empty collection.
+
+The two derived output files plus existing STATE/WORK evidence receive a narrow allowance for
+older scope lists. Already-done WORK snapshotted by `delivery enable` remains intact; ready and
+in-progress WORK adopts the new obligations. One selected WORK per invocation remains the boundary.
+
+## Protocol 1.7 Newman repairs
+
+A confirmed code/collection failure becomes normal integration remediation WORK. Its
+`origin.findings` contains `NEWMAN-<run-id>` and its `references` includes that run's sanitized
+summary. Define bounded files, accepted contract, failing reproduction, regression coverage and
+risk. Register it using `delivery triage`; then follow ordinary start, commit, delivery and done.
+Preserve the evidence of previously completed WORK. For a collection defect with ignored derived
+JSON, commit a meaningful tracked regression fixture/test or generator correction. Environment
+failures keep setup evidence and reruns, with no speculative code repair commit.

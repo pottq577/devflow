@@ -60,9 +60,22 @@ def sh(
 
 
 def devflow(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    """Drive legacy completion-contract scenarios at the current audit protocol.
+
+    These existing scenarios predate source-comment/PR/Postman evidence. Their fixtures explicitly
+    omit the optional additive delivery policy; assertions on lifecycle, rollback, audits and
+    WORK v1/v2 remain unchanged. test_delivery.py invokes runtime directly to test the new init
+    default and full delivery-enabled lifecycle, without this legacy fixture preparation.
+    """
     proc = sh([sys.executable, str(CLI), *args], cwd)
-    if proc.returncode == 0 and args and args[0] == "init" and "audit-remediation" not in args:
-        fill_delivery_contract(cwd / "docs/domains" / args[1])
+    if proc.returncode == 0 and args and args[0] == "init":
+        d = cwd / "docs/domains" / args[1]
+        if "audit-remediation" not in args:
+            fill_delivery_contract(d)
+        state_file = d / "STATE.yaml"
+        legacy = yaml.safe_load(state_file.read_text(encoding="utf-8"))
+        legacy.pop("delivery", None)
+        dump(state_file, legacy)
     return proc
 
 
@@ -134,7 +147,7 @@ def legacy_config(root: Path, version: str) -> None:
 
 
 def state(phases: dict[str, Any], *, integration: str = "pending", **extra: Any) -> dict[str, Any]:
-    """A STATE fixture at the current runtime protocol, matching what `devflow init` writes. A test
+    """A STATE fixture at the current protocol with the legacy optional delivery policy absent. A test
     that needs a genuine pre-1.3 project passes `protocol_version="1.2.0"` and calls `legacy_config`."""
     doc: dict[str, Any] = {
         "protocol_version": RUNTIME_PROTOCOL,
@@ -354,9 +367,10 @@ def case_fixtures_are_valid_yaml(root: Path) -> None:
 
 
 def case_timeout_diagnostics(root: Path) -> None:
+    # Skip third-party site startup so the timeout probe measures its child, not environment hooks.
     try:
         sh(
-            [sys.executable, "-u", "-c", "import sys, time; print('stdout'); print('stderr', file=sys.stderr); time.sleep(5)"],
+            [sys.executable, "-S", "-u", "-c", "import sys, time; print('stdout'); print('stderr', file=sys.stderr); time.sleep(5)"],
             root,
             timeout=2.0,
         )
@@ -4709,7 +4723,7 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
     entries = [entry for entry in marketplace.get("plugins", []) if entry.get("name") == manifest.get("name")]
     check(
         "marketplace plugin version matches manifest",
-        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.6.1",
+        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == "0.8.0",
         repr(entries),
     )
 
@@ -5437,7 +5451,7 @@ def case_protocol_version_is_enforced(root: Path) -> None:
     )
 
     # The audit-apply gate threshold is 1.3.0, not the runtime version. A genuine 1.3.0 project
-    # (config and STATE both 1.3.0) still cannot use a legacy verified transition under a 1.5.0
+    # (config and STATE both 1.3.0) still cannot use a legacy verified transition under a 1.7.0
     # runtime.
     devflow(root, "init", "legacy13")
     legacy_config(root, "1.3.0")
@@ -5448,7 +5462,7 @@ def case_protocol_version_is_enforced(root: Path) -> None:
     dump(ld / "STATE.yaml", doc)
     gated = devflow(root, "phase", "set", "legacy13", "01", "verified")
     check(
-        "a 1.3.0 STATE still requires audit apply under the 1.5.0 runtime",
+        "a 1.3.0 STATE still requires audit apply under the 1.7.0 runtime",
         gated.returncode == 2 and "protocol 1.3+ requires devflow audit apply" in gated.stderr,
         gated.stdout + gated.stderr,
     )
@@ -5468,7 +5482,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
         (dd / "audits/phase-01.md").write_text("# phase audit\n")
         return dd
 
-    # config 1.5.0 (from init), STATE hand-downgraded to 1.2.0
+    # config 1.7.0 (from init), STATE hand-downgraded to 1.2.0
     d = verifiable_phase("billing")
     high = high_done("P01-I02")
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01"), high))
@@ -5485,7 +5499,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
     work_v = devflow(root, "work", "review", "billing", "P01-I02", "verified")
     validated = devflow(root, "validate", "billing")
     check(
-        "AC-01/AC-02: a STATE downgrade under a 1.5.0 config cannot re-enable any legacy verified transition",
+        "AC-01/AC-02: a STATE downgrade under a 1.7.0 config cannot re-enable any legacy verified transition",
         all(
             out.returncode == 2 and "protocol 1.3+ requires devflow audit apply" in out.stderr
             for out in (phase_v, integ_v, plan_v, work_v)
@@ -5496,7 +5510,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
     check(
         "AC-03: validate reports the STATE-older-than-config protocol downgrade",
         validated.returncode == 1
-        and "STATE protocol_version 1.2.0 is older than the project's .devflow/config.yaml protocol_version 1.5.0" in validated.stdout,
+        and "STATE protocol_version 1.2.0 is older than the project's .devflow/config.yaml protocol_version 1.7.0" in validated.stdout,
         validated.stdout + validated.stderr,
     )
 
@@ -5560,9 +5574,9 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
     state_template = yaml.safe_load((PLUGIN / "core/templates/STATE.yaml").read_text())
     check(
         "new init and the STATE template record the current runtime protocol",
-        config.get("protocol_version") == "1.5.0"
-        and state_doc.get("protocol_version") == "1.5.0"
-        and state_template.get("protocol_version") == "1.5.0",
+        config.get("protocol_version") == "1.7.0"
+        and state_doc.get("protocol_version") == "1.7.0"
+        and state_template.get("protocol_version") == "1.7.0",
         repr(config) + repr(state_doc) + repr(state_template),
     )
 
@@ -5585,12 +5599,12 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
         older.stdout + older.stderr,
     )
 
-    config["protocol_version"] = "1.5.0"
+    config["protocol_version"] = "1.7.0"
     dump(config_path, config)
     human = devflow(root, "status", "billing")
     machine = devflow(root, "status", "billing", "--json")
     report = json.loads(machine.stdout) if machine.returncode == 0 else {}
-    expected_versions = {"runtime": "1.5.0", "config": "1.5.0", "state": "1.5.0", "effective": "1.5.0"}
+    expected_versions = {"runtime": "1.7.0", "config": "1.7.0", "state": "1.7.0", "effective": "1.7.0"}
     check(
         "human and JSON status expose runtime, config, state, and effective protocol versions",
         human.returncode == 0
@@ -5811,12 +5825,12 @@ def case_peer_skill_composition_contract(root: Path) -> None:
     for phrase in [
         "Superpowers",
         "Ponytail",
-        "Peer integrations are optional.",
-        "DevFlow must remain fully usable when a named peer plugin is absent.",
+        "General peer execution disciplines are optional.",
+        "Ordinary DevFlow lifecycle commands remain usable when an optional peer plugin is absent.",
         "They do not own lifecycle transitions.",
         "Do not automatically enable Ponytail or change its mode.",
         "Do not create separate Ponytail review artifacts.",
-        "Missing peer plugins never block DevFlow.",
+        "Missing optional peer disciplines never block ordinary DevFlow execution.",
     ]:
         check(f"skill-composition states: {phrase!r}", phrase in text, text)
 

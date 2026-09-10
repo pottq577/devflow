@@ -1,0 +1,20 @@
+{
+  "info": {
+    "name": "DevFlow branch API handoff",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Template only. Populate from committed routes, DTOs, auth and response contracts. Configure local baseUrl and test credentials before a manually approved run. For no HTTP changes, retain an empty item array and write the concrete assessment here.",
+    "_devflow": {
+      "branch": "REPLACE_WITH_BRANCH",
+      "base_sha": "REPLACE_WITH_FULL_BASE_SHA",
+      "head_sha": "REPLACE_WITH_FULL_HEAD_SHA"
+    }
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": []
+}

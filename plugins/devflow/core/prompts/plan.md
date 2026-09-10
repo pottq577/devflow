@@ -42,3 +42,19 @@ For a high-risk domain, leave plan review pending until its initial plan audit i
 runtime reports the next action but does not autonomously orchestrate execution or review.
 
 Do not create separate task Markdown documents or handoff prompts.
+
+## Implementation delivery obligations
+
+Adopt the policy for legacy active work with `devflow delivery enable <domain>`. Read the consuming
+project's `docs/PR/templates.md`. Populate PLAN with the branch/base mapping and each WORK with
+meaningful-comment intent, affected HTTP surface and delivery acceptance. Include PR/Postman
+creation/refresh in existing WORK completion, using `delivery paths` for filenames. Preserve
+completed WORK on adoption. The appended delivery-artifacts protocol defines the exact contract.
+
+## Whole-work final delivery
+
+Include the protocol 1.7 ELI5/Newman stage in final acceptance and task handoff. Inspect actual
+installed ELI5 discovery, Newman availability, documented test startup, authentication, fixture
+cleanup and side-effect isolation. Plan branch/build coverage and tracked collection regression
+fixtures where generated docs are ignored. Use existing WORK for bounded code/test fixes; retain
+one whole-domain explanation and actual per-branch test evidence under `finalization.md`.

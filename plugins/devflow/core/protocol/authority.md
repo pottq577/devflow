@@ -50,3 +50,14 @@ stale. Fix the entry in the same change.
 The render commands assemble bounded context, not repository RAG or semantic search: plan receives
 the full PRD, run receives the selected WORK and exact origin-linked PRD/PLAN sections, work and
 phase audits receive scope-linked context, and integration receives broad summaries and paths.
+
+## Delivery output authority
+
+`delivery-artifacts.md` grants a narrow allowance for the requested branch PR body and Postman
+collection, including existing WORK scope lists. Read the consuming project's
+`docs/PR/templates.md` as input; preserve it. Generated outputs stay derived from code, source refs,
+executed evidence and existing STATE/WORK, and grant no product-scope or remote-operation authority.
+
+Protocol 1.7 `finalization.md` additionally authorizes the whole-work ELI5 HTML, sanitized Newman
+summaries and local private test diagnostics. All source/test corrections use traceable ordinary
+WORK and commits. The actual accepted API contract governs code-versus-collection diagnosis.

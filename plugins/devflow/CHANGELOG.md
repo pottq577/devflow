@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.8.0 - 2026-09-10
+
+Protocol 1.7.0: whole-domain installed-ELI5 HTML; foreground Newman runs; private diagnostics and sanitized receipts; contract-based code/collection/environment diagnosis; ordinary committed remediation WORK; fresh-evidence finalization gate. Preserves both adapters, private docs and independent audits.
+
+## 0.7.0
+
+### Added
+
+- Protocol 1.6 source-comment evidence and atomic completion checks for changed executable source.
+  Audits independently assess semantic usefulness; docs/config/deletion-only WORK records a reason.
+- Cumulative per-branch PR Markdown from the consuming project's `docs/PR/templates.md`, with exact
+  heading-order checks, pinned base/head metadata, collision-resistant paths and content hashes.
+- Cumulative per-branch Postman v2.1 JSON and an offline authoring-profile validator. Checks include
+  nested structure, scoped variables, auth/body/test-script shape, declared endpoint coverage and
+  common credential literals. No-HTTP branches have explained empty collections.
+- `delivery enable`, `delivery paths`, `delivery check [--final]` and `delivery refresh` CLI helpers.
+- Independent delivery regression tests using real Git source objects and local ignored artifacts.
+
+### Fixed
+
+- Aligned the previously restrictive artifact budget across protocol, skills and prompts with the
+  requested PR/Postman deliverables, so executors receive one coherent completion contract.
+- Rendered packets now include the actual project PR template and delivery policy context.
+- Run instructions distinguish ready-item start from in-progress resumption, preserving the
+  original start SHA instead of invoking a ready-only transition again.
+- Enabled completion verifies current source HEAD, comment-source ancestry and uncommitted source;
+  arbitrary/stale commit strings cannot establish delivery provenance.
+- Restored the executable permission on `bin/devflow`; added a real wrapper launch regression.
+- The timeout-diagnostic test skips unrelated Python site initialization while keeping its original
+  timeout, sleeping child and output assertions.
+- Pinned parent bases survive parent branch deletion; generated filenames distinguish slash,
+  punctuation and case variations. Final checks detect advancing source branch tips.
+
+### Compatibility and limits
+
+- Plugin version 0.7.0; protocol version 1.6.0. Legacy domains remain backward-readable. `delivery
+  enable` adopts active domains without rewriting PLAN or WORK, preserving already-done items.
+- New domains and plan/run preflight enable the policy. Every remaining implementation/remediation
+  WORK refreshes outputs before completion; one selected WORK per invocation remains unchanged.
+- Local docs stay fully gitignore-compatible. Source Git provenance remains required.
+- The validator is an offline, conservative v2.1 profile. Semantic comments, full API accuracy,
+  Postman GUI import and real server execution require their corresponding review/runtime evidence.
+  Generation performs no remote publication, branch push/merge or API requests.
+
 ## 0.6.1
 
 ### Fixed

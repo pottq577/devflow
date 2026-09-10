@@ -36,7 +36,7 @@ protocol_compatibility:
 workflow_type:
   allowed: [delivery, audit_remediation]
 project_status:
-  allowed: [planning, plan_review, phase_execution, work_audit, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, complete, blocked]
+  allowed: [planning, plan_review, phase_execution, work_audit, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, delivery_finalization, complete, blocked]
 phase_status:
   allowed: [planned, executing, audit, remediation, verified, blocked]
 integration_status:
@@ -61,3 +61,48 @@ phase_entry:
   key_format: >
     Zero-padded two-digit strings ("01", "05"). The runtime normalizes on read, so "5" also resolves,
     but validate reports two raw keys that normalize to the same phase as an error.
+
+delivery:
+  optional_for_legacy: true
+  enabled_for_new_domains: true
+  required_fields: [version, grandfathered_work_ids, branches]
+  version: 1
+  grandfathered_work_ids: Unique ids of already-done WORK snapshotted once by delivery enable.
+  branches:
+    key: Exact source branch name.
+    required_fields: [base_ref, base_sha, head_sha, pr_file, postman_file, template_sha256, pr_sha256, postman_sha256, work_ids, api_endpoints, api_note]
+    full_source_shas: [base_sha, head_sha]
+    content_hashes: [template_sha256, pr_sha256, postman_sha256]
+    work_ids: Unique ordered ids; exactly the delivered done WORK on this branch, latest commit equals head_sha.
+    final_gate: Extant local branch tips must equal recorded head_sha at integration verification.
+  migration: delivery enable preserves PLAN/WORK bytes and upgrades only the domain STATE protocol; future ready/in-progress WORK obeys the new gate.
+  provenance: Branch artifacts are local files; Git history of documentation is optional.
+
+delivery_finalization:
+  path: delivery.finalization
+  optional_for_legacy: true
+  version: 1
+  required_fields: [version, runs, diagnoses, explanation]
+  optional_fields: [receipt]
+  runs:
+    type: list
+    immutable_attempt_ids: true
+    required_fields: [id, branch, source_sha, collection_sha256, recorded_at, exit_code, status, counts, reason_codes, server_sha, newman_version, raw_file, raw_sha256, summary_file, summary_sha256]
+    status: [passed, failed, blocked, not_applicable]
+    counts: [expected_requests, requests, request_failures, assertions, assertion_failures, skipped_assertions]
+    private_evidence: Raw report stays local through closure; content hash must match when present.
+  diagnoses:
+    key: Existing unsuccessful run id.
+    required_fields: [classification, reason, work_id]
+    classification: [code, collection, environment, unknown]
+    work_id: Required traced integration remediation for code/collection; null for environment/unknown.
+  explanation:
+    nullable: true
+    required_fields: [html_file, html_sha256, scope_sha256, skill_name, skill_file, skill_sha256, invocation]
+    skill_name: eli5
+    scope: All domain source documents, WORK, branch records, Newman attempts and diagnoses.
+  receipt:
+    required_fields: [scope_sha256, html_sha256]
+    invalidation: Scope or artifact changes require refreshed ELI5/Newman evidence and delivery finalize.
+  commands: [delivery context, delivery explain, delivery newman, delivery triage, delivery finalize]
+  failure_persistence: Newman nonzero exits preserve actual attempt evidence; lifecycle refusals stay atomic.

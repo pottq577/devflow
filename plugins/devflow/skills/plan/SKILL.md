@@ -27,6 +27,9 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 
 1. Determine the domain name and PRD path. If the domain is not initialized, run
    `devflow init <domain> --prd <path> --risk <level> [--extension <name>]`.
+   For an existing domain, run `devflow delivery enable <domain>` before continuing. It preserves
+   completed WORK and adds requirements to future completion. Read `docs/PR/templates.md`; a missing
+   template becomes an explicit prerequisite to resolve before implementation completion.
 2. Confirm `devflow status <domain>` reports `plan`, then run `devflow render plan <domain>`.
    Render rejects any other lifecycle position. The packet inlines the authority rules, lifecycle,
    WORK item contract, decision policy, and the domain's `PITFALLS.md`. Follow it; there is no
@@ -34,6 +37,10 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 3. Inspect repository rules (`AGENTS.md`, `CLAUDE.md`, CI/lint/test configuration), current git
    status, git history when relevant, and the actual implementation surfaces.
 4. Write `docs/domains/<domain>/PLAN.md` using the plan template. Record the immutable baseline SHA.
+   Include the branch/base mapping, code comment intent, affected HTTP contracts and per-branch
+   PR/Postman delivery strategy from `core/protocol/delivery-artifacts.md`. Put those concrete
+   obligations in each WORK's requirements and acceptance/verification mapping. Use the narrow
+   output allowance for derived files; keep implementation scope intact.
 5. Create one version 2 `work/phase-XX.yaml` per implementation phase. Keep all tasks in the
    standard WORK schema; do not create per-task Markdown files. Give each acceptance criterion and
    verification command a unique, nonblank item-local ID. Each command declares nonempty `covers`,
@@ -90,3 +97,11 @@ or worktree lifecycle from inside DevFlow planning.
 
 Finish with the domain, baseline SHA, phase count, work-item count, unresolved decisions, validation
 result, and the next DevFlow action.
+
+## Whole-work final delivery
+
+Include the protocol 1.7 ELI5/Newman stage in final acceptance and task handoff. Inspect actual
+installed ELI5 discovery, Newman availability, documented test startup, authentication, fixture
+cleanup and side-effect isolation. Plan branch/build coverage and tracked collection regression
+fixtures where generated docs are ignored. Use existing WORK for bounded code/test fixes; retain
+one whole-domain explanation and actual per-branch test evidence under `finalization.md`.

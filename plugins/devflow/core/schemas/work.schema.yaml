@@ -67,3 +67,30 @@ enforced_by_validate:
   - done requires evidence.commands, except for kind documentation
   - transferred requires transfer.to, and the target must carry the same origin.requirements
   - explicit review metadata must use a supported status and valid remediation WORK ids
+
+delivery_evidence:
+  enabled_when: STATE.delivery.version equals 1 and WORK is not grandfathered.
+  start_sha: Machine-owned immutable source commit captured by work start; ancestor of completion commit.
+  comments:
+    type: list
+    entry_fields: [path, line, reason]
+    path: Canonical repository-relative changed executable source path.
+    line: Positive integer identifying a substantive comment/docstring in the recorded source commit.
+    reason: Nonblank intent/invariant/constraint explanation; usefulness is audited.
+  comments_note: Concrete exception rationale required for docs/config/deletion-only changes.
+  delivery:
+    executor_fields: [base_ref, pr_file, postman_file, api_endpoints, api_note]
+    optional_executor_fields: [base_sha]
+    recorded_fields: [branch, base_ref, base_sha, head_sha, pr_file, postman_file, template_sha256, pr_sha256, postman_sha256, work_ids, api_endpoints, api_note]
+    api_endpoints: Cumulative branch METHOD /path coverage; empty for a verified no-HTTP change.
+    api_note: Nonblank coverage/exception assessment.
+  complete: Current named-branch HEAD, clean executable source, comment evidence and both derived artifacts validated atomically.
+
+newman_remediation:
+  applies_to: Protocol 1.7 finalization code/collection diagnosis.
+  phase: integration
+  kind: remediation
+  origin_findings: Contains NEWMAN-<failed-run-id>.
+  references: Contains the sanitized failing Newman summary path.
+  evidence: Ordinary verified source/test commit, regression commands, comment and branch delivery evidence.
+  isolation: Only registered scope.allowed files; private generated docs remain local.

@@ -39,3 +39,18 @@ remediation. A pending high/critical WORK review appears before a dependent WORK
 
 Do not infer a different next action from a stale README, audit prose, historical chat, or handoff
 documents. If STATE or WORK validation fails, report the validation problem as the next thing to fix.
+
+## Delivery inspection
+
+`devflow delivery paths <domain> [--branch <name>]` locates the branch PR and Postman outputs.
+`devflow delivery check <domain> [--final]` checks recorded delivery evidence. Legacy policy stays
+readable; plan/run adopts it with `delivery enable` before new execution. Status inspection alone
+preserves that legacy policy and its completed WORK.
+
+## Whole-work finalization
+
+A computed `finalize` action belongs to the Executor, with no selected WORK. Use
+`devflow render finalize <domain>` for the complete ELI5/Newman packet and
+`devflow delivery context <domain>` for all-work scope/output metadata. Distinguish failed API
+assertions, environment blockers, unknown diagnosis, stale HTML and stale source evidence.
+`next` remains a WORK selector and can return nonzero for this non-WORK action.

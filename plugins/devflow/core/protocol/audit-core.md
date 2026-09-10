@@ -276,3 +276,22 @@ severity order is read from `finding.schema.yaml`.
 
 A closure audit after every single item costs more than it returns, and batching a whole phase lets
 defects stack on a wrong premise. Let risk decide. See `risk-policy.md`.
+
+## Implementation delivery evidence
+
+Apply `delivery-artifacts.md` for domains carrying `STATE.delivery`. Validate recorded output
+provenance, inspect the semantic usefulness of source comments, compare PR content to the real
+branch base/head diff, and review collection coverage/auth/DTO/error assertions. An empty collection
+requires a verified no-HTTP rationale. Integration closure requires current per-branch outputs.
+Treat local file validation and actual API execution as separate evidence. Report discovered
+issues through existing finding classification and traced remediation WORK.
+
+## Whole-work finalization review
+
+For enabled finalization, apply `finalization.md`. Compare the single ELI5 HTML to all WORK and
+branches, including cancelled/transferred outcomes, cross-branch behavior, final commits and actual
+test results. Verify genuine installed-skill invocation and useful explanation beyond metadata.
+Check Newman target/build isolation, complete request/assertion coverage, raw/summary integrity,
+secret hygiene and no-HTTP rationale. Inspect every failed run's contract-based diagnosis,
+regression, repair commit and later passing server build. Preserve independent audit gates;
+finalization evidence authorizes handoff, and the Auditor verifies its truth.

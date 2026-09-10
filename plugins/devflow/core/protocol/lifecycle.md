@@ -28,7 +28,8 @@ PRD
  -> phase remediation
  -> phase closure audit
  -> next phase
- -> integration initial audit
+ -> whole-work ELI5 and Newman finalization (when enabled)
+-> integration initial audit
  -> integration remediation
  -> integration closure audit
  -> integration verified
@@ -168,7 +169,7 @@ is no bulk migration. Recover the one affected scope in place:
 
 ## Artifact budget
 
-Project artifacts are limited to:
+Lifecycle records and their prescribed delivery outputs are:
 
 | Artifact | Holds |
 | --- | --- |
@@ -179,6 +180,8 @@ Project artifacts are limited to:
 | `DECISIONS.md` | Human and product decisions, when any exist. |
 | `work/*.yaml` | Every executable change, general and remediation alike. |
 | `audits/*.md` | One file per audit scope. |
+| `docs/PR/<domain-slug-hash>/<branch-slug-hash>.md` | Cumulative local PR body derived from the consuming project template. |
+| `docs/postman/<domain-slug-hash>/<branch-slug-hash>.postman_collection.json` | Cumulative importable collection for the delivered branch. |
 
 Do not create separate task Markdown files, handoff documents, remediation plans, focused-review
 documents, integration-test plans, or prompt handoff documents. STATE and the CLI reconstruct the
@@ -198,3 +201,33 @@ is how the next session repeats an incident the last one already paid for. `plan
 session after.
 
 Entries earn their place by having cost something. Remove one when the trap is actually gone.
+
+## Protocol 1.6 branch delivery gate
+
+New domains carry `delivery.version: 1`. `delivery enable` adopts legacy domains idempotently,
+preserving completed WORK; plan/run invokes this preflight. The exact source-comment and
+per-branch PR/Postman contract is `delivery-artifacts.md`. Derived artifacts use existing
+STATE/WORK provenance, so the lifecycle controller and four role operations remain unchanged.
+
+`work done` validates delivery before its atomic commit. Domain validation checks all recorded
+branch outputs; verified integration also checks extant branch tips. `delivery refresh` repairs
+artifact-only changes at the same source HEAD. New source commits use ordinary WORK. Local output
+paths under `docs/PR/` and `docs/postman/` are permitted additions to the lifecycle artifact budget.
+
+## Protocol 1.7 whole-work delivery gate
+
+The computed executor action `finalize` aggregates the entire domain before integration handoff
+and after integration remediation. It produces one installed-ELI5 HTML and actual per-branch Newman
+receipts under `finalization.md`. Confirmed API failures register traced integration remediation
+WORK; that work executes through normal dependency, commit and review gates. `delivery finalize`
+records a fresh receipt and releases the existing independent integration audit. It never marks
+integration verified itself. A phase-free initial audit can first discover implementation work.
+
+New derived artifacts are `docs/explanations/<domain-slug-hash>/implementation.html` and sanitized
+`docs/postman/<domain-slug-hash>/newman/<run-id>.summary.json`. Raw responses stay in locally
+Git-excluded `.devflow/private/newman/<run-id>/` through closure. `delivery newman` persists run
+results even when returning nonzero; rejected lifecycle transitions still preserve STATE/WORK.
+The optional `delivery.finalization` field is adopted idempotently with `delivery enable`.
+
+`status` can report `next.command: finalize`; `render finalize` supplies its entire-domain packet.
+`next` remains the one-WORK selector and returns nonzero when the next action is finalization.

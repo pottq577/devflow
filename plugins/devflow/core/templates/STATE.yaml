@@ -1,4 +1,4 @@
-protocol_version: "1.5.0"
+protocol_version: "1.7.0"
 workflow_type: delivery
 domain: example
 risk_profile: medium
@@ -40,3 +40,15 @@ next_action:
   scope: project
   phase: null
   work_item: null
+
+# New domains enforce local implementation handoffs. Runtime owns the branch records.
+delivery:
+  version: 1
+  grandfathered_work_ids: []
+  branches: {}
+
+  finalization:
+    version: 1
+    runs: []
+    diagnoses: {}
+    explanation: null

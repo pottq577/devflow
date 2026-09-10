@@ -23,10 +23,12 @@ A peer skill must not widen the active WORK scope or bypass a DevFlow lifecycle 
 
 ## Availability
 
-Peer integrations are optional.
+General peer execution disciplines are optional. The explicitly requested installed ELI5
+capability is required only for an enabled protocol 1.7 finalization gate.
 
-DevFlow must remain fully usable when a named peer plugin is absent. Do not require peer-plugin
-installation, configuration, state, or runtime discovery to execute DevFlow commands.
+Ordinary DevFlow lifecycle commands remain usable when an optional peer plugin is absent.
+General commands require no peer-plugin installation or state. The enabled ELI5 finalization
+step has the explicit capability/provenance requirement described below.
 
 When a compatible peer capability is already available to the agent, it may be composed
 according to this document.
@@ -126,10 +128,20 @@ unless a future protocol revision explicitly adds such a contract.
 
 ## Failure and absence
 
-Missing peer plugins never block DevFlow.
+Missing optional peer disciplines never block ordinary DevFlow execution. Missing ELI5 blocks
+only the requested whole-work finalization under `finalization.md`, preserving implemented WORK.
 
-If a peer capability cannot be invoked, continue using the native DevFlow procedure and
+If an optional discipline cannot be invoked, continue using the native DevFlow procedure and
 repository verification requirements.
 
 Never simulate successful peer-skill execution or claim that a peer skill was used when it was
 unavailable.
+
+## Required ELI5 delivery capability
+
+During enabled finalization, invoke the installed `eli5` skill through its actual host interface
+with all PLAN/WORK/branch context. Record skill-content provenance and truthful invocation evidence
+in `STATE.delivery.finalization`; write the one prescribed whole-work HTML. This explicit protocol
+exception grants derived explanation output and provenance, while lifecycle ownership stays with
+DevFlow. Newman likewise runs only through the explicit foreground finalization command. Missing
+capabilities are execution blockers, with successful implementation preserved.

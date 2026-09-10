@@ -106,3 +106,23 @@ first, then return the scope to a fresh initial audit with its recovery command:
 
 Finish with verdict, SHAs and diff range, finding counts by classification and severity, generated
 WORK IDs, unresolved decisions, residual risk, and next action.
+
+## Delivery-specific review
+
+Read `core/protocol/delivery-artifacts.md`, already in the rendered packet. For enabled domains,
+verify comment usefulness at the committed anchors, PR template fidelity and correct base/head
+scope, cumulative coverage across all branch WORK, Postman routes/DTO/auth/error checks and empty
+credential defaults. Confirm every no-HTTP assessment against changed source. Keep generated-file
+validation distinct from actual API execution evidence. Run `devflow delivery check <domain>` and,
+at integration closure, add `--final`. Create normal traced WORK for confirmed defects. Each
+remediation refreshes the affected branch outputs before its own completion.
+
+## Whole-work finalization review
+
+For enabled finalization, apply `finalization.md`. Compare the single ELI5 HTML to all WORK and
+branches, including cancelled/transferred outcomes, cross-branch behavior, final commits and actual
+test results. Verify genuine installed-skill invocation and useful explanation beyond metadata.
+Check Newman target/build isolation, complete request/assertion coverage, raw/summary integrity,
+secret hygiene and no-HTTP rationale. Inspect every failed run's contract-based diagnosis,
+regression, repair commit and later passing server build. Preserve independent audit gates;
+finalization evidence authorizes handoff, and the Auditor verifies its truth.

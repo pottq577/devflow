@@ -102,6 +102,7 @@ PRD
 -> phase remediation
 -> phase closure audit
 -> next phase
+-> whole-work ELI5 and Newman finalization (when enabled)
 -> integration initial audit
 -> integration remediation
 -> integration closure audit
@@ -144,7 +145,9 @@ Work, phase, and integration audits support initial and closure semantics where 
 
 ### Artifact budget
 
-DevFlow project output is intentionally bounded to the documented PRD, PLAN, STATE, PITFALLS, DECISIONS, WORK, and AUDIT artifacts.
+DevFlow lifecycle output is bounded to PRD, PLAN, STATE, PITFALLS, DECISIONS, WORK, and AUDIT.
+Protocol 1.6 additionally permits the requested per-branch PR body and Postman collection as local
+delivery outputs. Their provenance lives in existing STATE/WORK; they do not select lifecycle actions.
 
 Do not introduce separate task handoffs, remediation-plan documents, focused-review documents, integration-test-plan documents, or prompt-handoff documents as new lifecycle requirements. The runtime and STATE must remain sufficient to reconstruct the next action.
 
@@ -254,8 +257,8 @@ Inspect the archive for required adapter/plugin files and reject repository/cach
 Current baseline:
 
 ```text
-plugin version:   0.6.1
-protocol version: 1.5.0
+plugin version:   0.8.0
+protocol version: 1.7.0
 ```
 
 Treat these as separate version domains.
@@ -289,3 +292,23 @@ Before reporting a task complete:
 - Explicitly identify any validation that remains unverified because the required external CLI or environment was not exercised.
 
 Do not claim completion, release readiness, or adapter validation from static inspection alone when the relevant acceptance criterion requires executed verification.
+
+### Delivery regression suite
+
+Run `python3 plugins/devflow/tests/test_delivery.py` alongside the framework suite, twice for a
+release. Syntax checks include `scripts/devflow_delivery.py` and `scripts/devflow_postman.py`.
+The offline Postman profile is narrower than the complete official JSON Schema; semantic comment
+quality and actual API-contract coverage remain independent audit responsibilities.
+
+## Protocol 1.7 finalization maintenance
+
+The requested whole-domain ELI5 HTML and sanitized Newman summaries join the narrow derived output
+allowance. Private raw diagnostics live in locally Git-excluded `.devflow/private/newman/`.
+All model reasoning stays in the host; runtime runs only explicit bounded foreground Newman
+commands. `delivery newman` intentionally persists failure receipts on nonzero return; lifecycle
+transition refusals preserve state atomically. Preserve the one-WORK execution and independent
+audit gates while supporting the executor-owned `finalize` action and traced integration repairs.
+
+Run `tests/test_finalization.py` alongside both existing suites. Distinguish subprocess report
+fixtures from actual installed ELI5/Codex and real Newman/server execution. Run the optional real
+Newman integration test when the dependency exists; report a skip honestly otherwise.
