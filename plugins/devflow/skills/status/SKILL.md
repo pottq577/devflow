@@ -50,5 +50,6 @@ Status inspection alone preserves that legacy policy and its completed WORK.
 
 A computed `finalize` action belongs to the Executor, with no selected WORK.
 Use `devflow render finalize <domain>` for the complete ELI5/Newman packet and `devflow delivery context <domain>` for all-work scope/output metadata.
-Distinguish failed API assertions, environment blockers, unknown diagnosis, stale HTML and stale source evidence.
+Distinguish failed API assertions, owned-server lifecycle blockers, unknown diagnosis, stale HTML and stale source evidence.
+Finalization accepts `not_applicable` only with evidence that both the Collection and declared endpoint record have no HTTP surface.
 `next` remains a WORK selector and can return nonzero for this non-WORK action.

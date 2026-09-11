@@ -5,6 +5,7 @@ they never claim that reading a SKILL.md alone proves semantic compliance with t
 """
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
@@ -199,12 +200,113 @@ def structural_errors(state: dict[str, Any]) -> list[str]:
         return [str(exc)]
 
 
+def lifecycle_errors(root: Path, run: dict[str, Any], *, require_success: bool = True) -> list[str]:
+    lifecycle = run.get('server_lifecycle')
+    if not isinstance(lifecycle, dict):
+        return ['Newman server lifecycle evidence is missing: ' + str(run.get('id'))]
+    errors: list[str] = []
+    events = lifecycle.get('events')
+    expected = ['server_started', 'readiness_passed', 'newman_started', 'newman_finished',
+                'server_stop_requested', 'server_stopped']
+    if not isinstance(events, list) or [event.get('name') for event in events if isinstance(event, dict)] != expected:
+        errors.append('Newman server lifecycle event order is incomplete: ' + str(run.get('id')))
+    else:
+        try:
+            stamps = [dt.datetime.fromisoformat(event['at']) for event in events]
+            if any(left > right for left, right in zip(stamps, stamps[1:])):
+                errors.append('Newman server lifecycle event timestamps are out of order: ' + str(run.get('id')))
+        except (KeyError, TypeError, ValueError):
+            errors.append('Newman server lifecycle event timestamps are invalid: ' + str(run.get('id')))
+    startup = lifecycle.get('startup')
+    readiness = lifecycle.get('readiness')
+    newman = lifecycle.get('newman')
+    cleanup = lifecycle.get('cleanup')
+    if not isinstance(startup, dict) or startup.get('status') != 'passed':
+        errors.append('Newman owned server startup evidence is missing: ' + str(run.get('id')))
+    if not isinstance(readiness, dict) or readiness.get('status') != 'passed' or type(readiness.get('http_status')) is not int or not 200 <= readiness['http_status'] <= 299:
+        errors.append('Newman readiness evidence must be HTTP 200..299: ' + str(run.get('id')))
+    if lifecycle.get('owned_process_alive_before_newman') is not True:
+        errors.append('Newman owned server liveness evidence is missing: ' + str(run.get('id')))
+    if not isinstance(newman, dict) or newman.get('status') not in {'passed', 'failed'}:
+        errors.append('Newman execution completion evidence is missing: ' + str(run.get('id')))
+    if not isinstance(run.get('newman_version'), str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', run['newman_version']):
+        errors.append('Newman version evidence is missing: ' + str(run.get('id')))
+    if not isinstance(cleanup, dict) or cleanup.get('status') != 'passed' or cleanup.get('stopped') is not True:
+        errors.append('Newman server cleanup evidence is unsuccessful: ' + str(run.get('id')))
+    if require_success and (not isinstance(newman, dict) or newman.get('status') != 'passed'):
+        errors.append('Newman execution did not pass: ' + str(run.get('id')))
+    log_file = lifecycle.get('log_file')
+    try:
+        log = delivery.inside(root, log_file)
+        if not isinstance(log_file, str) or not log_file.startswith('.devflow/private/newman/') or not log.is_file():
+            raise ValueError('server log is missing')
+        if lifecycle.get('log_sha256') != hashlib.sha256(log.read_bytes()).hexdigest():
+            errors.append('Newman server log hash changed: ' + str(run.get('id')))
+    except (ValueError, OSError, TypeError):
+        errors.append('Newman server log evidence is missing: ' + str(run.get('id')))
+    return errors
+
+
+def collection_request_count(collection: Any) -> int:
+    if not isinstance(collection, dict):
+        return 0
+    count = 0
+    for item in collection.get('item', []):
+        if isinstance(item, dict) and 'request' in item:
+            count += 1
+        elif isinstance(item, dict):
+            count += collection_request_count(item)
+    return count
+
+
+def no_http_errors(root: Path, record: dict[str, Any], run: dict[str, Any]) -> list[str]:
+    evidence = run.get('no_http_evidence')
+    if not isinstance(evidence, dict):
+        return ['not_applicable requires no-HTTP evidence: ' + str(run.get('id'))]
+    errors: list[str] = []
+    try:
+        text, collection_hash = delivery.read_artifact(root, record['postman_file'], 'Postman')
+        collection = strict_json(text)
+        declared = list(record.get('api_endpoints') or [])
+        checks = {
+            'source_sha': record.get('head_sha'),
+            'collection_sha256': collection_hash,
+            'request_count': collection_request_count(collection),
+            'declared_api_endpoints': declared,
+            'api_note': record.get('api_note'),
+        }
+        for key, expected in checks.items():
+            if evidence.get(key) != expected:
+                errors.append(f'not_applicable evidence disagrees on {key}: {run.get("id")}')
+        if checks['request_count'] != 0 or declared:
+            errors.append('not_applicable requires zero Collection requests and declared endpoints: ' + str(run.get('id')))
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        errors.append('not_applicable proof is invalid: ' + str(exc))
+    return errors
+
+
+def completed_failed_newman(root: Path, run: dict[str, Any]) -> bool:
+    if run.get('status') != 'failed' or (run.get('server_lifecycle') or {}).get('newman', {}).get('status') != 'failed':
+        return False
+    if lifecycle_errors(root, run, require_success=False):
+        return False
+    raw_file = run.get('raw_file')
+    raw_sha = run.get('raw_sha256')
+    try:
+        raw = delivery.inside(root, raw_file)
+        return (isinstance(raw_file, str) and raw_file.startswith('.devflow/private/newman/')
+                and isinstance(raw_sha, str) and delivery.HASH.fullmatch(raw_sha) is not None
+                and raw.is_file() and hashlib.sha256(raw.read_bytes()).hexdigest() == raw_sha)
+    except (ValueError, OSError, TypeError):
+        return False
+
+
 def repair_ids(state: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(d['work_id'] for d in policy(state)['diagnoses'].values()
                              if d.get('classification') in {'code', 'collection'} and d.get('work_id')))
 
 
-def triage(state: dict[str, Any], docs: dict[Path, dict[str, Any]], run_id: str, classification: str,
+def triage(root: Path, state: dict[str, Any], docs: dict[Path, dict[str, Any]], run_id: str, classification: str,
            reason: str, item_id: str | None) -> None:
     fin = policy(state)
     run = next((value for value in fin['runs'] if value['id'] == run_id), None)
@@ -213,6 +315,8 @@ def triage(state: dict[str, Any], docs: dict[Path, dict[str, Any]], run_id: str,
     if classification not in CLASSIFICATIONS or not isinstance(reason, str) or len(reason.strip()) < 20:
         raise ValueError('triage needs a classification and evidence-based contract/reproduction reason')
     if classification in {'code', 'collection'}:
+        if not completed_failed_newman(root, run):
+            raise ValueError('code/collection triage requires a completed failed Newman run with successful server lifecycle')
         index = work_index(docs); item = index.get(item_id or '')
         if not item or item.get('kind') != 'remediation' or item.get('status') not in {'ready', 'in_progress', 'done'}:
             raise ValueError('code/collection triage requires a real remediation WORK via --work-id')
@@ -298,12 +402,14 @@ def final_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path
         run = latest.get(branch)
         if not run:
             errors.append(f'Newman execution evidence missing for branch: {branch}'); continue
-        if run['status'] not in {'passed', 'not_applicable'}:
-            errors.append(f'Newman branch requires successful rerun: {branch}')
         if run['source_sha'] != record['head_sha'] or run['collection_sha256'] != record['postman_sha256']:
             errors.append(f'Newman execution is stale for source/collection: {branch}')
-        if run['status'] == 'not_applicable' and record.get('api_endpoints'):
-            errors.append(f'Newman N/A requires an empty no-HTTP collection: {branch}')
+        if run['status'] == 'not_applicable':
+            errors.extend(no_http_errors(root, record, run))
+        elif run['status'] == 'passed':
+            errors.extend(lifecycle_errors(root, run))
+        else:
+            errors.append(f'Newman branch requires successful rerun: {branch}')
     for run in fin['runs']:
         try:
             text, sha = delivery.read_artifact(root, run['summary_file'], 'Newman sanitized summary')
@@ -312,7 +418,7 @@ def final_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path
             summary = strict_json(text)
             if not isinstance(summary, dict):
                 raise ValueError('Newman sanitized summary must be a JSON object')
-            for key in ('id', 'status', 'branch', 'source_sha', 'collection_sha256', 'exit_code', 'counts', 'server_sha', 'newman_version', 'raw_file', 'raw_sha256', 'reason_codes'):
+            for key in ('id', 'status', 'branch', 'source_sha', 'collection_sha256', 'exit_code', 'counts', 'server_sha', 'newman_version', 'raw_file', 'raw_sha256', 'reason_codes', 'server_lifecycle', 'no_http_evidence'):
                 if summary.get(key) != run.get(key):
                     errors.append(f'Newman summary and STATE disagree on {key}: {run["id"]}')
         except (ValueError, OSError) as exc:
@@ -333,8 +439,15 @@ def final_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path
         diagnosis = fin['diagnoses'].get(run['id'])
         if not diagnosis or diagnosis.get('classification') == 'unknown':
             errors.append('Newman failure requires evidence-based triage: ' + run['id']); continue
+        if diagnosis.get('classification') in {'code', 'collection'} and (
+                not completed_failed_newman(root, run)):
+            errors.append('code/collection triage requires a completed failed Newman run: ' + run['id'])
         subsequent = latest.get(run['branch'])
-        if not subsequent or subsequent['id'] == run['id'] or subsequent['status'] not in {'passed', 'not_applicable'}:
+        branch_record = branches.get(run['branch'], {})
+        valid_subsequent = bool(subsequent) and (
+            not lifecycle_errors(root, subsequent) if subsequent and subsequent.get('status') == 'passed' else
+            not no_http_errors(root, branch_record, subsequent) if subsequent and subsequent.get('status') == 'not_applicable' else False)
+        if not subsequent or subsequent['id'] == run['id'] or not valid_subsequent:
             errors.append('triaged failure requires a later successful Newman run: ' + run['id'])
         if diagnosis['classification'] in {'code', 'collection'}:
             item = index.get(diagnosis.get('work_id'))

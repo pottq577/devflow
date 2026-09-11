@@ -26,7 +26,7 @@ import devflow_delivery as delivery
 import devflow_finalization as finalization
 import devflow_newman as newman
 
-PROTOCOL_VERSION = "1.7.0"
+PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
 REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.I)
 PROTOCOL_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
@@ -3625,16 +3625,18 @@ def delivery_command(args: argparse.Namespace) -> int:
         print("ELI5 explanation provenance recorded: " + ctx["html_file"])
         return 0
     if action == "newman":
-        if not 1 <= args.timeout <= 3600 or not 1 <= args.request_timeout <= args.timeout:
-            raise ValueError("Newman timeouts must satisfy 1 <= request-timeout <= timeout <= 3600 seconds")
         result = newman.execute(root, args.domain, state, args, markdown_sections)
         commit_lifecycle_mutation(root, args.domain, state)
         print(json.dumps({key: result[key] for key in ("id", "branch", "status", "exit_code", "counts", "reason_codes", "summary_file")}, indent=2))
+        if result["status"] == "blocked":
+            details = {"write_scenarios_require_allow_writes": "write scenarios require --allow-writes"}
+            reasons = [details.get(reason, reason) for reason in result["reason_codes"]]
+            print("Newman blocked: " + ", ".join(reasons), file=sys.stderr)
         return 0 if result["status"] in {"passed", "not_applicable"} else 1 if result["status"] == "failed" else 2
     if action == "triage":
         if (state.get("integration") or {}).get("status") == "verified":
             raise ValueError("A verified integration keeps its audit history; use a new repair domain")
-        finalization.triage(state, docs, args.run_id, args.classification, args.reason, args.work_id)
+        finalization.triage(root, state, docs, args.run_id, args.classification, args.reason, args.work_id)
         commit_lifecycle_mutation(root, args.domain, state)
         print("Newman diagnosis recorded: " + args.run_id)
         return 0
@@ -3704,6 +3706,9 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "newman":
             command.add_argument("--branch", required=True)
             command.add_argument("--base-url")
+            command.add_argument("--server-command")
+            command.add_argument("--readiness-url")
+            command.add_argument("--readiness-timeout", type=int, default=60)
             command.add_argument("--environment")
             command.add_argument("--server-sha")
             command.add_argument("--safety-note")

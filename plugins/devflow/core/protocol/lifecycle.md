@@ -192,7 +192,7 @@ Domain validation checks all recorded branch outputs; verified integration also 
 New source commits use ordinary WORK.
 Local output paths under `docs/PR/` and `docs/postman/` are permitted additions to the lifecycle artifact budget.
 
-## Protocol 1.7 whole-work delivery gate
+## Protocol 1.8 whole-work delivery gate
 
 The computed executor action `finalize` aggregates the entire domain before integration handoff and after integration remediation.
 It produces one installed-ELI5 HTML and actual per-branch Newman receipts under `finalization.md`.
@@ -203,6 +203,10 @@ A phase-free initial audit can first discover implementation work.
 New derived artifacts are `docs/explanations/<domain-slug-hash>/implementation.html` and sanitized `docs/postman/<domain-slug-hash>/newman/<run-id>.summary.json`.
 Raw responses stay in locally Git-excluded `.devflow/private/newman/<run-id>/` through closure.
 `delivery newman` persists run results even when returning nonzero; rejected lifecycle transitions still preserve STATE/WORK.
+`delivery newman` owns the server argv process group, HTTP 200..299 readiness, Newman execution and
+bounded SIGTERM/SIGKILL cleanup. Finalization requires the ordered lifecycle and owned-process
+liveness evidence. Only a collection with no HTTP requests and no declared endpoints may be
+`not_applicable`.
 The optional `delivery.finalization` field is adopted idempotently with `delivery enable`.
 
 `status` can report `next.command: finalize`; `render finalize` supplies its entire-domain packet.

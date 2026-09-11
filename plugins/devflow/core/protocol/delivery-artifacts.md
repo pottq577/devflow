@@ -95,9 +95,15 @@ The auditor verifies this assessment against the diff.
 
 Generation itself sends no requests.
 Mark write/payment/deletion/notification scenarios clearly and document test-only preconditions and cleanup.
-Protocol 1.7 finalization explicitly executes authorized isolated local/test Newman runs under `finalization.md`.
+Protocol 1.8 finalization explicitly executes authorized isolated local/test Newman runs under `finalization.md`.
+`delivery newman` owns the server start, HTTP 200..299 readiness check, Newman execution and
+bounded process-group cleanup. Server liveness is checked after readiness and immediately before
+Newman, so a replacement process answering the readiness URL cannot satisfy the gate.
 Production or shared-data side effects retain separate approval.
-Missing servers/tools/credentials keep finalization open; record execution as passed only when the actual run supports it.
+Startup, readiness, environment, Newman-tool and cleanup failures are blocked. An executed Newman
+API/assertion failure is failed and may be triaged as code or collection only after that completed
+run has the full lifecycle evidence. Newman pass plus cleanup failure remains blocked. Missing or
+failed servers, tools and credentials never become `not_applicable`.
 
 ## Validation, refresh and audits
 

@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -54,9 +55,10 @@ class FinalizationTests(DeliveryTests):
         return self.cli('delivery', 'explain', 'sample', '--skill-file', str(self.skill()),
                         '--invocation', '$eli5 with complete PLAN, WORK, branch snapshots and verification results')
 
-    def fake_newman(self, *, failure=False, zero=False, skip=False, invalid=False):
+    def fake_newman(self, *, failure=False, zero=False, skip=False, invalid=False, tool_failure=False):
         path = self.root / 'runner-bin/newman'
         path.parent.mkdir(exist_ok=True)
+        self.newman_marker = self.root / 'newman-invoked'
         n = 0 if zero else 1
         assertions = [] if zero else [{'assertion': 'Status', 'skipped': skip}]
         if failure and assertions:
@@ -69,17 +71,57 @@ class FinalizationTests(DeliveryTests):
         report_text = '{bad' if invalid else json.dumps(report)
         path.write_text('#!' + sys.executable + ' -S\nimport sys, pathlib\n'
                         'if "--version" in sys.argv:\n print("6.2.1"); sys.exit(0)\n'
+                        'pathlib.Path(' + repr(str(self.newman_marker)) + ').write_text("invoked")\n'
                         'pathlib.Path(sys.argv[sys.argv.index("--reporter-json-export")+1]).write_text(' + repr(report_text) + ')\n'
                         'print("secret-do-not-publish")\n'
-                        'sys.exit(' + str(1 if failure else 0) + ')\n')
+                        'sys.exit(' + str(2 if tool_failure else (1 if failure else 0)) + ')\n')
         path.chmod(0o755)
         return path
 
-    def run_newman(self, *extra, **kwargs):
+    def owned_server_command(self, mode='normal'):
+        script = self.root / 'owned-server.txt'
+        self.server_mode = mode
+        self.server_ready_marker = self.root / 'server-ready'
+        script.write_text(
+            'import pathlib, sys, time\n'
+            'mode = sys.argv[2]\n'
+            'marker = pathlib.Path(sys.argv[3])\n'
+            'if mode == "ignore-term":\n'
+            '    import signal\n'
+            '    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+            'if mode == "exit-after-health":\n'
+            '    while not marker.exists(): time.sleep(0.01)\n'
+            '    time.sleep(0.05)\n'
+            '    sys.exit(0)\n'
+            'while True: time.sleep(1)\n'
+        )
+        self.server_ready_marker.unlink(missing_ok=True)
+        return [sys.executable, str(script), '18080', mode, str(self.server_ready_marker)]
+
+    def run_newman(self, *extra, owned=True, server_command=None,
+                   readiness_url='http://127.0.0.1:18080/health', readiness_status=200,
+                   readiness_timeout=5, **kwargs):
         runner = self.fake_newman(**kwargs)
-        return self.cli('delivery', 'newman', 'sample', '--branch', 'feature/sample',
+        args = ['delivery', 'newman', 'sample', '--branch', 'feature/sample',
                         '--newman-bin', str(runner), '--base-url', 'http://127.0.0.1:18080',
-                        '--server-sha', self.head, '--safety-note', 'Disposable local server, synthetic fixtures, no live integrations.', *extra)
+                        '--server-sha', self.head, '--safety-note', 'Disposable local server, synthetic fixtures, no live integrations.']
+        if owned:
+            command = server_command or self.owned_server_command()
+            args += ['--server-command', json.dumps(command), '--readiness-url', readiness_url,
+                     '--readiness-timeout', str(readiness_timeout)]
+        args += list(extra)
+        class Response:
+            status = readiness_status
+            def __enter__(self):
+                if getattr(self_outer, 'server_mode', '') == 'exit-after-health':
+                    self_outer.server_ready_marker.write_text('ready')
+                    time.sleep(0.1)
+                return self
+            def __exit__(self, *args):
+                return False
+        self_outer = self
+        with patch.object(self.runtime.newman, 'urlopen', return_value=Response()):
+            return self.cli(*args)
 
     def test_new_init_and_adoption_enable_finalization(self):
         self.enable()
@@ -138,6 +180,167 @@ class FinalizationTests(DeliveryTests):
         raw = self.root / run['raw_file']; self.assertEqual(raw.stat().st_mode & 0o777, 0o600)
         self.assertTrue(self.git('check-ignore', str(raw)))
 
+    def test_owned_server_lifecycle_is_recorded_before_newman(self):
+        self.completed(); result = self.run_newman()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        lifecycle = run['server_lifecycle']
+        self.assertEqual([event['name'] for event in lifecycle['events']],
+                         ['server_started', 'readiness_passed', 'newman_started', 'newman_finished',
+                          'server_stop_requested', 'server_stopped'])
+        self.assertEqual(lifecycle['readiness']['http_status'], 200)
+        self.assertTrue(lifecycle['owned_process_alive_before_newman'])
+        self.assertEqual(lifecycle['newman']['status'], 'passed')
+        self.assertEqual(lifecycle['cleanup']['status'], 'passed')
+        self.assertTrue((self.root / 'newman-invoked').is_file())
+
+    def test_http_newman_requires_owned_server_command(self):
+        self.completed(); result = self.run_newman(owned=False)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('server_command_required', run['reason_codes'])
+        self.assertFalse((self.root / 'newman-invoked').exists())
+
+    def test_startup_failure_is_blocked_and_persisted(self):
+        self.completed()
+        result = self.run_newman('--server-command', json.dumps(['/missing/devflow-server']))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('server_start_failed', run['reason_codes'])
+        self.assertEqual(run['server_lifecycle']['newman']['status'], 'not_run')
+        self.assertFalse((self.root / 'newman-invoked').exists())
+
+    def test_readiness_requires_2xx_and_newman_does_not_run(self):
+        self.completed(); result = self.run_newman(readiness_url='http://127.0.0.1:18080/not-ready', readiness_status=404,
+                                                   readiness_timeout=1)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('readiness_failed', run['reason_codes'])
+        self.assertEqual(run['server_lifecycle']['readiness']['http_status'], 404)
+        self.assertFalse((self.root / 'newman-invoked').exists())
+
+    def test_readiness_accepts_299(self):
+        self.completed(); result = self.run_newman(readiness_status=299)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.read_state()['delivery']['finalization']['runs'][-1]['server_lifecycle']['readiness']['http_status'], 299)
+
+    def test_readiness_rejects_300(self):
+        self.completed(); result = self.run_newman(readiness_status=300, readiness_timeout=1)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertEqual(run['server_lifecycle']['readiness']['http_status'], 300)
+        self.assertFalse((self.root / 'newman-invoked').exists())
+
+    def test_owned_server_exit_blocks_even_when_readiness_endpoint_is_2xx(self):
+        self.completed()
+        result = self.run_newman(server_command=self.owned_server_command('exit-after-health'))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('owned_server_exited', run['reason_codes'])
+        self.assertFalse((self.root / 'newman-invoked').exists())
+
+    def test_newman_api_failure_is_failed_not_blocked(self):
+        self.completed(); result = self.run_newman(failure=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'failed')
+        self.assertEqual(run['server_lifecycle']['newman']['status'], 'failed')
+        self.assertEqual(run['server_lifecycle']['cleanup']['status'], 'passed')
+
+    def test_completed_newman_tool_failure_is_blocked(self):
+        self.completed(); result = self.run_newman(tool_failure=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('newman_tool_failed', run['reason_codes'])
+
+    def test_cleanup_failure_after_newman_pass_is_blocked(self):
+        self.completed()
+        cleanup = self.runtime.newman.cleanup_server
+        def failed_cleanup(process, lifecycle):
+            cleanup(process, lifecycle)
+            lifecycle['cleanup']['status'] = 'failed'
+            return False
+        with patch.object(self.runtime.newman, 'cleanup_server', side_effect=failed_cleanup):
+            result = self.run_newman()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertEqual(run['server_lifecycle']['newman']['status'], 'passed')
+        self.assertEqual(run['server_lifecycle']['cleanup']['status'], 'failed')
+
+    def test_cleanup_uses_sigkill_fallback_and_confirms_group_stopped(self):
+        self.completed()
+        with patch.object(self.runtime.newman, 'SERVER_TERM_TIMEOUT', 0.05), \
+             patch.object(self.runtime.newman, 'SERVER_KILL_TIMEOUT', 0.05):
+            result = self.run_newman(server_command=self.owned_server_command('ignore-term'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cleanup = self.read_state()['delivery']['finalization']['runs'][-1]['server_lifecycle']['cleanup']
+        self.assertTrue(cleanup['term_sent'])
+        self.assertTrue(cleanup['kill_sent'])
+        self.assertTrue(cleanup['stopped'])
+
+    def test_newman_tool_failure_is_blocked_after_server_cleanup(self):
+        self.completed(); result = self.run_newman('--newman-bin', str(self.root / 'missing-newman'))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertEqual(run['server_lifecycle']['newman']['status'], 'blocked')
+        self.assertEqual(run['server_lifecycle']['cleanup']['status'], 'passed')
+        self.assertFalse((self.root / 'newman-invoked').exists())
+
+    def test_environment_failure_is_blocked_and_not_not_applicable(self):
+        self.completed(); result = self.run_newman('--environment', str(self.root / 'missing-env.json'))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('environment_setup_failed', run['reason_codes'])
+        self.assertNotEqual(run['status'], 'not_applicable')
+
+    def test_no_http_run_records_matching_evidence(self):
+        self.completed(empty=True); result = self.run_newman(zero=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'not_applicable')
+        self.assertEqual(run['no_http_evidence']['request_count'], 0)
+        self.assertEqual(run['no_http_evidence']['declared_api_endpoints'], [])
+        self.assertEqual(run['no_http_evidence']['collection_sha256'], self.postman_hash())
+
+    def postman_hash(self):
+        import hashlib
+        return hashlib.sha256(self.postman.read_bytes()).hexdigest()
+
+    def test_finalize_rejects_http_run_without_lifecycle_evidence(self):
+        self.completed(); self.assertEqual(self.run_newman().returncode, 0)
+        state = self.read_state(); state['delivery']['finalization']['runs'][-1].pop('server_lifecycle')
+        fixtures.dump(self.state_path, state)
+        self.explain()
+        result = self.cli('delivery', 'finalize', 'sample')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('lifecycle', result.stderr.lower())
+
+    def test_finalize_rejects_not_applicable_without_no_http_proof(self):
+        self.completed(empty=True); self.assertEqual(self.run_newman(zero=True).returncode, 0)
+        state = self.read_state(); state['delivery']['finalization']['runs'][-1].pop('no_http_evidence')
+        fixtures.dump(self.state_path, state)
+        self.explain()
+        result = self.cli('delivery', 'finalize', 'sample')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('no-http evidence', result.stderr.lower())
+
+    def test_code_collection_triage_rejects_blocked_run(self):
+        self.completed(); self.run_newman(owned=False)
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        result = self.cli('delivery', 'triage', 'sample', '--run-id', run['id'], '--classification', 'code',
+                          '--reason', 'The blocked server run has no completed Newman API execution evidence.')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('failed Newman', result.stderr)
+
     def test_newman_assertion_failure_persists_evidence_and_returns_nonzero(self):
         self.completed(); result = self.run_newman(failure=True)
         self.assertEqual(result.returncode, 1, result.stderr)
@@ -145,20 +348,25 @@ class FinalizationTests(DeliveryTests):
 
     def test_zero_requests_cannot_pass_nonempty_collection(self):
         self.completed(); result = self.run_newman(zero=True)
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.read_state()['delivery']['finalization']['runs'][-1]['status'], 'blocked')
 
     def test_skipped_assertions_cannot_pass(self):
         self.completed(); result = self.run_newman(skip=True)
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.read_state()['delivery']['finalization']['runs'][-1]['status'], 'blocked')
 
     def test_malformed_newman_report_cannot_pass(self):
         self.completed(); result = self.run_newman(invalid=True)
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.read_state()['delivery']['finalization']['runs'][-1]['status'], 'blocked')
 
     def test_remote_target_requires_explicit_test_host_authorization(self):
         self.completed(); result = self.run_newman('--base-url', 'https://api.example.com')
         self.assertEqual(result.returncode, 2)
-        self.assertIn('host', result.stderr.lower())
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('environment_setup_failed', run['reason_codes'])
 
     def test_server_commit_must_cover_collection_source(self):
         self.completed(); result = self.run_newman('--server-sha', self.base)
@@ -279,7 +487,9 @@ class FinalizationTests(DeliveryTests):
     def test_invalid_timeout_rejected_before_execution(self):
         self.completed(); result = self.run_newman('--timeout', '0')
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(self.read_state()['delivery']['finalization']['runs'], [])
+        run = self.read_state()['delivery']['finalization']['runs'][-1]
+        self.assertEqual(run['status'], 'blocked')
+        self.assertIn('newman_tool_config_invalid', run['reason_codes'])
 
     def test_unknown_classification_preserves_final_block(self):
         self.completed(); self.run_newman(failure=True)
@@ -354,13 +564,23 @@ class FinalizationTests(DeliveryTests):
 
     def test_newman_uses_private_collection_snapshot(self):
         self.completed(); runner = self.fake_newman()
+        server_command = self.owned_server_command()
         text = runner.read_text()
         text = text.replace('import sys, pathlib', 'import sys, pathlib\n')
         text = text.replace('pathlib.Path(sys.argv[', 'assert pathlib.Path(sys.argv[2]).parent.name != "sample"\nassert pathlib.Path(sys.argv[2]).name == "collection.json"\npathlib.Path(sys.argv[')
         runner.write_text(text)
-        result = self.cli('delivery', 'newman', 'sample', '--branch', 'feature/sample',
-                          '--newman-bin', str(runner), '--base-url', 'http://localhost:8080',
-                          '--server-sha', self.head, '--safety-note', 'Verified synthetic fixtures and isolated local server.')
+        class Response:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+        with patch.object(self.runtime.newman, 'urlopen', return_value=Response()):
+            result = self.cli('delivery', 'newman', 'sample', '--branch', 'feature/sample',
+                              '--newman-bin', str(runner), '--base-url', 'http://localhost:8080',
+                              '--server-command', json.dumps(server_command),
+                              '--readiness-url', 'http://127.0.0.1:18080/health',
+                              '--server-sha', self.head, '--safety-note', 'Verified synthetic fixtures and isolated local server.')
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_private_symlink_is_rejected_before_file_creation(self):

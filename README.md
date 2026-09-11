@@ -2,7 +2,7 @@
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
 Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version
-0.8.0 and its protocol version is `1.7.0`.
+0.8.1 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -37,13 +37,14 @@ adopt the new completion requirements; completed WORK is preserved. New domains 
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
 
-## Version 0.8.0 whole-work completion
+## Version 0.8.1 whole-work completion
 
 After branch PR/collection generation, the Executor invokes the installed `eli5` skill to produce
-one HTML explanation of the whole domain, executes collections with installed Newman against
-verified isolated test builds, diagnoses code/collection/environment failures, and routes code or
-collection defects through normal tested, committed remediation WORK. It refreshes all delivery
-outputs and the explanation before independent integration audit.
+one HTML explanation of the whole domain, uses `delivery newman` to own server start, readiness,
+Newman execution and cleanup against verified isolated test builds, diagnoses code/collection/
+environment failures, and routes code or collection defects through normal tested, committed
+remediation WORK. It refreshes all delivery outputs and the explanation before independent
+integration audit.
 
 Adopt an existing domain with `devflow delivery enable <domain>`, then use `devflow status <domain>`.
 When `next.command` is `finalize`, use `devflow render finalize <domain>`. See

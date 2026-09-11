@@ -11,11 +11,15 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
 
 import devflow_delivery as delivery
@@ -25,6 +29,9 @@ from devflow_postman import strict_json
 
 SKIP_OR_EXTRA_REQUEST = re.compile(r'\b(?:pm\s*\.\s*sendRequest|pm\s*\.\s*execution\s*\.\s*(?:skipRequest|runRequest|setNextRequest)|postman\s*\.\s*setNextRequest)\s*\(')
 BASE_MUTATION = re.compile(r'\bpm\s*\.\s*(?:environment|variables|collectionVariables|globals)\s*\.\s*(?:set|unset|clear)\s*\([^)]*[\'"]baseUrl[\'"]')
+READINESS_POLL_INTERVAL = 0.2
+SERVER_TERM_TIMEOUT = 5
+SERVER_KILL_TIMEOUT = 2
 
 
 def leaves(collection: dict[str, Any]) -> list[dict[str, Any]]:
@@ -129,6 +136,7 @@ def summarize(report: Any, expected: int, exit_code: int) -> tuple[str, dict[str
     if not isinstance(report, dict) or not isinstance(report.get('run'), dict):
         return 'blocked', counts, ['report_unavailable']
     run = report['run']; stats = run.get('stats', {})
+    api_failure = False
     for destination, category, metric in [('requests', 'requests', 'total'), ('request_failures', 'requests', 'failed'),
                                          ('assertions', 'assertions', 'total'), ('assertion_failures', 'assertions', 'failed'),
                                          ('skipped_assertions', 'assertions', 'pending')]:
@@ -155,13 +163,145 @@ def summarize(report: Any, expected: int, exit_code: int) -> tuple[str, dict[str
         if not isinstance(assertions, list) or not assertions:
             reasons.append('request_without_assertion'); continue
         for assertion in assertions:
-            if not isinstance(assertion, dict) or assertion.get('skipped') or assertion.get('error'):
-                reasons.append('unsuccessful_assertion')
+            if not isinstance(assertion, dict):
+                reasons.append('invalid_assertion')
+            elif assertion.get('skipped'):
+                reasons.append('skipped_assertions')
+            elif assertion.get('error'):
+                api_failure = True
+                reasons.append('assertion_failure')
     if exit_code != 0:
         reasons.append('nonzero_exit')
-    if run.get('failures') or counts['request_failures'] or counts['assertion_failures'] or counts['skipped_assertions']:
+    if run.get('failures') or counts['request_failures'] or counts['assertion_failures']:
+        api_failure = True
         reasons.append('run_failures')
-    return ('failed' if reasons else 'passed'), counts, sorted(set(reasons))
+    structural = {'invalid_stats', 'missing_executions', 'request_coverage_mismatch', 'missing_assertions',
+                  'missing_response', 'request_without_assertion', 'invalid_assertion', 'skipped_assertions'}
+    if structural.intersection(reasons):
+        return 'blocked', counts, sorted(set(reasons))
+    if api_failure:
+        return 'failed', counts, sorted(set(reasons))
+    if exit_code != 0:
+        return 'blocked', counts, ['newman_tool_failed']
+    return 'passed', counts, []
+
+
+def lifecycle(status: str = 'not_run') -> dict[str, Any]:
+    return {'command_sha256': None, 'readiness_url': None, 'events': [],
+            'startup': {'status': status, 'exit_code': None},
+            'readiness': {'status': status, 'http_status': None, 'attempts': 0},
+            'owned_process_alive_before_newman': None,
+            'newman': {'status': status, 'exit_code': None},
+            'cleanup': {'status': status, 'term_sent': False, 'kill_sent': False,
+                        'stopped': status == 'not_applicable', 'exit_code': None},
+            'log_file': None, 'log_sha256': None}
+
+
+def add_event(record: dict[str, Any], name: str) -> None:
+    record['events'].append({'name': name, 'at': dt.datetime.now(dt.timezone.utc).isoformat()})
+
+
+def parse_server_command(value: str | None) -> list[str]:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('server command is required')
+    try:
+        command = strict_json(value)
+    except ValueError as exc:
+        raise ValueError('server command must be a JSON argv array') from exc
+    if not isinstance(command, list) or not command or any(
+            not isinstance(part, str) or not part.strip() or '\x00' in part for part in command):
+        raise ValueError('server command must be a nonempty JSON argv array of safe strings')
+    return command
+
+
+def process_group_alive(process: subprocess.Popen[Any]) -> bool:
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def cleanup_server(process: subprocess.Popen[Any], record: dict[str, Any]) -> bool:
+    cleanup = record['cleanup']
+    add_event(record, 'server_stop_requested')
+    try:
+        if process.poll() is None or process_group_alive(process):
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                cleanup['term_sent'] = True
+            except ProcessLookupError:
+                pass
+        try:
+            process.wait(timeout=SERVER_TERM_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            pass
+        if process.poll() is None or process_group_alive(process):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                cleanup['kill_sent'] = True
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=SERVER_KILL_TIMEOUT)
+        cleanup['exit_code'] = process.returncode
+        cleanup['stopped'] = process.poll() is not None and not process_group_alive(process)
+    except (OSError, subprocess.TimeoutExpired):
+        cleanup['exit_code'] = process.returncode
+        cleanup['stopped'] = process.poll() is not None and not process_group_alive(process)
+    cleanup['status'] = 'passed' if cleanup['stopped'] else 'failed'
+    if cleanup['stopped']:
+        add_event(record, 'server_stopped')
+    return cleanup['status'] == 'passed'
+
+
+def wait_readiness(process: subprocess.Popen[Any], url: str, timeout: int,
+                   record: dict[str, Any]) -> bool:
+    readiness = record['readiness']
+    deadline = time.monotonic() + timeout
+    while True:
+        readiness['attempts'] += 1
+        if process.poll() is not None or not process_group_alive(process):
+            readiness['status'] = 'failed'
+            return False
+        try:
+            request = Request(url, method='GET')
+            with urlopen(request, timeout=min(5, timeout)) as response:
+                readiness['http_status'] = response.status
+            if 200 <= readiness['http_status'] <= 299:
+                if process.poll() is None and process_group_alive(process):
+                    readiness['status'] = 'passed'
+                    add_event(record, 'readiness_passed')
+                    return True
+                readiness['status'] = 'failed'
+                return False
+        except HTTPError as exc:
+            readiness['http_status'] = exc.code
+        except (OSError, URLError, TimeoutError):
+            pass
+        if time.monotonic() >= deadline:
+            readiness['status'] = 'failed'
+            return False
+        time.sleep(min(READINESS_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
+
+
+def file_hash(path: Path) -> str | None:
+    if not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def persist_result(root: Path, domain: str, state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    relative = f'docs/postman/{delivery.slug(domain)}/newman/{result["id"]}.summary.json'
+    target = delivery.inside(root, relative)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(result, ensure_ascii=False, indent=2) + '\n'
+    target.write_text(payload, encoding='utf-8')
+    result.update(summary_file=relative, summary_sha256=hashlib.sha256(payload.encode()).hexdigest())
+    finalization.policy(state)['runs'].append(result)
+    finalization.policy(state).pop('receipt', None)
+    return result
 
 
 def execute(root: Path, domain: str, state: dict[str, Any], args: Any, sections: Any) -> dict[str, Any]:
@@ -179,81 +319,186 @@ def execute(root: Path, domain: str, state: dict[str, Any], args: Any, sections:
     timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
     result = {'id': run_id, 'branch': branch, 'source_sha': record['head_sha'],
               'collection_sha256': record['postman_sha256'], 'recorded_at': timestamp,
-              'exit_code': None, 'status': 'not_applicable', 'counts': {'expected_requests': 0,
+              'exit_code': 0, 'status': 'not_applicable', 'counts': {'expected_requests': 0,
                   'requests': 0, 'request_failures': 0, 'assertions': 0, 'assertion_failures': 0, 'skipped_assertions': 0},
               'reason_codes': ['no_http_surface'], 'server_sha': None, 'newman_version': None,
-              'raw_file': None, 'raw_sha256': None}
-    if requests:
+              'raw_file': None, 'raw_sha256': None, 'server_lifecycle': lifecycle(), 'no_http_evidence': None}
+
+    def preflight_block(reason: str) -> dict[str, Any]:
+        result['status'] = 'blocked'
+        result['exit_code'] = 2
+        result['reason_codes'] = [reason]
+        return persist_result(root, domain, state, result)
+
+    if not requests:
+        declared = list(record.get('api_endpoints') or [])
+        result['server_lifecycle'] = lifecycle('not_applicable')
+        result['no_http_evidence'] = {'source_sha': record['head_sha'], 'collection_sha256': record['postman_sha256'],
+                                      'request_count': 0, 'declared_api_endpoints': declared,
+                                      'api_note': record.get('api_note')}
+        if declared:
+            result['status'] = 'blocked'
+            result['exit_code'] = 2
+            result['reason_codes'] = ['http_surface_assessment_mismatch']
+        return persist_result(root, domain, state, result)
+    if not 1 <= args.timeout <= 3600 or not 1 <= args.request_timeout <= args.timeout:
+        return preflight_block('newman_tool_config_invalid')
+
+    try:
         base_url = check_target(args.base_url, args.allow_host, args.safety_note)
         server_sha = delivery.resolve_commit(root, args.server_sha)
-        if delivery.git(root, 'merge-base', record['head_sha'], server_sha) != record['head_sha']:
-            raise ValueError('Newman server source must contain the collection source commit')
-        if server_sha != delivery.resolve_commit(root, 'HEAD'):
-            raise ValueError('Newman server source must match the verified current workspace HEAD')
-        dirty = delivery.git(root, 'diff', '--name-only', '-z', 'HEAD', '--')
-        untracked = delivery.git(root, 'ls-files', '--others', '--exclude-standard', '-z')
-        if any(Path(p).suffix.lower() in delivery.SOURCE_SUFFIXES for p in (dirty + '\0' + untracked).split('\0') if p):
-            raise ValueError('Newman requires committed source/tests matching the server build')
-        if any(item['request']['method'].upper() not in {'GET', 'HEAD', 'OPTIONS'} for item in requests) and not args.allow_writes:
-            raise ValueError('write scenarios require --allow-writes after test fixture/integration isolation review')
-        for source in scripts(collection):
-            if SKIP_OR_EXTRA_REQUEST.search(source) or BASE_MUTATION.search(source):
-                raise ValueError('Newman bounded profile requires explicit ordered requests and immutable baseUrl; remove extra/skip/loop requests')
+    except ValueError:
+        return preflight_block('environment_setup_failed')
+    if delivery.git(root, 'merge-base', record['head_sha'], server_sha) != record['head_sha']:
+        return preflight_block('server_source_invalid')
+    if server_sha != delivery.resolve_commit(root, 'HEAD'):
+        return preflight_block('server_source_invalid')
+    dirty = delivery.git(root, 'diff', '--name-only', '-z', 'HEAD', '--')
+    untracked = delivery.git(root, 'ls-files', '--others', '--exclude-standard', '-z')
+    if any(Path(p).suffix.lower() in delivery.SOURCE_SUFFIXES for p in (dirty + '\0' + untracked).split('\0') if p):
+        return preflight_block('server_source_invalid')
+    if any(item['request']['method'].upper() not in {'GET', 'HEAD', 'OPTIONS'} for item in requests) and not args.allow_writes:
+        return preflight_block('write_scenarios_require_allow_writes')
+    for source in scripts(collection):
+        if SKIP_OR_EXTRA_REQUEST.search(source) or BASE_MUTATION.search(source):
+            return preflight_block('bounded_profile_rejected')
+
+    private = prepare_private_dir(root, run_id)
+    raw_file = private / 'report.json'; output_file = private / 'output.log'
+    snapshot_file = private / 'collection.json'
+    env_file = private / 'environment.json'
+    server_log = private / 'server.log'
+    write_private(server_log, '')
+    lifecycle_record = result['server_lifecycle']
+    lifecycle_record['readiness_url'] = None
+    lifecycle_record['log_file'] = str(server_log.relative_to(root))
+    result.update(server_sha=server_sha, safety_note=args.safety_note.strip(), raw_file=str(raw_file.relative_to(root)),
+                  counts={'expected_requests': len(requests), 'requests': 0, 'request_failures': 0,
+                          'assertions': 0, 'assertion_failures': 0, 'skipped_assertions': 0})
+    result['reason_codes'] = []
+
+    def mark_blocked(reason: str) -> None:
+        result['status'] = 'blocked'
+        result['exit_code'] = 2
+        result['reason_codes'] = sorted(set(result['reason_codes'] + [reason]))
+
+    def block(reason: str) -> dict[str, Any]:
+        mark_blocked(reason)
+        lifecycle_record['log_sha256'] = file_hash(server_log)
+        env_file.unlink(missing_ok=True)
+        return persist_result(root, domain, state, result)
+
+    try:
+        server_argv = parse_server_command(args.server_command)
+    except ValueError:
+        reason = 'server_command_required' if not args.server_command else 'server_command_invalid'
+        return block(reason)
+    if type(args.readiness_timeout) is not int or not 1 <= args.readiness_timeout <= 600:
+        return block('readiness_config_invalid')
+    try:
+        readiness_url = check_target(args.readiness_url, args.allow_host, args.safety_note)
+    except ValueError:
+        return block('environment_setup_failed')
+    lifecycle_record['command_sha256'] = hashlib.sha256(
+        json.dumps(server_argv, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+    lifecycle_record['readiness_url'] = readiness_url
+    try:
         env = environment_values(args.environment, base_url)
-        private = prepare_private_dir(root, run_id)
-        env_file = private / 'environment.json'; write_private(env_file, json.dumps(env))
-        raw_file = private / 'report.json'; output_file = private / 'output.log'
-        snapshot_file = private / 'collection.json'; write_private(snapshot_file, text)
-        result.update(server_sha=server_sha, safety_note=args.safety_note.strip(), raw_file=str(raw_file.relative_to(root)))
-        executable = shutil.which(args.newman_bin or 'newman')
-        exit_code = 127; report: Any = None
+        write_private(env_file, json.dumps(env))
+        write_private(snapshot_file, text)
+    except (OSError, ValueError):
+        return block('environment_setup_failed')
+    server_process: subprocess.Popen[Any] | None = None
+    cleanup_ok = True
+    try:
         try:
-            if executable:
-                version = subprocess.run([executable, '--version'], cwd=root, capture_output=True, text=True, timeout=10)
-                if version.returncode == 0 and re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', version.stdout.strip()):
-                    result['newman_version'] = version.stdout.strip()
-                command = [executable, 'run', str(snapshot_file),
-                           '--environment', str(env_file), '--reporters', 'json', '--reporter-json-export', str(raw_file),
-                           '--timeout', str(args.timeout * 1000), '--timeout-request', str(args.request_timeout * 1000),
-                           '--timeout-script', '5000', '--ignore-redirects', '--no-insecure-file-read',
-                           '--working-dir', str(private)]
-                # Credentials travel in a 0600 environment file, never as visible CLI arguments.
-                with output_file.open('xb') as output:
-                    output_file.chmod(0o600)
-                    process = subprocess.run(command, cwd=root, stdout=output, stderr=subprocess.STDOUT,
-                                             timeout=args.timeout + 10)
-                    exit_code = process.returncode
-                if raw_file.is_file():
-                    raw_file.chmod(0o600)
-                    if raw_file.stat().st_size <= 32 * 1024 * 1024:
-                        data = raw_file.read_bytes(); result['raw_sha256'] = hashlib.sha256(data).hexdigest()
-                        report = strict_json(data.decode('utf-8-sig'))
-            result['status'], result['counts'], result['reason_codes'] = summarize(report, len(requests), exit_code)
-        except subprocess.TimeoutExpired:
-            exit_code = 124
-            result['status'], result['counts'], result['reason_codes'] = summarize(None, len(requests), exit_code)
-            result['reason_codes'] = ['timeout']
-        except (ValueError, OSError):
-            result['status'], result['counts'], result['reason_codes'] = summarize(None, len(requests), exit_code)
-        finally:
-            # Newman reports can contain the resolved environment; protect all raw output even on failure.
-            for path in (raw_file, output_file):
-                if path.is_file():
-                    path.chmod(0o600)
-            env_file.unlink(missing_ok=True)
-        result['exit_code'] = exit_code
-        _, current_collection_hash = delivery.read_artifact(root, record['postman_file'], 'Postman')
-        if delivery.resolve_commit(root, 'HEAD') != server_sha or current_collection_hash != record['postman_sha256']:
-            result['status'] = 'blocked'
-            result['reason_codes'] = sorted(set(result['reason_codes'] + ['source_or_collection_changed_during_run']))
-        if result['status'] == 'passed' and not result['newman_version']:
-            result['status'] = 'blocked'
-            result['reason_codes'] = ['runner_identity_unavailable']
-    relative = f'docs/postman/{delivery.slug(domain)}/newman/{run_id}.summary.json'
-    target = delivery.inside(root, relative); target.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(result, ensure_ascii=False, indent=2) + '\n'
-    target.write_text(payload, encoding='utf-8')
-    result.update(summary_file=relative, summary_sha256=hashlib.sha256(payload.encode()).hexdigest())
-    finalization.policy(state)['runs'].append(result)
-    finalization.policy(state).pop('receipt', None)
-    return result
+            with server_log.open('ab') as output:
+                server_process = subprocess.Popen(server_argv, cwd=root, stdout=output, stderr=subprocess.STDOUT,
+                                                   start_new_session=True)
+            lifecycle_record['startup']['status'] = 'passed'
+            add_event(lifecycle_record, 'server_started')
+        except OSError:
+            lifecycle_record['startup']['status'] = 'failed'
+            mark_blocked('server_start_failed')
+        if server_process is not None:
+            if not wait_readiness(server_process, readiness_url, args.readiness_timeout, lifecycle_record):
+                reason = 'owned_server_exited' if server_process.poll() is not None else 'readiness_failed'
+                mark_blocked(reason)
+            elif server_process.poll() is not None or not process_group_alive(server_process):
+                lifecycle_record['owned_process_alive_before_newman'] = False
+                mark_blocked('owned_server_exited')
+            else:
+                lifecycle_record['owned_process_alive_before_newman'] = True
+                executable = shutil.which(args.newman_bin or 'newman')
+                if not executable:
+                    lifecycle_record['newman']['status'] = 'blocked'
+                    mark_blocked('newman_tool_unavailable')
+                else:
+                    try:
+                        version = subprocess.run([executable, '--version'], cwd=root, capture_output=True, text=True, timeout=10)
+                    except (OSError, subprocess.TimeoutExpired):
+                        version = None
+                    if version is None or version.returncode != 0 or not re.fullmatch(
+                            r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', version.stdout.strip()):
+                        lifecycle_record['newman']['status'] = 'blocked'
+                        mark_blocked('newman_tool_failed')
+                    else:
+                        result['newman_version'] = version.stdout.strip()
+                        if server_process.poll() is not None or not process_group_alive(server_process):
+                            lifecycle_record['owned_process_alive_before_newman'] = False
+                            mark_blocked('owned_server_exited')
+                        else:
+                            command = [executable, 'run', str(snapshot_file),
+                                       '--environment', str(env_file), '--reporters', 'json', '--reporter-json-export', str(raw_file),
+                                       '--timeout', str(args.timeout * 1000), '--timeout-request', str(args.request_timeout * 1000),
+                                       '--timeout-script', '5000', '--ignore-redirects', '--no-insecure-file-read',
+                                       '--working-dir', str(private)]
+                            # Credentials travel in a 0600 environment file, never as visible CLI arguments.
+                            add_event(lifecycle_record, 'newman_started')
+                            try:
+                                with output_file.open('xb') as output:
+                                    output_file.chmod(0o600)
+                                    process = subprocess.run(command, cwd=root, stdout=output, stderr=subprocess.STDOUT,
+                                                             timeout=args.timeout + 10)
+                                    result['exit_code'] = process.returncode
+                                add_event(lifecycle_record, 'newman_finished')
+                                report: Any = None
+                                if raw_file.is_file():
+                                    raw_file.chmod(0o600)
+                                    if raw_file.stat().st_size <= 32 * 1024 * 1024:
+                                        data = raw_file.read_bytes(); result['raw_sha256'] = hashlib.sha256(data).hexdigest()
+                                        report = strict_json(data.decode('utf-8-sig'))
+                                result['status'], result['counts'], result['reason_codes'] = summarize(
+                                    report, len(requests), result['exit_code'])
+                                lifecycle_record['newman']['status'] = result['status']
+                                lifecycle_record['newman']['exit_code'] = result['exit_code']
+                            except subprocess.TimeoutExpired:
+                                lifecycle_record['newman']['status'] = 'blocked'
+                                lifecycle_record['newman']['exit_code'] = 124
+                                result['exit_code'] = 124
+                                mark_blocked('newman_tool_failed')
+                            except (ValueError, OSError):
+                                lifecycle_record['newman']['status'] = 'blocked'
+                                mark_blocked('newman_tool_failed')
+    finally:
+        if server_process is not None:
+            try:
+                cleanup_ok = cleanup_server(server_process, lifecycle_record)
+            except (OSError, subprocess.TimeoutExpired):
+                lifecycle_record['cleanup']['status'] = 'failed'
+                cleanup_ok = False
+            if not cleanup_ok:
+                result['status'] = 'blocked'
+                result['exit_code'] = 2
+                result['reason_codes'] = sorted(set(result['reason_codes'] + ['cleanup_failed']))
+        for path in (raw_file, output_file, server_log):
+            if path.is_file():
+                path.chmod(0o600)
+        lifecycle_record['log_sha256'] = file_hash(server_log)
+        env_file.unlink(missing_ok=True)
+    _, current_collection_hash = delivery.read_artifact(root, record['postman_file'], 'Postman')
+    if delivery.resolve_commit(root, 'HEAD') != server_sha or current_collection_hash != record['postman_sha256']:
+        result['status'] = 'blocked'
+        result['exit_code'] = 2
+        result['reason_codes'] = sorted(set(result['reason_codes'] + ['source_or_collection_changed_during_run']))
+    return persist_result(root, domain, state, result)

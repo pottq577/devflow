@@ -65,6 +65,6 @@ Remediation WORK updates the same branch artifacts; local docs need no Git histo
 For enabled finalization, apply `finalization.md`.
 Compare the single ELI5 HTML to all WORK and branches, including cancelled/transferred outcomes, cross-branch behavior, final commits and actual test results.
 Verify genuine installed-skill invocation and useful explanation beyond metadata.
-Check Newman target/build isolation, complete request/assertion coverage, raw/summary integrity, secret hygiene and no-HTTP rationale.
+Check owned server start, HTTP 200..299 readiness, process liveness before Newman, SIGTERM/SIGKILL cleanup, target/build isolation, complete request/assertion coverage, raw/summary integrity, secret hygiene and no-HTTP proof.
 Inspect every failed run's contract-based diagnosis, regression, repair commit and later passing server build.
 Preserve independent audit gates; finalization evidence authorizes handoff, and the Auditor verifies its truth.

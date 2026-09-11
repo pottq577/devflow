@@ -10,12 +10,13 @@ Read the appended `finalization` protocol before execution.
    1. Read its actual `SKILL.md`.
    2. Generate one self-contained whole-work HTML at the context path with exact metadata, visible WORK dispositions and cross-branch flow.
    3. Record `delivery explain` with actual evidence.
-3. Discover existing Newman, startup commands, build identity and local/test fixture/integration safety.
-   1. Bring up only authorized test services.
-   2. Execute `delivery newman` for every branch with verified server SHA and safety note.
-   3. Use the fixed bounded profile and truthful exit status.
+3. Discover existing Newman, the server argv command, build identity and local/test fixture/integration safety.
+   1. Pass the server as a JSON argv array with `--server-command`, plus `--readiness-url`.
+   2. `delivery newman` owns server start, HTTP 200..299 readiness, Newman execution and bounded cleanup for every branch.
+   3. Never start the server separately, omit Newman because a server is unavailable, or treat startup/readiness/tool/environment/cleanup failure as `not_applicable`.
+   4. Use the fixed bounded profile and truthful exit status.
 4. For each unsuccessful attempt, inspect contract, requests/assertions and private server/report evidence.
-   1. Classify code, collection, environment or unknown via `delivery triage`.
+   1. Classify code, collection, environment or unknown via `delivery triage`. Code/collection is allowed only after an actual completed failed Newman run with successful server lifecycle evidence.
 5. For a confirmed code/collection defect, create one scoped integration remediation WORK with `NEWMAN-<run-id>` origin, summary reference and a failing regression.
    1. Register it, then execute only the runtime-selected ordinary WORK.
    2. Commit the tested repair; retain all review gates.

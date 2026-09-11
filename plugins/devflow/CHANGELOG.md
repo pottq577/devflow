@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1 - 2026-09-11
+
+Protocol 1.8.0: `delivery newman` owns the server argv lifecycle, including bounded process-group
+cleanup and HTTP 200..299 readiness. Startup, readiness, environment, Newman-tool and cleanup
+failures are blocked; completed API/assertion failures are failed; code/collection triage requires
+a completed failed Newman run. `not_applicable` requires matching zero-HTTP evidence in the
+collection and declared endpoint record. Plugin 0.8.1 is required because this runtime contract
+is not compatible with the released 0.8.0 finalization behavior.
+
 ## 0.8.0 - 2026-09-10
 
 Protocol 1.7.0: whole-domain installed-ELI5 HTML; foreground Newman runs; private diagnostics and sanitized receipts; contract-based code/collection/environment diagnosis; ordinary committed remediation WORK; fresh-evidence finalization gate. Preserves both adapters, private docs and independent audits.

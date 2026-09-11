@@ -131,6 +131,8 @@ delivery_finalization:
         raw_sha256,
         summary_file,
         summary_sha256,
+        server_lifecycle,
+        no_http_evidence,
       ]
     status: [passed, failed, blocked, not_applicable]
     counts:
@@ -143,6 +145,18 @@ delivery_finalization:
         skipped_assertions,
       ]
     private_evidence: Raw report stays local through closure; content hash must match when present.
+    server_lifecycle:
+      required_fields:
+        [command_sha256, readiness_url, events, startup, readiness, owned_process_alive_before_newman, newman, cleanup, log_file, log_sha256]
+      events: Ordered server_started, readiness_passed, newman_started, newman_finished, server_stop_requested, server_stopped events with timestamps.
+      readiness: Passed only for an HTTP status from 200 through 299 while the owned process group is alive.
+      owned_process_alive_before_newman: Must be true; another process answering the URL cannot replace the owned process.
+      cleanup: Bounded SIGTERM, SIGKILL fallback and process-group termination confirmation. Newman pass plus cleanup failure is blocked.
+      status_classification: Startup, readiness, environment, Newman-tool and cleanup failures are blocked. Completed API/assertion failures are failed.
+    no_http_evidence:
+      nullable: true
+      required_fields: [source_sha, collection_sha256, request_count, declared_api_endpoints, api_note]
+      rule: not_applicable is valid only when the current collection has zero HTTP request items and the declared endpoint list is empty, with both facts hashed and recorded.
   diagnoses:
     key: Existing unsuccessful run id.
     required_fields: [classification, reason, work_id]

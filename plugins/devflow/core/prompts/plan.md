@@ -51,7 +51,7 @@ The appended delivery-artifacts protocol defines the exact contract.
 
 ## Whole-work final delivery
 
-Include the protocol 1.7 ELI5/Newman stage in final acceptance and task handoff.
+Include the protocol 1.8 ELI5/Newman stage in final acceptance and task handoff, including the owned server lifecycle and readiness evidence.
 Inspect actual installed ELI5 discovery, Newman availability, documented test startup, authentication, fixture cleanup and side-effect isolation.
 Plan branch/build coverage and tracked collection regression fixtures where generated docs are ignored.
 Use existing WORK for bounded code/test fixes; retain one whole-domain explanation and actual per-branch test evidence under `finalization.md`.

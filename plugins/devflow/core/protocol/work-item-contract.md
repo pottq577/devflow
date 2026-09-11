@@ -167,7 +167,7 @@ The two derived output files plus existing STATE/WORK evidence receive a narrow 
 Already-done WORK snapshotted by `delivery enable` remains intact; ready and in-progress WORK adopts the new obligations.
 One selected WORK per invocation remains the boundary.
 
-## Protocol 1.7 Newman repairs
+## Protocol 1.8 Newman repairs
 
 A confirmed code/collection failure becomes normal integration remediation WORK.
 Its `origin.findings` contains `NEWMAN-<run-id>` and its `references` includes that run's sanitized summary.

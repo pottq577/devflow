@@ -10,7 +10,7 @@
 
 ## Scope and lifecycle
 
-Protocol 1.7 adds `STATE.delivery.finalization.version: 1` for new domains and for `delivery enable` adoption.
+Protocol 1.8 adds owned server lifecycle evidence to `STATE.delivery.finalization.version: 1` for new domains and for `delivery enable` adoption.
 The Executor owns this delivery stage.
 Existing WORK, risk-review, phase-audit and integration-audit gates retain their authority.
 The runtime executes explicit foreground commands; the host agent follows the rendered procedure.
@@ -89,10 +89,27 @@ Keep source refs pinned and do not switch an occupied tree.
 
 ```bash
 devflow delivery newman <domain> --branch <exact-branch> \
-  --base-url http://127.0.0.1:8080 --server-sha <verified-build-commit> \
+  --base-url http://127.0.0.1:8080 \
+  --server-command '["./build/test-server","--port","8080"]' \
+  --readiness-url http://127.0.0.1:8080/health \
+  --server-sha <verified-build-commit> \
   --environment <local-secret-environment.json> \
   --safety-note '<how build identity, synthetic fixtures and external integrations were verified>'
 ```
+
+`--server-command` is a JSON argv array. DevFlow starts it directly in a new process group, so
+shell command strings and `shlex.split` are not part of the execution contract. The runtime owns
+the complete sequence: start the server, poll readiness, run Newman, judge the result and stop the
+server. It requires the readiness response to be HTTP 200 through 299. The default readiness
+timeout is 60 seconds and it is bounded to 1 through 600 seconds.
+
+The process and its process group must be alive both when readiness succeeds and immediately before
+Newman starts. If the owned process exits while another process returns 2xx at the readiness URL,
+the run is blocked and Newman is not executed.
+
+Cleanup sends bounded SIGTERM, waits up to 5 seconds, sends SIGKILL when needed, waits up to 2 more
+seconds and confirms that the owned process group is gone. Cleanup evidence is recorded separately
+from Newman evidence. A Newman pass followed by cleanup failure is blocked, not passed.
 
 Keep the original secret environment outside the repository or in an existing ignored secrets directory; the wrapper only removes its temporary copy.
 Omit `--environment` when unnecessary.
@@ -109,9 +126,13 @@ Static checks are not a sandbox: review scripts and isolate the target before au
 
 Passing requires exit code zero, exactly the expected executed request count, actual responses, non-skipped assertions for every request, and zero request/assertion/report failures.
 Never use `--suppress-exit-code`, `--insecure`, `|| true`, folder-only coverage, assertion deletion, relaxed expected responses, or arbitrary sleeps to manufacture a pass.
-An empty, justified no-HTTP collection records `not_applicable` with zero requests; it has no fabricated live-test success.
+Only a collection with zero HTTP request items and an empty declared endpoint list may record
+`not_applicable`. The summary must include the current collection hash, source hash, zero request
+count, empty declared endpoints and the recorded no-HTTP assessment. Missing or failed servers,
+readiness, environment configuration or Newman are never `not_applicable`.
 
-Return codes: 0 = passed or explicit no-HTTP N/A, 1 = completed unsuccessful test, 2 = execution/preflight blocker.
+Return codes: 0 = passed or proven no-HTTP N/A, 1 = Newman completed with API/assertion failure,
+2 = startup, readiness, environment, Newman-tool or cleanup blocker.
 **Attempted Newman execution persists its result despite a nonzero return.**
 Rejected preflight leaves run history unchanged because no test was attempted.
 Sanitized summaries contain counts, classifications' source ids and hashes, never resolved credentials, response bodies or arbitrary exception messages.

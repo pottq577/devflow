@@ -102,7 +102,7 @@ delivery_evidence:
   complete: Current named-branch HEAD, clean executable source, comment evidence and both derived artifacts validated atomically.
 
 newman_remediation:
-  applies_to: Protocol 1.7 finalization code/collection diagnosis.
+  applies_to: Protocol 1.8 finalization code/collection diagnosis.
   phase: integration
   kind: remediation
   origin_findings: Contains NEWMAN-<failed-run-id>.

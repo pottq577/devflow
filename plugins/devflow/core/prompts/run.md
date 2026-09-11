@@ -42,5 +42,5 @@ Keep credential values empty, declare API coverage and preserve prior branch req
 All output fields and validation rules appear in the appended delivery protocol.
 The branch output allowance covers these files and STATE/WORK evidence.
 After the runtime selects `finalize`, render that action and follow the appended whole-work ELI5/Newman protocol.
-Generation itself sends no requests; the finalization step explicitly executes authorized isolated tests.
+Generation itself sends no requests; the finalization step explicitly executes authorized isolated tests. `delivery newman` owns server start, HTTP 200..299 readiness, Newman execution and bounded process-group cleanup. Server or readiness failure is blocked, not `not_applicable`.
 Keep remote PR publication and push/merge under user control.

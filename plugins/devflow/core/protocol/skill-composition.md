@@ -23,7 +23,7 @@ A peer skill must not widen the active WORK scope or bypass a DevFlow lifecycle 
 ## Availability
 
 General peer execution disciplines are optional.
-The explicitly requested installed ELI5 capability is required only for an enabled protocol 1.7 finalization gate.
+The explicitly requested installed ELI5 capability is required only for an enabled protocol 1.8 finalization gate.
 
 Ordinary DevFlow lifecycle commands remain usable when an optional peer plugin is absent.
 General commands require no peer-plugin installation or state.

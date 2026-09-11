@@ -38,7 +38,9 @@ devflow delivery check <domain> [--final]
 devflow delivery refresh <domain> --branch <name>
 devflow delivery context <domain>
 devflow delivery explain <domain> --skill-file <actual-SKILL.md> --invocation '<actual invocation evidence>'
-devflow delivery newman <domain> --branch <name> --base-url <test-url> --server-sha <build-sha> --safety-note '<isolation evidence>'
+devflow delivery newman <domain> --branch <name> --base-url <test-url> \
+  --server-command '["./build/test-server","--port","8080"]' \
+  --readiness-url <readiness-url> --server-sha <build-sha> --safety-note '<isolation evidence>'
 devflow delivery triage <domain> --run-id <id> --classification code|collection|environment|unknown --reason '<evidence>' [--work-id <ID>]
 devflow delivery finalize <domain>
 devflow render finalize <domain>
@@ -233,7 +235,7 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.8.0` ships protocol version `1.7.0`.
+Plugin version `0.8.1` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
@@ -250,7 +252,7 @@ Existing audit Markdown without YAML front matter remains readable as a legacy a
 No bulk migration or automatic rewrite is required.
 A protocol 1.3.0 domain sitting mid-closure re-runs its scope's initial audit through the scope's recovery command to record provenance, then the closure proceeds.
 
-A fresh project initialization records `1.7.0` in both `.devflow/config.yaml` and the domain's `STATE.yaml`.
+A fresh project initialization records `1.8.0` in both `.devflow/config.yaml` and the domain's `STATE.yaml`.
 The config value is a project runtime compatibility guard, while STATE identifies the domain artifact contract.
 Older same-major versions are readable.
 A malformed or different-major version is an error, and a newer config minor permits read-only status and validation but blocks mutation.
@@ -320,7 +322,7 @@ Run these from the marketplace root.
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
-## Whole-work finalization (0.8.0 / protocol 1.7.0)
+## Whole-work finalization (0.8.1 / protocol 1.8.0)
 
 Read `core/protocol/finalization.md` for the normative procedure.
 Existing completed WORK remains intact after `delivery enable`; the new field is additive.
@@ -332,7 +334,11 @@ After tests and repairs, refresh PR/collection output and invoke ELI5 again with
 `delivery finalize` validates this handoff and retains independent integration audits.
 All changes remain local until separately authorized publication/push/merge.
 
-Newman needs a separately installed repository-approved executable and a verified local/test server.
+Newman needs a separately installed repository-approved executable. `delivery newman` starts and
+stops the verified local/test server itself from a JSON argv array, polls the readiness URL until it
+returns HTTP 200 through 299, then runs Newman. The owned process and process group must still be
+alive immediately before Newman. Cleanup uses bounded SIGTERM, SIGKILL fallback and process-group
+termination confirmation.
 Provide a local Postman environment file for secrets, and explicit `--allow-writes` after isolating test data/integrations.
 `--newman-bin` selects an existing binary; no hidden installation occurs.
 Approved remote test hosts require exact `--allow-host`. Defaults: total timeout 120s, request timeout 10s, script timeout 5s. See `delivery newman --help` for options.
@@ -345,7 +351,10 @@ Code/collection repairs still require meaningful tracked source/test commits and
 For an ignored collection, commit its reproducible regression fixture/test or generator correction.
 
 Execution profiles deliberately use explicit ordered requests, inline data, local credentials and complete assertions.
-Missing tools/servers/credentials block completion; a no-HTTP branch records explicit N/A.
+Startup, readiness, environment, Newman-tool and cleanup failures are blocked. A Newman API/assertion
+failure is failed. Code/collection triage requires the completed failed run and its lifecycle evidence.
+Only a collection with no HTTP request items and an empty declared endpoint list may record explicit
+N/A, with matching collection and declaration evidence.
 Reading ELI5 or structurally validating JSON alone proves no actual execution.
 
 - Tests:

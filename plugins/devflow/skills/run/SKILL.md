@@ -76,7 +76,8 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
   - The prescribed PR body and Postman collection are delivery outputs under the narrow protocol allowance.
   - Avoid duplicate narrative completion reports.
 - Generate files locally.
-  - At finalization, execute authorized isolated local/test Newman runs under `core/protocol/finalization.md`; production/shared-data effects and remote PR publication/push/merge retain separate approval.
+  - At finalization, execute authorized isolated local/test Newman runs under `core/protocol/finalization.md`. `delivery newman` owns the JSON argv server process group, HTTP 200..299 readiness, Newman run and bounded SIGTERM/SIGKILL cleanup; never skip the run because the server is unavailable.
+  - Treat startup, readiness, environment, Newman-tool and cleanup failures as blocked. Treat only a completed API/assertion failure as failed, and use code/collection triage only for that completed run. `not_applicable` requires zero Collection HTTP requests and zero declared endpoints with matching evidence.
   - Postman file generation itself sends no requests.
 
 ## Peer execution disciplines
