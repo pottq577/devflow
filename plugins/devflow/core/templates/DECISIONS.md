@@ -5,6 +5,7 @@ Only decisions requiring human/product authority belong here.
 ## Open
 
 ### DEC-001 — [Question]
+
 - Trigger:
 - Affected requirements/work:
 - Option A:
@@ -14,6 +15,7 @@ Only decisions requiring human/product authority belong here.
 ## Resolved
 
 ### DEC-XXX — [Decision]
+
 - Decision:
 - Rationale:
 - Date:

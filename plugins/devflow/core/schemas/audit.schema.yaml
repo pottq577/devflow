@@ -8,7 +8,17 @@ contract:
     - properties.closure.items.properties.outcome
   references: [finding]
   rubric: verdict
-required: [schema, scope, mode, verdict, baseline_sha, target_sha, verification, findings]
+required:
+  [
+    schema,
+    scope,
+    mode,
+    verdict,
+    baseline_sha,
+    target_sha,
+    verification,
+    findings,
+  ]
 properties:
   schema:
     type: string
@@ -35,28 +45,28 @@ properties:
       type: mapping
       required: [command, result]
       properties:
-        command: {type: string}
-        result: {type: string}
+        command: { type: string }
+        result: { type: string }
   findings:
     type: list
-    items: {$ref: finding}
+    items: { $ref: finding }
   closure:
     type: list
     items:
       type: mapping
       required: [finding_id, outcome, evidence, reopened_as]
       properties:
-        finding_id: {type: string}
+        finding_id: { type: string }
         outcome:
           type: string
           allowed: [resolved, still_open, reopened, accepted_risk]
         evidence:
           type: list
           min_items: 1
-          items: {type: string}
+          items: { type: string }
         reopened_as:
           type: list
-          items: {type: string}
+          items: { type: string }
 verdict:
   pass:
     forbidden_severities: [blocker, major]

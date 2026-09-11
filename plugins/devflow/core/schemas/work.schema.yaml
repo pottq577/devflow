@@ -45,7 +45,8 @@ finding_traceability:
   required_for_kinds: [remediation, evidence, documentation]
   aggregation_reason_required_when_findings_at_least: 2
 kind:
-  allowed: [implementation, remediation, evidence, documentation, migration, test]
+  allowed:
+    [implementation, remediation, evidence, documentation, migration, test]
 status:
   allowed: [ready, in_progress, done, blocked, transferred, cancelled]
 terminal: [done, transferred, cancelled]
@@ -81,7 +82,21 @@ delivery_evidence:
   delivery:
     executor_fields: [base_ref, pr_file, postman_file, api_endpoints, api_note]
     optional_executor_fields: [base_sha]
-    recorded_fields: [branch, base_ref, base_sha, head_sha, pr_file, postman_file, template_sha256, pr_sha256, postman_sha256, work_ids, api_endpoints, api_note]
+    recorded_fields:
+      [
+        branch,
+        base_ref,
+        base_sha,
+        head_sha,
+        pr_file,
+        postman_file,
+        template_sha256,
+        pr_sha256,
+        postman_sha256,
+        work_ids,
+        api_endpoints,
+        api_note,
+      ]
     api_endpoints: Cumulative branch METHOD /path coverage; empty for a verified no-HTTP change.
     api_note: Nonblank coverage/exception assessment.
   complete: Current named-branch HEAD, clean executable source, comment evidence and both derived artifacts validated atomically.

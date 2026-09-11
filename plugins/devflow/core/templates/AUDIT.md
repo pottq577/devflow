@@ -15,25 +15,24 @@ closure: []
 
 # DevFlow Audit
 
-The YAML front matter is the machine-readable audit outcome. Keep the explanation below for human
-review, but make the front matter authoritative and run `devflow audit apply` after writing it.
+The YAML front matter is the machine-readable audit outcome.
+Keep the explanation below for human review, but make the front matter authoritative and run `devflow audit apply` after writing it.
 
 ## Metadata
 
-| Field | Value |
-| --- | --- |
-| Scope | plan / work / phase / integration |
-| Mode | initial / closure |
-| Phase | |
-| WORK ID | Required for work scope |
-| Baseline SHA | |
-| Target SHA | |
-| Diff range | |
-| Commits / changed files | |
-| Date | |
+| Field                   | Value                             |
+| ----------------------- | --------------------------------- |
+| Scope                   | plan / work / phase / integration |
+| Mode                    | initial / closure                 |
+| Phase                   |                                   |
+| WORK ID                 | Required for work scope           |
+| Baseline SHA            |                                   |
+| Target SHA              |                                   |
+| Diff range              |                                   |
+| Commits / changed files |                                   |
+| Date                    |                                   |
 
-Branch names are not a range. Pin immutable SHAs, and confirm the base really is an ancestor of
-the head before trusting a 3-dot diff.
+Branch names are not a range. Pin immutable SHAs, and confirm the base really is an ancestor of the head before trusting a 3-dot diff.
 
 ## Verdict
 
@@ -43,8 +42,8 @@ the head before trusting a 3-dot diff.
 - `conditional_pass`: only major findings, each with a specific fix named.
 - `fail`: at least one blocker.
 
-Never write `pass` without evidence. Only a command that was actually executed, with its output,
-counts as grounds for a pass.
+Never write `pass` without evidence.
+Only a command that was actually executed, with its output, counts as grounds for a pass.
 
 ## Summary
 
@@ -52,8 +51,8 @@ Three sentences at most. What matched the plan, and what did not.
 
 ## Findings
 
-| # | Severity | Classification | Axis | Location (`file:line`) | Summary | Origin ID |
-| --- | --- | --- | --- | --- | --- | --- |
+| #   | Severity | Classification | Axis | Location (`file:line`) | Summary | Origin ID |
+| --- | -------- | -------------- | ---- | ---------------------- | ------- | --------- |
 
 ### [FINDING-ID] — [Title]
 
@@ -79,7 +78,7 @@ Three sentences at most. What matched the plan, and what did not.
 ### A. Requirement and PLAN traceability
 
 | Requirement / plan item | Implementation | Verdict |
-| --- | --- | --- |
+| ----------------------- | -------------- | ------- |
 
 ### B. Source-of-truth compliance
 
@@ -92,7 +91,7 @@ For each defect: what goes wrong, on which input and ordering, and where the fix
 ### E. Tests and executable evidence
 
 | Required test | Corresponding test | Verdict |
-| --- | --- | --- |
+| ------------- | ------------------ | ------- |
 
 ### F. Overengineering, residue, and scope intrusion
 
@@ -119,7 +118,7 @@ Fill this section only for `scope=integration`.
 ## Verification performed
 
 | Command | Result |
-| --- | --- |
+| ------- | ------ |
 
 ## Traceability / coverage gaps
 

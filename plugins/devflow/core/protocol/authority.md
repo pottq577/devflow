@@ -21,43 +21,36 @@ Treat PRD as the product/domain source of truth and PLAN as the repository imple
 
 ## Pinning a range
 
-A branch name is not a range, and a 3-dot range is only trustworthy when the base is genuinely an
-ancestor of the head. A stacked branch cut from a work commit rather than the previous phase's tip
-resolves to a stale merge base and reports hundreds of unrelated files as if they were in scope.
+A branch name is not a range, and a 3-dot range is only trustworthy when the base is genuinely an ancestor of the head.
+A stacked branch cut from a work commit rather than the previous phase's tip resolves to a stale merge base and reports hundreds of unrelated files as if they were in scope.
 
 ```bash
 devflow phase ref <domain> <phase> --base <ref> --head <ref>
 ```
 
-That command resolves both refs to SHAs, verifies ancestry with `git merge-base --is-ancestor`, and
-writes `base_sha`, `head_sha`, and `diff_range` into STATE. It refuses rather than guessing when the
-history diverged, and takes `--range` for that case.
+That command resolves both refs to SHAs, verifies ancestry with `git merge-base --is-ancestor`, and writes `base_sha`, `head_sha`, and `diff_range` into STATE.
+It refuses rather than guessing when the history diverged, and takes `--range` for that case.
 
-Do not check out branches to read code. Another session may be working in the tree. `git show
-<ref>:<path>` and the pinned diff are enough; create a worktree only to build or test, and remove it
-afterwards.
+Do not check out branches to read code. Another session may be working in the tree.
+`git show <ref>:<path>` and the pinned diff are enough; create a worktree only to build or test, and remove it afterwards.
 
 ## Accumulated domain knowledge
 
-`PITFALLS.md` holds traps that no lifecycle state can express: fakes that always succeed, methods
-that no-op instead of raising, a verification command that skips the suite it appears to run,
-behavior that looks like a defect but is a recorded decision. It is loaded by `plan`, `run`, and
-`audit`.
+`PITFALLS.md` holds traps that no lifecycle state can express: fakes that always succeed, methods that no-op instead of raising, a verification command that skips the suite it appears to run, behavior that looks like a defect but is a recorded decision.
+It is loaded by `plan`, `run`, and `audit`.
 
-It is context, not authority. When it disagrees with current code, the code wins and the entry is
-stale. Fix the entry in the same change.
+It is context, not authority.
+When it disagrees with current code, the code wins and the entry is stale.
+Fix the entry in the same change.
 
-The render commands assemble bounded context, not repository RAG or semantic search: plan receives
-the full PRD, run receives the selected WORK and exact origin-linked PRD/PLAN sections, work and
-phase audits receive scope-linked context, and integration receives broad summaries and paths.
+The render commands assemble bounded context, not repository RAG or semantic search: plan receives the full PRD, run receives the selected WORK and exact origin-linked PRD/PLAN sections, work and phase audits receive scope-linked context, and integration receives broad summaries and paths.
 
 ## Delivery output authority
 
-`delivery-artifacts.md` grants a narrow allowance for the requested branch PR body and Postman
-collection, including existing WORK scope lists. Read the consuming project's
-`docs/PR/templates.md` as input; preserve it. Generated outputs stay derived from code, source refs,
-executed evidence and existing STATE/WORK, and grant no product-scope or remote-operation authority.
+`delivery-artifacts.md` grants a narrow allowance for the requested branch PR body and Postman collection, including existing WORK scope lists.
+Read the consuming project's `docs/PR/templates.md` as input; preserve it.
+Generated outputs stay derived from code, source refs, executed evidence and existing STATE/WORK, and grant no product-scope or remote-operation authority.
 
-Protocol 1.7 `finalization.md` additionally authorizes the whole-work ELI5 HTML, sanitized Newman
-summaries and local private test diagnostics. All source/test corrections use traceable ordinary
-WORK and commits. The actual accepted API contract governs code-versus-collection diagnosis.
+Protocol 1.7 `finalization.md` additionally authorizes the whole-work ELI5 HTML, sanitized Newman summaries and local private test diagnostics.
+All source/test corrections use traceable ordinary WORK and commits.
+The actual accepted API contract governs code-versus-collection diagnosis.

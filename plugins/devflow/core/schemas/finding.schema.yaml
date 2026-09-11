@@ -19,44 +19,87 @@ required:
   - root_cause
   - disposition
 properties:
-  id: {type: string}
+  id: { type: string }
   classification:
     type: string
-    allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
+    allowed:
+      [
+        CONFIRMED,
+        DECISION_REQUIRED,
+        EVIDENCE_REQUIRED,
+        REJECTED,
+        DOCUMENTATION_DRIFT,
+        SPEC_DRIFT,
+      ]
   severity:
     type: string
     allowed: [blocker, major, minor, nit]
-  severity_reason: {type: string}
-  axis: {type: string}
-  expected: {type: string}
-  actual: {type: string}
+  severity_reason: { type: string }
+  axis: { type: string }
+  expected: { type: string }
+  actual: { type: string }
   evidence:
     type: list
     min_items: 1
-    items: {type: string}
-  root_cause: {type: string}
+    items: { type: string }
+  root_cause: { type: string }
   disposition:
     type: mapping
     required: [action, work_ids, decision_ids]
     properties:
       action:
         type: string
-        allowed: [remediation_work, evidence_work, documentation_work, decision, record_only, stop]
+        allowed:
+          [
+            remediation_work,
+            evidence_work,
+            documentation_work,
+            decision,
+            record_only,
+            stop,
+          ]
       work_ids:
         type: list
-        items: {type: string}
+        items: { type: string }
       decision_ids:
         type: list
-        items: {type: string}
+        items: { type: string }
 classification:
-  allowed: [CONFIRMED, DECISION_REQUIRED, EVIDENCE_REQUIRED, REJECTED, DOCUMENTATION_DRIFT, SPEC_DRIFT]
+  allowed:
+    [
+      CONFIRMED,
+      DECISION_REQUIRED,
+      EVIDENCE_REQUIRED,
+      REJECTED,
+      DOCUMENTATION_DRIFT,
+      SPEC_DRIFT,
+    ]
   disposition:
-    CONFIRMED: {action: remediation_work, work_kind: remediation, work_ids: required, decision_ids: empty}
-    DECISION_REQUIRED: {action: decision, work_ids: empty, decision_ids: required}
-    EVIDENCE_REQUIRED: {action: evidence_work, work_kind: evidence, work_ids: required, decision_ids: empty}
-    REJECTED: {action: record_only, work_ids: empty, decision_ids: empty}
-    DOCUMENTATION_DRIFT: {action: documentation_work, work_kind: documentation, work_ids: required, decision_ids: empty}
-    SPEC_DRIFT: {action: stop, work_ids: empty, decision_ids: empty}
+    CONFIRMED:
+      {
+        action: remediation_work,
+        work_kind: remediation,
+        work_ids: required,
+        decision_ids: empty,
+      }
+    DECISION_REQUIRED:
+      { action: decision, work_ids: empty, decision_ids: required }
+    EVIDENCE_REQUIRED:
+      {
+        action: evidence_work,
+        work_kind: evidence,
+        work_ids: required,
+        decision_ids: empty,
+      }
+    REJECTED: { action: record_only, work_ids: empty, decision_ids: empty }
+    DOCUMENTATION_DRIFT:
+      {
+        action: documentation_work,
+        work_kind: documentation,
+        work_ids: required,
+        decision_ids: empty,
+      }
+    SPEC_DRIFT: { action: stop, work_ids: empty, decision_ids: empty }
 severity:
   allowed: [blocker, major, minor, nit]
   meaning:

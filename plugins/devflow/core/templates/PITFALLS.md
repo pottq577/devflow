@@ -1,10 +1,10 @@
 # Domain pitfalls and accumulated context
 
-Traps a fresh session must know before touching this domain. This is the half of a handoff that
-`status` cannot compute: `STATE.yaml` says where the work is, this file says what will bite you.
+Traps a fresh session must know before touching this domain.
+This is the half of a handoff that `status` cannot compute: `STATE.yaml` says where the work is, this file says what will bite you.
 
-Every entry earns its place by having cost something once. Delete an entry when the trap is gone,
-not when it feels obvious.
+Every entry earns its place by having cost something once.
+Delete an entry when the trap is gone, not when it feels obvious.
 
 `plan`, `run`, and `audit` all load this file. Keep it short enough that they can.
 
@@ -32,8 +32,8 @@ not when it feels obvious.
 
 ## Out of scope
 
-- Work that looks like a defect here but is a deliberate, recorded decision. Name the decision id
-  so nobody "fixes" it.
+- Work that looks like a defect here but is a deliberate, recorded decision.
+- Name the decision id so nobody "fixes" it.
 
 ## Lessons carried forward
 

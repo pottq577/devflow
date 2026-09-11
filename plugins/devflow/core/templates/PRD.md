@@ -9,6 +9,7 @@
 ## 4. Requirements
 
 ### REQ-001 — [Title]
+
 - Requirement:
 - Acceptance criteria:
   - AC-001:
@@ -27,4 +28,5 @@
 
 ## 10. Open Decisions
 
-Use stable IDs. Keep repository file paths, class names, migration ordering, commit boundaries, and phase decomposition out of the PRD; the Architect derives those from the live repository.
+Use stable IDs.
+Keep repository file paths, class names, migration ordering, commit boundaries, and phase decomposition out of the PRD; the Architect derives those from the live repository.

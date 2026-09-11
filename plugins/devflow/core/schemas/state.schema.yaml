@@ -36,7 +36,21 @@ protocol_compatibility:
 workflow_type:
   allowed: [delivery, audit_remediation]
 project_status:
-  allowed: [planning, plan_review, phase_execution, work_audit, phase_audit, remediation, integration_audit, integration_remediation, integration_closure, delivery_finalization, complete, blocked]
+  allowed:
+    [
+      planning,
+      plan_review,
+      phase_execution,
+      work_audit,
+      phase_audit,
+      remediation,
+      integration_audit,
+      integration_remediation,
+      integration_closure,
+      delivery_finalization,
+      complete,
+      blocked,
+    ]
 phase_status:
   allowed: [planned, executing, audit, remediation, verified, blocked]
 integration_status:
@@ -48,7 +62,7 @@ plan_review:
   optional: [audit_file, remediation_work_ids]
   remediation_work_ids:
     type: list
-    items: {type: string}
+    items: { type: string }
 phase_entry:
   required: [status, work_file, audit_file]
   optional:
@@ -70,7 +84,20 @@ delivery:
   grandfathered_work_ids: Unique ids of already-done WORK snapshotted once by delivery enable.
   branches:
     key: Exact source branch name.
-    required_fields: [base_ref, base_sha, head_sha, pr_file, postman_file, template_sha256, pr_sha256, postman_sha256, work_ids, api_endpoints, api_note]
+    required_fields:
+      [
+        base_ref,
+        base_sha,
+        head_sha,
+        pr_file,
+        postman_file,
+        template_sha256,
+        pr_sha256,
+        postman_sha256,
+        work_ids,
+        api_endpoints,
+        api_note,
+      ]
     full_source_shas: [base_sha, head_sha]
     content_hashes: [template_sha256, pr_sha256, postman_sha256]
     work_ids: Unique ordered ids; exactly the delivered done WORK on this branch, latest commit equals head_sha.
@@ -87,9 +114,34 @@ delivery_finalization:
   runs:
     type: list
     immutable_attempt_ids: true
-    required_fields: [id, branch, source_sha, collection_sha256, recorded_at, exit_code, status, counts, reason_codes, server_sha, newman_version, raw_file, raw_sha256, summary_file, summary_sha256]
+    required_fields:
+      [
+        id,
+        branch,
+        source_sha,
+        collection_sha256,
+        recorded_at,
+        exit_code,
+        status,
+        counts,
+        reason_codes,
+        server_sha,
+        newman_version,
+        raw_file,
+        raw_sha256,
+        summary_file,
+        summary_sha256,
+      ]
     status: [passed, failed, blocked, not_applicable]
-    counts: [expected_requests, requests, request_failures, assertions, assertion_failures, skipped_assertions]
+    counts:
+      [
+        expected_requests,
+        requests,
+        request_failures,
+        assertions,
+        assertion_failures,
+        skipped_assertions,
+      ]
     private_evidence: Raw report stays local through closure; content hash must match when present.
   diagnoses:
     key: Existing unsuccessful run id.
@@ -98,11 +150,27 @@ delivery_finalization:
     work_id: Required traced integration remediation for code/collection; null for environment/unknown.
   explanation:
     nullable: true
-    required_fields: [html_file, html_sha256, scope_sha256, skill_name, skill_file, skill_sha256, invocation]
+    required_fields:
+      [
+        html_file,
+        html_sha256,
+        scope_sha256,
+        skill_name,
+        skill_file,
+        skill_sha256,
+        invocation,
+      ]
     skill_name: eli5
     scope: All domain source documents, WORK, branch records, Newman attempts and diagnoses.
   receipt:
     required_fields: [scope_sha256, html_sha256]
     invalidation: Scope or artifact changes require refreshed ELI5/Newman evidence and delivery finalize.
-  commands: [delivery context, delivery explain, delivery newman, delivery triage, delivery finalize]
+  commands:
+    [
+      delivery context,
+      delivery explain,
+      delivery newman,
+      delivery triage,
+      delivery finalize,
+    ]
   failure_persistence: Newman nonzero exits preserve actual attempt evidence; lifecycle refusals stay atomic.

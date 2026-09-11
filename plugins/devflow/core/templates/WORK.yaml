@@ -80,12 +80,12 @@ items:
   #     requirements: [REQ-014]
 
 # Protocol 1.6: fill selected item.evidence before work done. See delivery-artifacts.md.
-  # start_sha is captured by work start; keep it intact.
-  # comments: [{path: src/service.py, line: 10, reason: Explains the retry invariant.}]
-  # comments_note: null  # concrete N/A only for docs/config/deletion-only work
-  # delivery:
-  #   base_ref: develop
-  #   pr_file: <devflow delivery paths output>
-  #   postman_file: <devflow delivery paths output>
-  #   api_endpoints: ["GET /api/example"]
-  #   api_note: Actual cumulative affected API coverage and runtime-execution status.
+# start_sha is captured by work start; keep it intact.
+# comments: [{path: src/service.py, line: 10, reason: Explains the retry invariant.}]
+# comments_note: null  # concrete N/A only for docs/config/deletion-only work
+# delivery:
+#   base_ref: develop
+#   pr_file: <devflow delivery paths output>
+#   postman_file: <devflow delivery paths output>
+#   api_endpoints: ["GET /api/example"]
+#   api_note: Actual cumulative affected API coverage and runtime-execution status.
