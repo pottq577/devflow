@@ -24,13 +24,17 @@ server start -> readiness check -> Newman run -> result classification -> server
 
 The runtime does not invoke a shell or use `shlex.split`. It starts the process in a dedicated process group, captures private server output, polls the readiness URL, runs Newman only after readiness succeeds, and terminates the process group in `finally`.
 
+The owned process group must remain alive after readiness succeeds and immediately before Newman starts. If the owned process exits early, a different process returning 2xx from the readiness URL does not satisfy the gate and the run is `blocked`.
+
+Cleanup is bounded: send `SIGTERM`, wait for graceful exit, send `SIGKILL` to the owned process group when needed, then verify that the group has exited. The runtime records Newman and cleanup outcomes separately.
+
 `--readiness-url` is required for HTTP collections. Readiness succeeds only for an HTTP response status in `200..299`; the default timeout is bounded and polling is condition-based. The readiness URL uses the same target safety rules as the Newman base URL.
 
 ### Evidence and statuses
 
 Each attempted HTTP run records a server lifecycle evidence object containing the argv hash, readiness URL, ordered event timestamps, readiness HTTP status, server log path and hash, Newman result, and cleanup result. A successful Newman run whose cleanup fails is recorded with separate Newman and cleanup outcomes but the overall run is `blocked`, so finalization rejects it.
 
-Startup, readiness, Newman tool, environment, and cleanup failures are persisted as `blocked` or `failed` runs. They never produce `not_applicable`.
+Startup, readiness, Newman tool, environment, and cleanup failures are persisted as `blocked` runs. A Newman run that completes and has API or assertion failures is `failed`. A Newman pass followed by cleanup failure is `blocked`. None of these cases produces `not_applicable`.
 
 `not_applicable` is valid only when both conditions hold:
 
@@ -41,7 +45,7 @@ The run records the zero request count, empty declared endpoint list, Collection
 
 ### Diagnosis and finalization gate
 
-`code` and `collection` triage is accepted only for a completed Newman run with a successful server lifecycle. Server or environment failures are triaged as `environment` or `unknown` and keep finalization open until a later valid run succeeds.
+`code` and `collection` triage is accepted only for a completed Newman run with a successful server lifecycle and overall `failed` status. Server or environment failures are triaged as `environment` or `unknown` and keep finalization open until a later valid run succeeds.
 
 `final_errors` requires, for every HTTP branch:
 
