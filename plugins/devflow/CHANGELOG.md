@@ -9,8 +9,8 @@
 - Treat model-capacity/overload responses as capability failures so routing can fall through to the next candidate; gate Codex candidates by their minimum supported CLI version (GPT-5.6 `0.144.0+`).
 - Replace the unenforceable hard-token-ceiling claim with a measured pre-dispatch reservation guard (25k specialist / 8k scout by default) and explicit one-in-flight-dispatch overrun semantics.
 - Harden owned-server finalization with a post-readiness liveness window and deterministic process-group TERM/KILL confirmation; harden the server lifecycle fixture so readiness cannot race process initialization.
-- Ship both root marketplace adapters and synchronize protocol/skill-set regression expectations for 0.9.0 / protocol 1.9.0.
-- Keep manual plan/run/audit/status workflows and existing lifecycle artifacts compatible under protocol 1.9.
+- Ship both root marketplace adapters and synchronize plugin/skill-set regression expectations for 0.9.0 while retaining protocol 1.8.0 compatibility.
+- Keep manual plan/run/audit/status workflows and existing lifecycle artifacts compatible under protocol 1.8.0.
 
 ## 0.8.1 - 2026-09-11
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import contextlib
+import io
 import json
 import os
 import re
@@ -25,6 +27,7 @@ if SCRIPT_DIRECTORY not in sys.path:
 import devflow_delivery as delivery
 import devflow_finalization as finalization
 import devflow_newman as newman
+import devflow_autopilot as autopilot
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
@@ -3664,6 +3667,98 @@ def delivery_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def autopilot_command(args: argparse.Namespace) -> int:
+    root = repo_root()
+    policy = autopilot.load_policy(plugin_root(), root)
+    capabilities = autopilot.CapabilityRegistry.detect(policy)
+    if args.autopilot_command == "capabilities":
+        print(json.dumps(capabilities.as_dict(), ensure_ascii=False, indent=2))
+        return 0
+
+    d = domain_dir(root, args.domain)
+    if args.autopilot_command == "bootstrap":
+        if state_path(root, args.domain).exists():
+            raise ValueError(f"Domain already initialized: {args.domain}")
+        requirements = Path(args.requirements_file).resolve()
+        if not requirements.is_file():
+            raise ValueError(f"Requirements file not found: {requirements}")
+        target = d / "PRD.md"
+        action = {"command": "bootstrap", "scope": "project"}
+        spec = autopilot.RouteEngine(policy, capabilities).resolve(action, {"risk_profile": args.risk})
+        packet = "Target PRD path: " + str(target) + "\n\n## Approved requirements\n" + requirements.read_text(encoding="utf-8")
+        prompt = autopilot.ContextAssembler(plugin_root()).build(spec, packet)
+        receipt = autopilot.DispatchBroker(root, capabilities).execute(spec, prompt, args.timeout)
+        if receipt.get("status") != "success":
+            print(json.dumps({"status": "blocked", "route": spec, "receipt": receipt}, ensure_ascii=False, indent=2))
+            return 1
+        errors = required_markdown_section_errors(target, "PRD.md")
+        if errors:
+            print(json.dumps({"status": "blocked", "route": spec, "errors": errors}, ensure_ascii=False, indent=2))
+            return 1
+        with contextlib.redirect_stdout(io.StringIO()):
+            init_domain(argparse.Namespace(domain=args.domain, risk=args.risk, workflow="delivery", extension="default", prd=None, force=False))
+        print(json.dumps({"status": "initialized", "route": spec, "receipt": receipt}, ensure_ascii=False, indent=2))
+        return 0
+
+    if not state_path(root, args.domain).exists():
+        raise ValueError(f"Domain not initialized: {args.domain}")
+    raw_state = load_yaml(state_path(root, args.domain), {}) or {}
+    state = project_state(root, args.domain, copy.deepcopy(raw_state))
+    controller_dir = root / ".devflow" / "runtime" / args.domain
+    ledger = autopilot.RuntimeLedger(controller_dir) if args.autopilot_command in {"start", "resume", "status"} else None
+    if args.autopilot_command == "route":
+        prior = autopilot.RuntimeLedger(controller_dir).load_controller() if controller_dir.exists() else {}
+        capabilities.restore_unavailable(prior.get("unavailable_candidates"))
+        spec = autopilot.RouteEngine(policy, capabilities).resolve(state["next_action"], state, args.attempt)
+        print(json.dumps({"action": state["next_action"], "dispatch": spec}, ensure_ascii=False, indent=2))
+        return 0
+    if args.autopilot_command == "status":
+        print(json.dumps(ledger.load_controller() if ledger else {}, ensure_ascii=False, indent=2))
+        return 0
+
+    prior = ledger.load_controller() if args.autopilot_command == "resume" else {}
+    router = autopilot.RouteEngine(policy, capabilities)
+    assembler = autopilot.ContextAssembler(plugin_root())
+
+    def status_fn() -> dict[str, Any]:
+        return refresh_state(root, args.domain)
+
+    def render_fn(action: dict[str, Any]) -> str:
+        command = action["command"]
+        render_args = argparse.Namespace(domain=args.domain, render_command=command, task=action.get("work_item"),
+                                         scope=action.get("scope"), phase=action.get("phase"), mode=action.get("mode", "initial"))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = render(render_args)
+        if result:
+            raise RuntimeError(f"render {command} refused")
+        return output.getvalue()
+
+    def route_fn(action: dict[str, Any], current: dict[str, Any], attempt: int) -> dict[str, Any]:
+        return router.resolve(action, current, attempt)
+
+    def dispatch_fn(dispatch_spec: dict[str, Any], prompt: str) -> dict[str, Any]:
+        return autopilot.DispatchBroker(root, capabilities).execute(
+            dispatch_spec, assembler.build(dispatch_spec, prompt), args.timeout,
+        )
+
+    budget = autopilot.TokenBudget(policy.get("budget"), total_tokens=args.token_budget,
+                                   state=prior.get("budget") if prior else None)
+    controller = autopilot.AutopilotController(status_fn, render_fn, route_fn, dispatch_fn, ledger,
+        max_steps=args.max_steps, max_no_progress=int(policy["escalation"]["retries"]["max_no_progress"]),
+        resume_state=prior, capabilities=capabilities, budget=budget,
+        scout_before=set(policy.get("orchestration", {}).get("scout_before", [])))
+    try:
+        with autopilot.DomainLease(controller_dir, int(policy["concurrency"]["mutating"])):
+            result = controller.run()
+    except RuntimeError as exc:
+        if "concurrency limit" not in str(exc):
+            raise
+        result = {"status": "blocked", "reason": "mutating_concurrency_limit"}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") == "complete" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="devflow", description="State-based agent development protocol runtime")
     sub = p.add_subparsers(dest="command", required=True)
@@ -3690,6 +3785,23 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("domain")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=next_item)
+
+    sp = sub.add_parser("autopilot")
+    autosub = sp.add_subparsers(dest="autopilot_command", required=True)
+    s = autosub.add_parser("capabilities"); s.set_defaults(func=autopilot_command)
+    s = autosub.add_parser("bootstrap")
+    s.add_argument("domain"); s.add_argument("--requirements-file", required=True)
+    s.add_argument("--risk", choices=sorted(RISK_LEVELS), default="medium"); s.add_argument("--timeout", type=int, default=600)
+    s.set_defaults(func=autopilot_command)
+    for name in ("route", "status", "start", "resume"):
+        s = autosub.add_parser(name); s.add_argument("domain")
+        if name == "route":
+            s.add_argument("--attempt", type=int, default=0)
+        if name in {"start", "resume"}:
+            s.add_argument("--max-steps", type=int, default=100)
+            s.add_argument("--token-budget", type=int)
+            s.add_argument("--timeout", type=int, default=1800)
+        s.set_defaults(func=autopilot_command)
 
     sp = sub.add_parser("delivery")
     dsub = sp.add_subparsers(dest="delivery_command", required=True)

@@ -4725,7 +4725,7 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
     entries = [entry for entry in marketplace.get("plugins", []) if entry.get("name") == manifest.get("name")]
     check(
         "marketplace plugin version matches manifest",
-        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == codex_manifest.get("version") == "0.8.1",
+        len(entries) == 1 and entries[0].get("version") == manifest.get("version") == codex_manifest.get("version") == "0.9.0",
         repr(entries) + repr(codex_manifest.get("version")),
     )
 
@@ -4748,7 +4748,7 @@ def case_codex_adapter_uses_shared_plugin(root: Path) -> None:
         "Codex plugin discovers the shared skills at the same version as the Claude plugin manifest",
         manifest.get("version") == claude.get("version")
         and skills_root.resolve() == (PLUGIN / "skills").resolve()
-        and {path.parent.name for path in skills_root.glob("*/SKILL.md")} == {"plan", "run", "audit", "status"},
+        and {path.parent.name for path in skills_root.glob("*/SKILL.md")} == {"plan", "run", "audit", "status", "goal", "autopilot"},
         repr(manifest) + repr(claude.get("version")),
     )
     check(
