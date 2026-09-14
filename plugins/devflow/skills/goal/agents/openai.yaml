@@ -1,0 +1,3 @@
+interface:
+  display_name: "DevFlow Goal"
+  short_description: "Autonomously route a goal through planning, coding, verification, remediation, and delivery."

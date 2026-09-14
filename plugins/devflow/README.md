@@ -12,10 +12,12 @@ The point is that a fresh session reconstructs what to do next by running one co
 
 | Skill    | Role      | Does                                                          |
 | -------- | --------- | ------------------------------------------------------------- |
-| `plan`   | Architect | Repository-grounded architecture and WORK generation          |
-| `run`    | Executor  | One WORK item, or the computed whole-work finalization action |
-| `audit`  | Auditor   | Independent plan, work, phase, and integration verification   |
-| `status` | none      | Deterministic next-action reconstruction                      |
+| `plan`      | Architect       | Repository-grounded architecture and WORK generation          |
+| `run`       | Executor        | One WORK item, or the computed whole-work finalization action |
+| `audit`     | Auditor         | Independent plan, work, phase, and integration verification   |
+| `status`    | none            | Deterministic next-action reconstruction                      |
+| `goal`      | Goal Supervisor | Bootstrap/resume a complete foreground autonomous goal        |
+| `autopilot` | Controller      | Inspect, start, resume, and diagnose routed execution         |
 
 ## Runtime dependency
 
@@ -88,7 +90,27 @@ Plan render includes the full approved PRD.
 Run render includes the selected WORK plus exact origin-linked PRD and PLAN sections.
 Work and phase audit render include scope-linked WORK and origin context.
 Integration render supplies the current PLAN, phase manifest, audit paths, and integration WORK without inlining every phase WORK body.
-This is not semantic search, repository RAG, or autonomous orchestration.
+This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
+
+
+## Autonomous `/goal` routing (0.9.0 / protocol 1.9.0)
+
+DevFlow now has two equivalent lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Autopilot never invents the next step; it executes the same `STATE -> compute_next_action()` result until completion or a human/blocker gate.
+
+```bash
+devflow autopilot capabilities
+devflow autopilot bootstrap billing --requirements-file .devflow/runtime/billing/goal-requirements.md
+devflow autopilot route billing
+devflow autopilot start billing
+devflow autopilot status billing
+devflow autopilot resume billing
+```
+
+For a new `/goal`, the supervisor stores approved requirements verbatim and calls `autopilot bootstrap`; PRD authorship is therefore routed to the Architect profile before `devflow init`. Routing policy lives in `core/routing/default.yaml` and can be overlaid by `.devflow/routing.yaml`. Logical profiles are bound separately from concrete execution backends. Routine implementation defaults to Luna, per-WORK high/critical risk promotes implementation effort, authoritative planning/review defaults to Sol, and critical integration reasoning stays on Sol at maximum effort with Terra as the fallback candidate. Unsupported/auth/rate-limit/capacity model/backend failures persist an unavailable candidate and fall through to the next compatible profile candidate.
+
+The controller is foreground, bounded, resumable, and observable. It enforces a persisted measured-token dispatch budget with a pre-dispatch reservation (`25,000` specialist / `8,000` scout by default), automatically runs one bounded read-only scout before configured expensive roles while budget pressure is normal, and holds a cross-process per-domain mutating lease. Backend usage is measured after each dispatch, so one in-flight dispatch may exceed its reservation; no later dispatch starts when the required reservation no longer fits. Retry counts, diagnoses, scout digests, unavailable candidates, budget usage, and dispatch receipts survive `resume` under `.devflow/runtime/<domain>/`; they are telemetry rather than lifecycle authority. Specialist agents receive rendered context capsules with the concrete installed DevFlow CLI path. Recursive delegation remains policy-controlled and disabled by default. Use `--token-budget TOKENS` on `autopilot start` or `resume` to override the run budget.
+
+Codex CLI compatibility is checked before a candidate is eligible: GPT-5.6 requires `0.144.0+`. `autopilot capabilities` shows the detected CLI version and per-model eligibility, allowing older compatible candidates to remain usable instead of failing at dispatch time.
 
 ## Typical manual flow
 
@@ -130,7 +152,7 @@ devflow validate billing-prod-readiness
 The initial audit may complete immediately, request a human decision, or release traced remediation, evidence, or documentation WORK from `work/integration.yaml`.
 After that WORK and any required work reviews are complete, `status` selects the integration closure audit.
 A passing closure completes the project.
-DevFlow computes each next action but never executes or audits it autonomously.
+Manual mode only computes the next action. Autopilot executes and audits that same deterministic action sequence through isolated routed specialists.
 
 ## Project artifacts
 
@@ -235,7 +257,7 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.8.1` ships protocol version `1.8.0`.
+Plugin version `0.9.0` ships protocol version `1.9.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
@@ -252,7 +274,7 @@ Existing audit Markdown without YAML front matter remains readable as a legacy a
 No bulk migration or automatic rewrite is required.
 A protocol 1.3.0 domain sitting mid-closure re-runs its scope's initial audit through the scope's recovery command to record provenance, then the closure proceeds.
 
-A fresh project initialization records `1.8.0` in both `.devflow/config.yaml` and the domain's `STATE.yaml`.
+A fresh project initialization records `1.9.0` in both `.devflow/config.yaml` and the domain's `STATE.yaml`.
 The config value is a project runtime compatibility guard, while STATE identifies the domain artifact contract.
 Older same-major versions are readable.
 A malformed or different-major version is an error, and a newer config minor permits read-only status and validation but blocks mutation.
@@ -322,7 +344,7 @@ Run these from the marketplace root.
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
-## Whole-work finalization (0.8.1 / protocol 1.8.0)
+## Whole-work finalization (0.9.0 / protocol 1.9.0)
 
 Read `core/protocol/finalization.md` for the normative procedure.
 Existing completed WORK remains intact after `delivery enable`; the new field is additive.

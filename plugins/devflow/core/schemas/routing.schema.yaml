@@ -1,0 +1,12 @@
+version: 1
+required: [version, profiles, roles, escalation, context, concurrency, orchestration, budget, backends, models]
+notes:
+  - Routing policy is runtime configuration, never PLAN/WORK authority.
+  - Profiles bind logical capability tiers to replaceable model candidates.
+  - Dispatcher capabilities choose execution backend after the model is selected.
+
+  - Budget total_tokens is a measured-usage pre-dispatch guard; percentage buckets may borrow only from reserve.
+  - dispatch_reserve_tokens and scout_reserve_tokens must fit before a new dispatch starts; one in-flight backend run may report usage above its reservation.
+  - models may declare codex_min_version; Codex candidates below that version are skipped before dispatch.
+  - orchestration.scout_before names specialist roles that receive one persisted read-only scout digest per action.
+  - concurrency.mutating is enforced with cross-process domain leases.

@@ -1,0 +1,72 @@
+version: 1
+profiles:
+  economy:
+    candidates: [gpt-5.6-luna, gpt-5.6-terra]
+  balanced:
+    candidates: [gpt-5.6-terra, gpt-5.6-sol]
+  frontier:
+    candidates: [gpt-5.6-sol, gpt-5.6-terra]
+  hardest:
+    candidates: [gpt-5.6-sol, gpt-5.6-terra]
+roles:
+  scout: {profile: economy, effort: medium, sandbox: read-only}
+  architect: {profile: frontier, effort: xhigh, sandbox: workspace-write}
+  worker: {profile: economy, effort: high, sandbox: workspace-write}
+  verifier: {profile: frontier, effort: high, sandbox: workspace-write}
+  auditor: {profile: frontier, effort: xhigh, sandbox: workspace-write}
+  integration_auditor: {profile: hardest, effort: xhigh, sandbox: workspace-write}
+  diagnostician: {profile: frontier, effort: xhigh, sandbox: read-only}
+  finalizer: {profile: frontier, effort: xhigh, sandbox: workspace-write}
+escalation:
+  risk:
+    high:
+      verifier_effort: xhigh
+    critical:
+      architect_profile: hardest
+      architect_effort: xhigh
+      verifier_profile: hardest
+      verifier_effort: max
+      auditor_profile: hardest
+      auditor_effort: max
+      integration_auditor_profile: hardest
+      integration_auditor_effort: max
+      finalizer_profile: hardest
+      finalizer_effort: max
+  retries:
+    worker_xhigh_at: 1
+    diagnose_at: 2
+    max_no_progress: 3
+delegation:
+  recursive: false
+context:
+  default_mode: capsule
+  native_fork_turns: none
+concurrency:
+  mutating: 1
+  read_only: 2
+orchestration:
+  scout_before: [architect, verifier, auditor, integration_auditor, finalizer]
+budget:
+  total_tokens: 1000000
+  planning_percent: 15
+  implementation_percent: 45
+  verification_percent: 20
+  finalization_percent: 10
+  reserve_percent: 10
+  dispatch_reserve_tokens: 25000
+  scout_reserve_tokens: 8000
+backends:
+  preference: [native_agent, codex_exec]
+models:
+  gpt-5.6-luna:
+    efforts: [low, medium, high, xhigh, max]
+    multi_agent: v1
+    codex_min_version: 0.144.0
+  gpt-5.6-terra:
+    efforts: [low, medium, high, xhigh, max]
+    multi_agent: v2
+    codex_min_version: 0.144.0
+  gpt-5.6-sol:
+    efforts: [low, medium, high, xhigh, max]
+    multi_agent: v2
+    codex_min_version: 0.144.0

@@ -1,0 +1,3 @@
+interface:
+  display_name: "DevFlow Autopilot"
+  short_description: "Inspect and operate deterministic autonomous model routing."

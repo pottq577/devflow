@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0 - Autonomous routing
+
+- Add foreground `/goal` / Autopilot lifecycle execution over the existing deterministic next-action state machine.
+- Add task-aware logical model profiles with per-WORK risk promotion, risk/retry escalation, and runtime model/backend fallback persisted across resume.
+- Add isolated Codex exec dispatch, optional host native-agent bridge, bounded context capsules, dedicated read-only scouting/diagnosis, measured-token budgeting, a cross-process mutating lease, atomic controller checkpoints, and dispatch ledger.
+- Route new-domain `/goal` PRD bootstrap through the Architect profile before initialization, inject the concrete installed DevFlow CLI path into specialist capsules, and fail closed on invalid routed PRDs.
+- Treat model-capacity/overload responses as capability failures so routing can fall through to the next candidate; gate Codex candidates by their minimum supported CLI version (GPT-5.6 `0.144.0+`).
+- Replace the unenforceable hard-token-ceiling claim with a measured pre-dispatch reservation guard (25k specialist / 8k scout by default) and explicit one-in-flight-dispatch overrun semantics.
+- Harden owned-server finalization with a post-readiness liveness window and deterministic process-group TERM/KILL confirmation; harden the server lifecycle fixture so readiness cannot race process initialization.
+- Ship both root marketplace adapters and synchronize protocol/skill-set regression expectations for 0.9.0 / protocol 1.9.0.
+- Keep manual plan/run/audit/status workflows and existing lifecycle artifacts compatible under protocol 1.9.
+
 ## 0.8.1 - 2026-09-11
 
 Protocol 1.8.0: `delivery newman` owns the server argv lifecycle, including bounded process-group

@@ -2,7 +2,7 @@
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
 Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version
-0.8.1 and its protocol version is `1.8.0`.
+0.9.0 and its protocol version is `1.9.0`.
 
 ## Claude Code
 
@@ -37,15 +37,9 @@ adopt the new completion requirements; completed WORK is preserved. New domains 
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
 
-## Version 0.8.1 whole-work completion
+## Version 0.9.0 autonomous routing
 
-After branch PR/collection generation, the Executor invokes the installed `eli5` skill to produce
-one HTML explanation of the whole domain, uses `delivery newman` to own server start, readiness,
-Newman execution and cleanup against verified isolated test builds, diagnoses code/collection/
-environment failures, and routes code or collection defects through normal tested, committed
-remediation WORK. It refreshes all delivery outputs and the explanation before independent
-integration audit.
+`/goal` can now keep one user-facing session while DevFlow deterministically routes lifecycle actions to task-appropriate specialist models. New-domain PRD bootstrap is routed through the Architect profile before initialization; routine implementation defaults to Luna, high/critical WORK is promoted by its own risk, planning and verification default to Sol, and critical integration reasoning stays on Sol at maximum effort with Terra as the fallback candidate. Runtime capacity/model/backend failures fall through to persisted candidate fallback, Codex CLI versions are checked per model before dispatch, and retry/diagnosis state survives resume. A measured-token pre-dispatch budget, bounded read-only scouting, and a per-domain mutating lease make the controller cost-aware and safe against competing workspace writers. Existing manual plan/run/audit/status commands remain supported.
 
 Adopt an existing domain with `devflow delivery enable <domain>`, then use `devflow status <domain>`.
-When `next.command` is `finalize`, use `devflow render finalize <domain>`. See
-`docs/devflow-0.8.0/VERIFICATION.md` for the tested scope and execution limitations.
+Use `devflow autopilot start <domain>` or invoke the `goal` skill to run the complete lifecycle; use `devflow autopilot status <domain>` and `route` for observability.
