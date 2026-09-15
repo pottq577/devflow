@@ -93,6 +93,45 @@ Ponytail guidance must not remove or weaken:
 - repository conventions
 - DevFlow lifecycle guards
 
+## External execution tools
+
+External execution tools may assist work inside the currently selected DevFlow lifecycle boundary.
+They do not own lifecycle transitions, WORK selection, routing decisions, verification gates, or completion decisions.
+
+### Serena
+
+Serena contributes semantic code navigation and refactoring capabilities.
+
+Prefer Serena when symbol-aware information is useful, including:
+
+- symbol and reference discovery
+- implementation and type-hierarchy analysis
+- cross-file semantic analysis
+- semantic rename and refactoring
+
+Use native agent capabilities for ordinary shell operations, Git, configuration files, exact text search, and small localized edits when they are more direct.
+
+Serena adds no DevFlow lifecycle state or required artifacts.
+
+### Headroom
+
+Headroom may provide transparent transport-level context compression.
+
+DevFlow retains ownership of:
+
+- model selection
+- reasoning-effort routing
+- specialist and task routing
+- retry and escalation decisions
+- lifecycle state and completion decisions
+
+DevFlow must not depend on Headroom for project memory, lifecycle state, routing state, or completion evidence.
+
+Headroom adds no DevFlow lifecycle state or required artifacts.
+
+Serena and Headroom are optional.
+Their absence does not block ordinary DevFlow execution.
+
 ## Audit composition
 
 Ponytail review observations are leads, not findings.
