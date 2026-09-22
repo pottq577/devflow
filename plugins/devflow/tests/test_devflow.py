@@ -4781,6 +4781,59 @@ def case_status_reports_inputs(root: Path) -> None:
     check("status names PITFALLS as an input", "PITFALLS.md" in out, out)
 
 
+def case_next_action_carries_work_routing_metadata(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(
+        d / "work/phase-01.yaml",
+        work(
+            "01",
+            item(
+                "P01-I01",
+                kind="migration",
+                risk_level="high",
+                context=["schema change is isolated"],
+                premise_checks=["migration ordering still holds"],
+            ),
+        ),
+    )
+    devflow(root, "status", "billing")
+    action = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))["next_action"]
+    check(
+        "run next_action carries WORK kind and risk into routing",
+        action.get("command") == "run"
+        and action.get("item_kind") == "migration"
+        and action.get("item_risk") == "high",
+        repr(action),
+    )
+
+    dump(
+        d / "work/phase-01.yaml",
+        work(
+            "01",
+            item(
+                "P01-I01",
+                risk_level="critical",
+                status="done",
+                commands=["true -> ok"],
+                context=["critical path"],
+                premise_checks=["critical premise still holds"],
+            ),
+        ),
+    )
+    devflow(root, "status", "billing")
+    action = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))["next_action"]
+    check(
+        "work audit next_action carries reviewed WORK risk into verifier routing",
+        action.get("command") == "audit"
+        and action.get("scope") == "work"
+        and action.get("item_kind") == "implementation"
+        and action.get("item_risk") == "critical",
+        repr(action),
+    )
+
+
 def case_lifecycle_walk(root: Path) -> None:
     """One pass through the lifecycle: run the work, audit the phase, verify, then integration."""
     devflow(root, "init", "billing")
@@ -6014,6 +6067,7 @@ CASES = [
     case_marketplace_plugin_version_matches_manifest,
     case_codex_adapter_uses_shared_plugin,
     case_status_reports_inputs,
+    case_next_action_carries_work_routing_metadata,
     case_lifecycle_walk,
     case_derived_lifecycle_state,
     case_derived_integration_work_review_state,

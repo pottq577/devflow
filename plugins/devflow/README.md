@@ -93,9 +93,9 @@ Integration render supplies the current PLAN, phase manifest, audit paths, and i
 This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
 
 
-## Autonomous `/goal` routing (0.9.0 / protocol 1.9.0)
+## Autonomous `/goal` routing (0.9.0 / protocol 1.8.0)
 
-DevFlow now has two equivalent lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Autopilot never invents the next step; it executes the same `STATE -> compute_next_action()` result until completion or a human/blocker gate.
+DevFlow has two equivalent lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Autopilot executes the same `STATE -> compute_next_action()` result until completion or a human or blocker gate.
 
 ```bash
 devflow autopilot capabilities
@@ -106,7 +106,9 @@ devflow autopilot status billing
 devflow autopilot resume billing
 ```
 
-For a new `/goal`, the supervisor stores approved requirements verbatim and calls `autopilot bootstrap`; PRD authorship is therefore routed to the Architect profile before `devflow init`. Routing policy lives in `core/routing/default.yaml` and can be overlaid by `.devflow/routing.yaml`. Logical profiles are bound separately from concrete execution backends. Routine implementation defaults to Luna, per-WORK high/critical risk promotes implementation effort, authoritative planning/review defaults to Sol, and critical integration reasoning stays on Sol at maximum effort with Terra as the fallback candidate. Unsupported/auth/rate-limit/capacity model/backend failures persist an unavailable candidate and fall through to the next compatible profile candidate.
+For a new `/goal`, the supervisor stores approved requirements verbatim and calls `autopilot bootstrap`. The Architect profile writes the PRD before `devflow init`. Routing policy lives in `core/routing/default.yaml` and can be overlaid by `.devflow/routing.yaml`.
+
+Routine implementation and test WORK use Luna. Documentation lowers Luna reasoning to `medium`. Evidence WORK uses Terra at `high`; remediation and migration use Terra at `xhigh`. High-risk WORK promotes execution to Terra `xhigh`, while critical WORK promotes execution to Sol `xhigh`. Work verification uses Terra `high` by default, Sol `xhigh` for high risk, and Sol `max` for critical risk. Planning, phase and integration audits, diagnosis, and finalization stay on Sol. The first stalled worker retry promotes to Terra `xhigh`; diagnosis and post-diagnosis retry use Sol `xhigh`. Model or backend availability failures fall through to the next candidate in the selected profile.
 
 The controller is foreground, bounded, resumable, and observable. It enforces a persisted measured-token dispatch budget with a pre-dispatch reservation (`25,000` specialist / `8,000` scout by default), automatically runs one bounded read-only scout before configured expensive roles while budget pressure is normal, and holds a cross-process per-domain mutating lease. Backend usage is measured after each dispatch, so one in-flight dispatch may exceed its reservation; no later dispatch starts when the required reservation no longer fits. Retry counts, diagnoses, scout digests, unavailable candidates, budget usage, and dispatch receipts survive `resume` under `.devflow/runtime/<domain>/`; they are telemetry rather than lifecycle authority. Specialist agents receive rendered context capsules with the concrete installed DevFlow CLI path. Recursive delegation remains policy-controlled and disabled by default. Use `--token-budget TOKENS` on `autopilot start` or `resume` to override the run budget.
 

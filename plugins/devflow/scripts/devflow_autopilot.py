@@ -383,6 +383,8 @@ class CapabilityRegistry:
 
 
 class RouteEngine:
+    EFFORT_ORDER = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
+
     def __init__(self, policy: dict[str, Any], capabilities: CapabilityRegistry):
         self.policy = policy
         self.capabilities = capabilities
@@ -414,21 +416,57 @@ class RouteEngine:
         valid = [str(value) for value in candidates if str(value) in order]
         return max(valid, key=order.__getitem__) if valid else "medium"
 
+    @staticmethod
+    def _apply_role_override(cfg: dict[str, Any], override: dict[str, Any], role: str) -> None:
+        profile = override.get(f"{role}_profile")
+        effort = override.get(f"{role}_effort")
+        if profile:
+            cfg["profile"] = str(profile)
+        if effort:
+            cfg["effort"] = str(effort)
+
+    def _stronger_profile(self, current: str, candidate: Any) -> str:
+        if not candidate:
+            return current
+        candidate = str(candidate)
+        order = list(self.policy.get("profile_order") or self.policy.get("profiles", {}).keys())
+        ranks = {name: index for index, name in enumerate(order)}
+        if current not in ranks or candidate not in ranks:
+            return candidate
+        return candidate if ranks[candidate] > ranks[current] else current
+
+    @classmethod
+    def _stronger_effort(cls, current: str, candidate: Any) -> str:
+        if not candidate:
+            return current
+        candidate = str(candidate)
+        if current not in cls.EFFORT_ORDER or candidate not in cls.EFFORT_ORDER:
+            return candidate
+        return candidate if cls.EFFORT_ORDER[candidate] > cls.EFFORT_ORDER[current] else current
+
     def resolve(self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0) -> dict[str, Any]:
         role = self._role(action, attempt)
         cfg = copy.deepcopy(self.policy["roles"][role])
+        escalation = self.policy.get("escalation", {})
+        item_kind = str(action.get("item_kind") or "")
+        kind_over = (escalation.get("kind", {}).get(item_kind) or {})
+        self._apply_role_override(cfg, kind_over, role)
+
         risk = self._effective_risk(action, state)
-        risk_over = (self.policy.get("escalation", {}).get("risk", {}).get(risk) or {})
-        cfg["profile"] = risk_over.get(f"{role}_profile", cfg["profile"])
-        cfg["effort"] = risk_over.get(f"{role}_effort", cfg["effort"])
-        if role == "worker" and (
-            risk in {"high", "critical"}
-            or action.get("item_kind") in {"remediation", "evidence", "migration"}
-            or attempt >= int(self.policy["escalation"]["retries"].get("worker_xhigh_at", 1))
-        ):
-            cfg["effort"] = "xhigh"
-        if role == "scout" and risk in {"high", "critical"}:
-            cfg["effort"] = "high"
+        risk_over = (escalation.get("risk", {}).get(risk) or {})
+        self._apply_role_override(cfg, risk_over, role)
+
+        if role == "worker":
+            retries = escalation.get("retries", {})
+            diagnose_at = int(retries.get("diagnose_at", 2))
+            promote_at = int(retries.get("worker_promote_at", retries.get("worker_xhigh_at", 1)))
+            if attempt > diagnose_at:
+                cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_post_diagnosis_profile"))
+                cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_post_diagnosis_effort", "xhigh"))
+            elif attempt >= promote_at:
+                cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_retry_profile"))
+                cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_retry_effort", "xhigh"))
+
         profile = self.policy["profiles"][cfg["profile"]]
         preference = list(self.policy.get("backends", {}).get("preference") or ["codex_exec"])
         recursive = bool((self.policy.get("delegation") or {}).get("recursive", False))

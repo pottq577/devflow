@@ -29,6 +29,22 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertEqual((spec["role"], spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("worker", "gpt-5.6-luna", "high"))
         self.assertEqual(spec["execution"]["backend"], "codex_exec")
 
+    def test_task_kind_routes_worker_to_matching_model_and_effort(self):
+        cases = [
+            ("documentation", "gpt-5.6-luna", "medium"),
+            ("test", "gpt-5.6-luna", "high"),
+            ("evidence", "gpt-5.6-terra", "high"),
+            ("remediation", "gpt-5.6-terra", "xhigh"),
+            ("migration", "gpt-5.6-terra", "xhigh"),
+        ]
+        for item_kind, model, effort in cases:
+            with self.subTest(item_kind=item_kind):
+                spec = self.router.resolve(
+                    {"command": "run", "scope": "phase", "item_kind": item_kind},
+                    {"risk_profile": "medium"},
+                )
+                self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), (model, effort))
+
     def test_routes_planning_to_sol_xhigh(self):
         spec = self.router.resolve({"command": "plan", "scope": "project"}, {"risk_profile": "medium"})
         self.assertEqual((spec["role"], spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("architect", "gpt-5.6-sol", "xhigh"))
@@ -38,9 +54,26 @@ class AutopilotRoutingTests(unittest.TestCase):
         spec = self.router.resolve({"command": "audit", "scope": "integration", "mode": "initial"}, {"risk_profile": "critical"})
         self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-sol", "max"))
 
-    def test_high_risk_worker_uses_luna_xhigh(self):
+    def test_work_verification_uses_terra_then_promotes_to_sol_for_high_risk(self):
+        medium = self.router.resolve(
+            {"command": "audit", "scope": "work", "item_kind": "implementation", "item_risk": "medium"},
+            {"risk_profile": "medium"},
+        )
+        high = self.router.resolve(
+            {"command": "audit", "scope": "work", "item_kind": "implementation", "item_risk": "high"},
+            {"risk_profile": "medium"},
+        )
+        critical = self.router.resolve(
+            {"command": "audit", "scope": "work", "item_kind": "implementation", "item_risk": "critical"},
+            {"risk_profile": "medium"},
+        )
+        self.assertEqual((medium["model"]["selected"], medium["model"]["reasoning_effort"]), ("gpt-5.6-terra", "high"))
+        self.assertEqual((high["model"]["selected"], high["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
+        self.assertEqual((critical["model"]["selected"], critical["model"]["reasoning_effort"]), ("gpt-5.6-sol", "max"))
+
+    def test_high_risk_worker_uses_terra_xhigh(self):
         spec = self.router.resolve({"command": "run", "scope": "phase", "item_kind": "implementation"}, {"risk_profile": "high"})
-        self.assertEqual(spec["model"]["selected"], "gpt-5.6-luna")
+        self.assertEqual(spec["model"]["selected"], "gpt-5.6-terra")
         self.assertEqual(spec["model"]["reasoning_effort"], "xhigh")
 
     def test_high_work_risk_overrides_medium_domain_risk(self):
@@ -49,7 +82,15 @@ class AutopilotRoutingTests(unittest.TestCase):
             {"risk_profile": "medium"},
         )
         self.assertEqual(spec["effective_risk"], "high")
-        self.assertEqual(spec["model"]["reasoning_effort"], "xhigh")
+        self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-terra", "xhigh"))
+
+    def test_critical_work_risk_routes_worker_to_sol_xhigh(self):
+        spec = self.router.resolve(
+            {"command": "run", "scope": "phase", "item_kind": "implementation", "item_risk": "critical"},
+            {"risk_profile": "medium"},
+        )
+        self.assertEqual(spec["effective_risk"], "critical")
+        self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
 
     def test_domain_risk_is_a_floor_for_lower_work_risk(self):
         spec = self.router.resolve(
@@ -57,7 +98,7 @@ class AutopilotRoutingTests(unittest.TestCase):
             {"risk_profile": "critical"},
         )
         self.assertEqual(spec["effective_risk"], "critical")
-        self.assertEqual(spec["model"]["reasoning_effort"], "xhigh")
+        self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
 
     def test_unavailable_model_backend_pair_falls_back_to_next_candidate(self):
         self.caps.mark_unavailable("gpt-5.6-luna", "codex_exec", "model unavailable")
@@ -111,14 +152,18 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertFalse(spec["execution"]["allow_recursive_delegation"] )
         self.assertEqual(spec["execution"]["model_multi_agent"], self.policy["models"][spec["model"]["selected"]]["multi_agent"] )
 
-    def test_retry_escalates_worker_effort_then_diagnosis(self):
-        first = self.router.resolve({"command": "run", "scope": "phase", "item_kind": "implementation"}, {"risk_profile": "medium"}, attempt=0)
-        retry = self.router.resolve({"command": "run", "scope": "phase", "item_kind": "implementation"}, {"risk_profile": "medium"}, attempt=1)
-        diag = self.router.resolve({"command": "run", "scope": "phase", "item_kind": "implementation"}, {"risk_profile": "medium"}, attempt=2)
-        self.assertEqual(first["model"]["reasoning_effort"], "high")
-        self.assertEqual(retry["model"]["reasoning_effort"], "xhigh")
+    def test_retry_escalates_worker_model_then_diagnosis_and_sol_retry(self):
+        action = {"command": "run", "scope": "phase", "item_kind": "implementation"}
+        state = {"risk_profile": "medium"}
+        first = self.router.resolve(action, state, attempt=0)
+        retry = self.router.resolve(action, state, attempt=1)
+        diag = self.router.resolve(action, state, attempt=2)
+        post_diag = self.router.resolve(action, state, attempt=3)
+        self.assertEqual((first["model"]["selected"], first["model"]["reasoning_effort"]), ("gpt-5.6-luna", "high"))
+        self.assertEqual((retry["model"]["selected"], retry["model"]["reasoning_effort"]), ("gpt-5.6-terra", "xhigh"))
         self.assertEqual(diag["role"], "diagnostician")
-        self.assertEqual(diag["model"]["selected"], "gpt-5.6-sol")
+        self.assertEqual((diag["model"]["selected"], diag["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
+        self.assertEqual((post_diag["model"]["selected"], post_diag["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
 
 
 class AutopilotRuntimeTests(unittest.TestCase):
@@ -321,7 +366,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
         self.assertEqual(selected, [
             ("architect", "gpt-5.6-sol", "xhigh"),
             ("worker", "gpt-5.6-luna", "high"),
-            ("verifier", "gpt-5.6-sol", "high"),
+            ("verifier", "gpt-5.6-terra", "high"),
             ("integration_auditor", "gpt-5.6-sol", "max"),
         ])
 
@@ -593,8 +638,17 @@ class AutopilotCliTests(unittest.TestCase):
             }))
             started = subprocess.run([sys.executable, cli, "autopilot", "start", "sample", "--max-steps", "1"], cwd=root, env=env, text=True, capture_output=True)
             self.assertEqual(started.returncode, 1, started.stderr)
-            rows = [json.loads(line) for line in (runtime / "dispatch.jsonl").read_text().splitlines()]
-            self.assertEqual(rows[-1]["spec"]["model"]["selected"], "gpt-5.6-sol")
+            controller = json.loads((runtime / "controller.json").read_text())
+            self.assertNotEqual(controller["run_id"], "old-run")
+            self.assertFalse(
+                any(
+                    row.get("model") == "gpt-5.6-sol"
+                    and row.get("backend") == "native_agent"
+                    and row.get("reason") == "old failure"
+                    for row in controller.get("unavailable_candidates", [])
+                ),
+                controller,
+            )
 
 
 if __name__ == "__main__":

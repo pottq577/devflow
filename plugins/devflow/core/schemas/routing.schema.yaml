@@ -3,6 +3,10 @@ required: [version, profiles, roles, escalation, context, concurrency, orchestra
 notes:
   - Routing policy is runtime configuration, never PLAN/WORK authority.
   - Profiles bind logical capability tiers to replaceable model candidates.
+  - profile_order ranks capability tiers for retry promotion; retries never downgrade an already stronger risk-selected profile.
+  - escalation.kind applies role-specific task-kind overrides before risk overrides.
+  - escalation.risk treats domain risk as a floor and may promote a WORK above that floor through next_action.item_risk.
+  - escalation.retries may promote a stalled worker to stronger profiles and effort without changing lifecycle authority.
   - Dispatcher capabilities choose execution backend after the model is selected.
 
   - Budget total_tokens is a measured-usage pre-dispatch guard; percentage buckets may borrow only from reserve.

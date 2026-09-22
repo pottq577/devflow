@@ -8,22 +8,49 @@ profiles:
     candidates: [gpt-5.6-sol, gpt-5.6-terra]
   hardest:
     candidates: [gpt-5.6-sol, gpt-5.6-terra]
+profile_order: [economy, balanced, frontier, hardest]
 roles:
   scout: {profile: economy, effort: medium, sandbox: read-only}
   architect: {profile: frontier, effort: xhigh, sandbox: workspace-write}
   worker: {profile: economy, effort: high, sandbox: workspace-write}
-  verifier: {profile: frontier, effort: high, sandbox: workspace-write}
+  verifier: {profile: balanced, effort: high, sandbox: workspace-write}
   auditor: {profile: frontier, effort: xhigh, sandbox: workspace-write}
   integration_auditor: {profile: hardest, effort: xhigh, sandbox: workspace-write}
   diagnostician: {profile: frontier, effort: xhigh, sandbox: read-only}
   finalizer: {profile: frontier, effort: xhigh, sandbox: workspace-write}
 escalation:
+  kind:
+    documentation:
+      worker_profile: economy
+      worker_effort: medium
+    test:
+      worker_profile: economy
+      worker_effort: high
+    implementation:
+      worker_profile: economy
+      worker_effort: high
+    evidence:
+      worker_profile: balanced
+      worker_effort: high
+    remediation:
+      worker_profile: balanced
+      worker_effort: xhigh
+    migration:
+      worker_profile: balanced
+      worker_effort: xhigh
   risk:
     high:
+      worker_profile: balanced
+      worker_effort: xhigh
+      scout_effort: high
+      verifier_profile: frontier
       verifier_effort: xhigh
     critical:
       architect_profile: hardest
       architect_effort: xhigh
+      worker_profile: frontier
+      worker_effort: xhigh
+      scout_effort: high
       verifier_profile: hardest
       verifier_effort: max
       auditor_profile: hardest
@@ -33,8 +60,12 @@ escalation:
       finalizer_profile: hardest
       finalizer_effort: max
   retries:
-    worker_xhigh_at: 1
+    worker_promote_at: 1
+    worker_retry_profile: balanced
+    worker_retry_effort: xhigh
     diagnose_at: 2
+    worker_post_diagnosis_profile: frontier
+    worker_post_diagnosis_effort: xhigh
     max_no_progress: 3
 delegation:
   recursive: false

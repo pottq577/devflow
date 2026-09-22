@@ -1224,6 +1224,14 @@ def choose_next(
     return phase, path, item
 
 
+def work_routing_fields(item: dict[str, Any]) -> dict[str, Any]:
+    risk = item.get("risk")
+    return {
+        "item_kind": item.get("kind"),
+        "item_risk": risk.get("level") if isinstance(risk, dict) else None,
+    }
+
+
 def work_review_action(
     root: Path,
     domain: str,
@@ -1241,12 +1249,12 @@ def work_review_action(
             if item.get("status") == "done" and review["required"] and review["status"] != "verified":
                 reviews.append((str(item.get("id")), item_phase(path, doc), item, review))
     # Phase before id, the same ordering choose_next uses, so both halves of the runtime agree.
-    for item_id, phase, _, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
+    for item_id, phase, item, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
         if review["status"] == "pending":
-            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item_id}
+            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item_id, **work_routing_fields(item)}
         if review["status"] == "blocked":
             return {"role": "human", "command": "decision", "scope": "work", "phase": None if phase == "integration" else phase, "work_item": item_id}
-    for item_id, phase, _, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
+    for item_id, phase, item, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
         if review["status"] != "remediation":
             continue
         remediation = [index.get(str(remediation_id)) for remediation_id in review["remediation_work_ids"]]
@@ -1255,9 +1263,9 @@ def work_review_action(
             executable.sort(key=lambda target: (0 if target[1].get("status") == "in_progress" else 1, str(target[1].get("id"))))
             remediation_item = executable[0][1]
             remediation_phase = item_phase(executable[0][0], docs[executable[0][0]])
-            return {"role": "executor", "command": "run", "scope": "integration" if remediation_phase == "integration" else "phase", "phase": None if remediation_phase == "integration" else remediation_phase, "work_item": remediation_item.get("id"), "item_kind": remediation_item.get("kind")}
+            return {"role": "executor", "command": "run", "scope": "integration" if remediation_phase == "integration" else "phase", "phase": None if remediation_phase == "integration" else remediation_phase, "work_item": remediation_item.get("id"), **work_routing_fields(remediation_item)}
         if remediation and all(target and target[1].get("status") in TERMINAL_STATUSES and review_satisfied(target[1]) for target in remediation):
-            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "closure", "phase": None if phase == "integration" else phase, "work_item": item_id}
+            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "closure", "phase": None if phase == "integration" else phase, "work_item": item_id, **work_routing_fields(item)}
         return {"role": "human", "command": "decision", "scope": "work", "phase": None if phase == "integration" else phase, "work_item": item_id}
     return None
 
@@ -1287,7 +1295,7 @@ def plan_remediation_action(
                     "scope": "integration" if phase == "integration" else "phase",
                     "phase": None if phase == "integration" else phase,
                     "work_item": item.get("id"),
-                    "item_kind": item.get("kind"),
+                    **work_routing_fields(item),
                 }
     for target in targets:
         if not target or target[1].get("status") != "done":
@@ -1296,7 +1304,7 @@ def plan_remediation_action(
         item_review = effective_review(item)
         phase = item_phase(path, docs[path])
         if item_review["required"] and item_review["status"] == "pending":
-            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item.get("id")}
+            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), **work_routing_fields(item)}
         if item_review["required"] and item_review["status"] != "verified":
             action = work_review_action(root, domain, state, work_overrides)
             if action and action.get("work_item") == item.get("id"):
@@ -1378,7 +1386,7 @@ def base_next_action(
     nxt = choose_next(root, domain, state, {"in_progress"}, work_overrides)
     if nxt:
         phase, _, item = nxt
-        return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), "item_kind": item.get("kind")}
+        return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), **work_routing_fields(item)}
 
     review_action = work_review_action(root, domain, state, work_overrides)
     if review_action:
@@ -1387,7 +1395,7 @@ def base_next_action(
     nxt = choose_next(root, domain, state, {"ready"}, work_overrides)
     if nxt:
         phase, _, item = nxt
-        return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), "item_kind": item.get("kind")}
+        return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), **work_routing_fields(item)}
 
     docs, _, _ = load_work_index(d, work_overrides)
     for key in sorted(phases):
@@ -1482,7 +1490,7 @@ def compute_next_action(
             path, item = target
             if item.get("status") in {"ready", "in_progress"} and deps_satisfied(item, index) and decision_satisfied(item, set()):
                 return {"role": "executor", "command": "run", "scope": "integration", "phase": None,
-                        "work_item": item_id, "item_kind": item.get("kind")}
+                        "work_item": item_id, **work_routing_fields(item)}
             if item.get("status") == "blocked":
                 return {"role": "human", "command": "decision", "scope": "integration", "phase": None,
                         "work_item": item_id, "reason": "Newman repair WORK is blocked"}
