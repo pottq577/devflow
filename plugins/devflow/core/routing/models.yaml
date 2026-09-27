@@ -1,0 +1,23 @@
+version: 1
+models:
+  fast:
+    id: gpt-5.6-luna
+    efforts: [low, medium, high, xhigh, max]
+    multi_agent: v1
+    backends:
+      codex_exec:
+        min_version: 0.144.0
+  balanced:
+    id: gpt-5.6-terra
+    efforts: [low, medium, high, xhigh, max]
+    multi_agent: v2
+    backends:
+      codex_exec:
+        min_version: 0.144.0
+  frontier:
+    id: gpt-5.6-sol
+    efforts: [low, medium, high, xhigh, max]
+    multi_agent: v2
+    backends:
+      codex_exec:
+        min_version: 0.144.0

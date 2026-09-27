@@ -1,13 +1,13 @@
 version: 1
 profiles:
   economy:
-    candidates: [gpt-5.6-luna, gpt-5.6-terra]
+    candidates: [fast, balanced]
   balanced:
-    candidates: [gpt-5.6-terra, gpt-5.6-sol]
+    candidates: [balanced, frontier]
   frontier:
-    candidates: [gpt-5.6-sol, gpt-5.6-terra]
+    candidates: [frontier, balanced]
   hardest:
-    candidates: [gpt-5.6-sol, gpt-5.6-terra]
+    candidates: [frontier, balanced]
 profile_order: [economy, balanced, frontier, hardest]
 roles:
   scout: {profile: economy, effort: medium, sandbox: read-only}
@@ -88,16 +88,3 @@ budget:
   scout_reserve_tokens: 8000
 backends:
   preference: [native_agent, codex_exec]
-models:
-  gpt-5.6-luna:
-    efforts: [low, medium, high, xhigh, max]
-    multi_agent: v1
-    codex_min_version: 0.144.0
-  gpt-5.6-terra:
-    efforts: [low, medium, high, xhigh, max]
-    multi_agent: v2
-    codex_min_version: 0.144.0
-  gpt-5.6-sol:
-    efforts: [low, medium, high, xhigh, max]
-    multi_agent: v2
-    codex_min_version: 0.144.0

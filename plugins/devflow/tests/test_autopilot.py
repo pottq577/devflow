@@ -24,6 +24,52 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.caps = self.ap.CapabilityRegistry.assumed(self.policy, native_models={"gpt-5.6-sol", "gpt-5.6-terra"}, exec_available=True)
         self.router = self.ap.RouteEngine(self.policy, self.caps)
 
+    def test_routing_policy_uses_logical_model_aliases(self):
+        routing_text = (PLUGIN / "core" / "routing" / "default.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("gpt-5.6-", routing_text)
+        self.assertEqual(self.policy["profiles"]["economy"]["candidates"], ["fast", "balanced"])
+        self.assertEqual(self.caps.model_id("fast"), "gpt-5.6-luna")
+
+    def test_project_model_override_changes_concrete_model_without_routing_changes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = root / ".devflow"
+            config.mkdir()
+            (config / "models.yaml").write_text(
+                "models:\n  fast:\n    id: gpt-next-fast\n",
+                encoding="utf-8",
+            )
+            policy = self.ap.load_policy(PLUGIN, root)
+            caps = self.ap.CapabilityRegistry.assumed(policy, exec_available=True)
+            router = self.ap.RouteEngine(policy, caps)
+            spec = router.resolve(
+                {"command": "run", "scope": "phase", "item_kind": "implementation"},
+                {"risk_profile": "medium"},
+            )
+            self.assertEqual(policy["profiles"]["economy"]["candidates"], ["fast", "balanced"])
+            self.assertEqual(spec["model"]["alias"], "fast")
+            self.assertEqual(spec["model"]["selected"], "gpt-next-fast")
+
+    def test_route_decision_is_independent_from_concrete_model_resolution(self):
+        decision = self.router.decide(
+            {"command": "run", "scope": "phase", "item_kind": "implementation"},
+            {"risk_profile": "medium"},
+        )
+        self.assertEqual((decision["role"], decision["profile"], decision["effort"]), ("worker", "economy", "high"))
+        self.assertNotIn("model", decision)
+
+    def test_unknown_model_alias_fails_during_policy_load(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = root / ".devflow"
+            config.mkdir()
+            (config / "routing.yaml").write_text(
+                "profiles:\n  economy:\n    candidates: [missing-model]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "unknown model"):
+                self.ap.load_policy(PLUGIN, root)
+
     def test_routes_routine_implementation_to_luna_high(self):
         spec = self.router.resolve({"command": "run", "scope": "phase", "work_item": "P01-I01", "item_kind": "implementation"}, {"risk_profile": "medium"})
         self.assertEqual((spec["role"], spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("worker", "gpt-5.6-luna", "high"))
@@ -150,7 +196,8 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertEqual(spec["execution"]["context_mode"], self.policy["context"]["default_mode"] )
         self.assertEqual(spec["execution"]["native_fork_turns"], self.policy["context"]["native_fork_turns"] )
         self.assertFalse(spec["execution"]["allow_recursive_delegation"] )
-        self.assertEqual(spec["execution"]["model_multi_agent"], self.policy["models"][spec["model"]["selected"]]["multi_agent"] )
+        self.assertEqual(spec["model"]["alias"], "frontier")
+        self.assertEqual(spec["execution"]["model_multi_agent"], self.caps.model_meta(spec["model"]["alias"])["multi_agent"] )
 
     def test_retry_escalates_worker_model_then_diagnosis_and_sol_retry(self):
         action = {"command": "run", "scope": "phase", "item_kind": "implementation"}

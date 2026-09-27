@@ -42,13 +42,163 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+class ModelRegistry:
+    """Resolve stable routing aliases to concrete model IDs and capabilities."""
+
+    def __init__(self, config: dict[str, Any]):
+        if not isinstance(config, dict):
+            raise ValueError("Model registry must be a mapping")
+        raw_models = config.get("models")
+        if not isinstance(raw_models, dict) or not raw_models:
+            raise ValueError("Model registry must define a non-empty models mapping")
+        self.version = int(config.get("version", 1))
+        self._models: dict[str, dict[str, Any]] = {}
+        self._aliases_by_id: dict[str, str] = {}
+        for raw_alias, raw_meta in raw_models.items():
+            alias = str(raw_alias).strip()
+            if not alias or not isinstance(raw_meta, dict):
+                raise ValueError("Model registry aliases must be nonblank mappings")
+            meta = copy.deepcopy(raw_meta)
+            model_id = str(meta.get("id") or "").strip()
+            if not model_id:
+                raise ValueError(f"Model registry alias {alias!r} must define id")
+            if model_id in self._aliases_by_id:
+                raise ValueError(f"Concrete model id is mapped more than once: {model_id}")
+            efforts = meta.get("efforts")
+            if not isinstance(efforts, list) or not efforts or any(not str(value).strip() for value in efforts):
+                raise ValueError(f"Model registry alias {alias!r} must define non-empty efforts")
+            self._models[alias] = meta
+            self._aliases_by_id[model_id] = alias
+
+    @classmethod
+    def from_legacy(cls, models: dict[str, dict[str, Any]]) -> "ModelRegistry":
+        return cls({
+            "version": 0,
+            "models": {
+                str(model_id): {"id": str(model_id), **copy.deepcopy(meta or {})}
+                for model_id, meta in (models or {}).items()
+            },
+        })
+
+    @classmethod
+    def from_policy(cls, policy: dict[str, Any]) -> "ModelRegistry":
+        config = policy.get("model_registry")
+        if isinstance(config, dict) and config.get("models"):
+            return cls(config)
+        return cls.from_legacy(policy.get("models", {}))
+
+    def alias_for(self, reference: str) -> str:
+        ref = str(reference)
+        if ref in self._models:
+            return ref
+        alias = self._aliases_by_id.get(ref)
+        if alias:
+            return alias
+        raise KeyError(ref)
+
+    def contains(self, reference: str) -> bool:
+        try:
+            self.alias_for(reference)
+        except KeyError:
+            return False
+        return True
+
+    def model_id(self, reference: str) -> str:
+        return str(self._models[self.alias_for(reference)]["id"])
+
+    def meta(self, reference: str) -> dict[str, Any]:
+        return self._models[self.alias_for(reference)]
+
+    def codex_min_version(self, reference: str) -> str:
+        meta = self.meta(reference)
+        backend = ((meta.get("backends") or {}).get("codex_exec") or {})
+        return str(backend.get("min_version") or meta.get("codex_min_version") or "").strip()
+
+    def aliases(self) -> list[str]:
+        return list(self._models)
+
+    def as_legacy_models(self) -> dict[str, dict[str, Any]]:
+        models: dict[str, dict[str, Any]] = {}
+        for alias, meta in self._models.items():
+            legacy = copy.deepcopy(meta)
+            model_id = str(legacy.pop("id"))
+            minimum = self.codex_min_version(alias)
+            legacy.pop("backends", None)
+            if minimum:
+                legacy["codex_min_version"] = minimum
+            models[model_id] = legacy
+        return models
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"version": self.version, "models": copy.deepcopy(self._models)}
+
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Configuration must be a mapping: {path}")
+    return value
+
+
+def _apply_legacy_model_overrides(registry_config: dict[str, Any], legacy: Any) -> dict[str, Any]:
+    if not isinstance(legacy, dict) or not legacy:
+        return registry_config
+    out = copy.deepcopy(registry_config)
+    models = out.setdefault("models", {})
+    aliases_by_id = {
+        str(meta.get("id")): alias
+        for alias, meta in models.items()
+        if isinstance(meta, dict) and meta.get("id")
+    }
+    for model_id, meta in legacy.items():
+        if not isinstance(meta, dict):
+            raise ValueError(f"Legacy model override must be a mapping: {model_id}")
+        concrete = str(model_id)
+        alias = aliases_by_id.get(concrete, concrete)
+        current = models.get(alias) if isinstance(models.get(alias), dict) else {"id": concrete}
+        models[alias] = _merge(current, {"id": concrete, **meta})
+    return out
+
+
+def _validate_routing_model_refs(policy: dict[str, Any], registry: ModelRegistry) -> None:
+    profiles = policy.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError("Routing policy must define profiles")
+    for profile_name, profile in profiles.items():
+        candidates = profile.get("candidates") if isinstance(profile, dict) else None
+        if not isinstance(candidates, list) or not candidates:
+            raise ValueError(f"Routing profile {profile_name!r} must define candidates")
+        unknown = [str(candidate) for candidate in candidates if not registry.contains(str(candidate))]
+        if unknown:
+            raise ValueError(f"Routing profile {profile_name!r} references unknown model(s): {', '.join(unknown)}")
+    for role, config in (policy.get("roles") or {}).items():
+        profile = str((config or {}).get("profile") or "")
+        if profile not in profiles:
+            raise ValueError(f"Routing role {role!r} references unknown profile: {profile}")
+
+
 def load_policy(plugin_root: Path, repo_root: Path | None) -> dict[str, Any]:
-    default_path = plugin_root / "core" / "routing" / "default.yaml"
-    policy = yaml.safe_load(default_path.read_text(encoding="utf-8")) or {}
+    routing_path = plugin_root / "core" / "routing" / "default.yaml"
+    models_path = plugin_root / "core" / "routing" / "models.yaml"
+    policy = _load_yaml(routing_path)
     if repo_root is not None:
         override = repo_root / ".devflow" / "routing.yaml"
         if override.exists():
-            policy = _merge(policy, yaml.safe_load(override.read_text(encoding="utf-8")) or {})
+            policy = _merge(policy, _load_yaml(override))
+
+    registry_config = _load_yaml(models_path)
+    registry_config = _apply_legacy_model_overrides(registry_config, policy.pop("models", None))
+    if repo_root is not None:
+        model_override = repo_root / ".devflow" / "models.yaml"
+        if model_override.exists():
+            registry_config = _merge(registry_config, _load_yaml(model_override))
+
+    registry = ModelRegistry(registry_config)
+    _validate_routing_model_refs(policy, registry)
+    policy["model_registry"] = registry.as_dict()
+    # Keep the legacy concrete-ID view derived from the registry for compatibility with callers
+    # that inspect policy["models"]. The concrete model source of truth remains models.yaml.
+    policy["models"] = registry.as_legacy_models()
     return policy
 
 
@@ -274,10 +424,11 @@ class TokenBudget:
 
 
 class CapabilityRegistry:
-    def __init__(self, models: dict[str, dict[str, Any]], *, native_models: set[str] | None = None,
+    def __init__(self, models: ModelRegistry | dict[str, dict[str, Any]], *, native_models: set[str] | None = None,
                  exec_available: bool = False, codex_path: str | None = None,
                  codex_version: str | None = None, codex_version_error: str | None = None):
-        self.models = models
+        self.model_registry = models if isinstance(models, ModelRegistry) else ModelRegistry.from_legacy(models)
+        self.models = self.model_registry.as_legacy_models()
         self.native_models = native_models or set()
         self.exec_available = exec_available
         self.codex_path = codex_path
@@ -290,7 +441,7 @@ class CapabilityRegistry:
     def assumed(cls, policy: dict[str, Any], *, native_models: set[str] | None = None,
                 exec_available: bool = True, codex_version: str | None = None) -> "CapabilityRegistry":
         assumed_version = codex_version or ("999.0.0" if exec_available else None)
-        return cls(policy.get("models", {}), native_models=native_models, exec_available=exec_available,
+        return cls(ModelRegistry.from_policy(policy), native_models=native_models, exec_available=exec_available,
                    codex_path="codex" if exec_available else None, codex_version=assumed_version)
 
     @classmethod
@@ -315,24 +466,30 @@ class CapabilityRegistry:
         native_runner = os.environ.get("DEVFLOW_NATIVE_AGENT_RUNNER")
         native = {x.strip() for x in native_env.split(",") if x.strip()} if native_runner else set()
         return cls(
-            policy.get("models", {}), native_models=native,
+            ModelRegistry.from_policy(policy), native_models=native,
             exec_available=bool(codex and codex_version), codex_path=codex,
             codex_version=codex_version, codex_version_error=version_error,
         )
 
+    def model_id(self, model: str) -> str:
+        return self.model_registry.model_id(model)
+
+    def model_meta(self, model: str) -> dict[str, Any]:
+        return self.model_registry.meta(model)
+
     def supports_effort(self, model: str, effort: str) -> bool:
-        return effort in ((self.models.get(model) or {}).get("efforts") or [])
+        return effort in (self.model_meta(model).get("efforts") or [])
 
     def supports_recursive_delegation(self, model: str, recursive: bool) -> bool:
         if not recursive:
             return True
-        return bool((self.models.get(model) or {}).get("multi_agent"))
+        return bool(self.model_meta(model).get("multi_agent"))
 
     def mark_unavailable(self, model: str, backend: str, reason: str) -> None:
-        self.unavailable[(model, backend)] = reason.strip() or "unavailable"
+        self.unavailable[(self.model_id(model), backend)] = reason.strip() or "unavailable"
 
     def codex_compatible(self, model: str) -> bool:
-        minimum = str((self.models.get(model) or {}).get("codex_min_version") or "").strip()
+        minimum = self.model_registry.codex_min_version(model)
         if not minimum:
             return self.exec_available
         required = _version_tuple(minimum)
@@ -352,10 +509,11 @@ class CapabilityRegistry:
         ]
 
     def backend_for(self, model: str, preference: list[str]) -> str | None:
+        concrete = self.model_id(model)
         for backend in preference:
-            if (model, backend) in self.unavailable:
+            if (concrete, backend) in self.unavailable:
                 continue
-            if backend == "native_agent" and model in self.native_models:
+            if backend == "native_agent" and concrete in self.native_models:
                 return backend
             if backend == "codex_exec" and self.codex_compatible(model):
                 return backend
@@ -369,16 +527,70 @@ class CapabilityRegistry:
                 "version": self.codex_version,
                 "version_error": self.codex_version_error,
                 "model_compatibility": {
-                    model: {
-                        "compatible": self.codex_compatible(model),
-                        "minimum_version": (meta or {}).get("codex_min_version"),
+                    alias: {
+                        "model": self.model_id(alias),
+                        "compatible": self.codex_compatible(alias),
+                        "minimum_version": self.model_registry.codex_min_version(alias),
                     }
-                    for model, meta in self.models.items()
+                    for alias in self.model_registry.aliases()
                 },
             },
             "native_agent": {"models": sorted(self.native_models)},
-            "models": self.models,
+            "models": self.model_registry.as_dict()["models"],
             "unavailable": self.unavailable_rows(),
+        }
+
+
+class ModelResolver:
+    """Bind a logical routing decision to an available concrete model/backend pair."""
+
+    def __init__(self, policy: dict[str, Any], capabilities: CapabilityRegistry):
+        self.policy = policy
+        self.capabilities = capabilities
+
+    def resolve(self, decision: dict[str, Any], action: dict[str, Any], attempt: int) -> dict[str, Any]:
+        profile = self.policy["profiles"][decision["profile"]]
+        preference = list(self.policy.get("backends", {}).get("preference") or ["codex_exec"])
+        recursive = bool((self.policy.get("delegation") or {}).get("recursive", False))
+        context = self.policy.get("context") or {}
+        selected_ref = backend = None
+        for model_ref in profile.get("candidates", []):
+            if not self.capabilities.supports_effort(model_ref, decision["effort"]):
+                continue
+            if not self.capabilities.supports_recursive_delegation(model_ref, recursive):
+                continue
+            candidate_backend = self.capabilities.backend_for(model_ref, preference)
+            if candidate_backend:
+                selected_ref, backend = str(model_ref), candidate_backend
+                break
+        if not selected_ref:
+            raise RuntimeError(
+                f"No available model/backend for profile={decision['profile']} effort={decision['effort']}"
+            )
+        alias = self.capabilities.model_registry.alias_for(selected_ref)
+        selected = self.capabilities.model_id(selected_ref)
+        model_meta = self.capabilities.model_meta(selected_ref)
+        return {
+            "dispatch_id": f"dsp_{uuid.uuid4().hex[:12]}",
+            "role": decision["role"],
+            "task_id": action.get("work_item"),
+            "action": copy.deepcopy(action),
+            "effective_risk": decision["effective_risk"],
+            "model": {
+                "profile": decision["profile"],
+                "alias": alias,
+                "selected": selected,
+                "reasoning_effort": decision["effort"],
+            },
+            "execution": {
+                "backend": backend,
+                "sandbox": decision["sandbox"],
+                "context_mode": context.get("default_mode", "capsule"),
+                "native_fork_turns": context.get("native_fork_turns", "none"),
+                "allow_recursive_delegation": recursive,
+                "model_multi_agent": model_meta.get("multi_agent"),
+            },
+            "attempt": attempt,
         }
 
 
@@ -388,6 +600,7 @@ class RouteEngine:
     def __init__(self, policy: dict[str, Any], capabilities: CapabilityRegistry):
         self.policy = policy
         self.capabilities = capabilities
+        self.model_resolver = ModelResolver(policy, capabilities)
 
     def _role(self, action: dict[str, Any], attempt: int) -> str:
         override = action.get("_role_override")
@@ -444,7 +657,7 @@ class RouteEngine:
             return candidate
         return candidate if cls.EFFORT_ORDER[candidate] > cls.EFFORT_ORDER[current] else current
 
-    def resolve(self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0) -> dict[str, Any]:
+    def decide(self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0) -> dict[str, Any]:
         role = self._role(action, attempt)
         cfg = copy.deepcopy(self.policy["roles"][role])
         escalation = self.policy.get("escalation", {})
@@ -467,40 +680,16 @@ class RouteEngine:
                 cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_retry_profile"))
                 cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_retry_effort", "xhigh"))
 
-        profile = self.policy["profiles"][cfg["profile"]]
-        preference = list(self.policy.get("backends", {}).get("preference") or ["codex_exec"])
-        recursive = bool((self.policy.get("delegation") or {}).get("recursive", False))
-        context = self.policy.get("context") or {}
-        selected = backend = None
-        for model in profile.get("candidates", []):
-            if not self.capabilities.supports_effort(model, cfg["effort"]):
-                continue
-            if not self.capabilities.supports_recursive_delegation(model, recursive):
-                continue
-            candidate_backend = self.capabilities.backend_for(model, preference)
-            if candidate_backend:
-                selected, backend = model, candidate_backend
-                break
-        if not selected:
-            raise RuntimeError(f"No available model/backend for profile={cfg['profile']} effort={cfg['effort']}")
-        model_meta = self.policy.get("models", {}).get(selected) or {}
         return {
-            "dispatch_id": f"dsp_{uuid.uuid4().hex[:12]}",
             "role": role,
-            "task_id": action.get("work_item"),
-            "action": copy.deepcopy(action),
+            "profile": cfg["profile"],
+            "effort": cfg["effort"],
+            "sandbox": cfg.get("sandbox", "workspace-write"),
             "effective_risk": risk,
-            "model": {"profile": cfg["profile"], "selected": selected, "reasoning_effort": cfg["effort"]},
-            "execution": {
-                "backend": backend,
-                "sandbox": cfg.get("sandbox", "workspace-write"),
-                "context_mode": context.get("default_mode", "capsule"),
-                "native_fork_turns": context.get("native_fork_turns", "none"),
-                "allow_recursive_delegation": recursive,
-                "model_multi_agent": model_meta.get("multi_agent"),
-            },
-            "attempt": attempt,
         }
+
+    def resolve(self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0) -> dict[str, Any]:
+        return self.model_resolver.resolve(self.decide(action, state, attempt), action, attempt)
 
 
 ROLE_CONTRACTS = {
