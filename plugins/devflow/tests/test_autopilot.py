@@ -21,22 +21,38 @@ class AutopilotRoutingTests(unittest.TestCase):
     def setUp(self):
         self.ap = load_module()
         self.policy = self.ap.load_policy(PLUGIN, None)
-        self.caps = self.ap.CapabilityRegistry.assumed(self.policy, native_models={"gpt-5.6-sol", "gpt-5.6-terra"}, exec_available=True)
+        self.registry = self.ap.ModelRegistry.from_policy(self.policy)
+        self.models = {alias: self.registry.model_id(alias) for alias in self.registry.aliases()}
+        self.caps = self.ap.CapabilityRegistry.assumed(
+            self.policy,
+            native_models={self.models["frontier"], self.models["balanced"]},
+            exec_available=True,
+        )
         self.router = self.ap.RouteEngine(self.policy, self.caps)
+
+    def assert_route(self, spec, alias, effort):
+        self.assertEqual((spec["model"]["alias"], spec["model"]["reasoning_effort"]), (alias, effort))
 
     def test_routing_policy_uses_logical_model_aliases(self):
         routing_text = (PLUGIN / "core" / "routing" / "default.yaml").read_text(encoding="utf-8")
-        self.assertNotIn("gpt-5.6-", routing_text)
+        for model_id in self.models.values():
+            self.assertNotIn(model_id, routing_text)
         self.assertEqual(self.policy["profiles"]["economy"]["candidates"], ["fast", "balanced"])
-        self.assertEqual(self.caps.model_id("fast"), "gpt-5.6-luna")
+
+    def test_routing_and_model_registry_schemas_match_split_sources(self):
+        routing_schema = self.ap._load_yaml(PLUGIN / "core" / "schemas" / "routing.schema.yaml")
+        model_schema = self.ap._load_yaml(PLUGIN / "core" / "schemas" / "model-registry.schema.yaml")
+        self.assertNotIn("models", routing_schema["required"])
+        self.assertIn("models", model_schema["required"])
 
     def test_project_model_override_changes_concrete_model_without_routing_changes(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             config = root / ".devflow"
             config.mkdir()
+            replacement = "replacement-fast-model"
             (config / "models.yaml").write_text(
-                "models:\n  fast:\n    id: gpt-next-fast\n",
+                f"models:\n  fast:\n    id: {replacement}\n",
                 encoding="utf-8",
             )
             policy = self.ap.load_policy(PLUGIN, root)
@@ -48,7 +64,22 @@ class AutopilotRoutingTests(unittest.TestCase):
             )
             self.assertEqual(policy["profiles"]["economy"]["candidates"], ["fast", "balanced"])
             self.assertEqual(spec["model"]["alias"], "fast")
-            self.assertEqual(spec["model"]["selected"], "gpt-next-fast")
+            self.assertEqual(spec["model"]["selected"], replacement)
+
+    def test_legacy_routing_override_translates_codex_min_version(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = root / ".devflow"
+            config.mkdir()
+            model_id = self.models["fast"]
+            (config / "routing.yaml").write_text(
+                f"models:\n  {model_id}:\n    codex_min_version: 9.9.9\n",
+                encoding="utf-8",
+            )
+            policy = self.ap.load_policy(PLUGIN, root)
+            registry = self.ap.ModelRegistry.from_policy(policy)
+            self.assertEqual(registry.codex_min_version("fast"), "9.9.9")
+            self.assertEqual(policy["models"][model_id]["codex_min_version"], "9.9.9")
 
     def test_route_decision_is_independent_from_concrete_model_resolution(self):
         decision = self.router.decide(
@@ -70,37 +101,45 @@ class AutopilotRoutingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unknown model"):
                 self.ap.load_policy(PLUGIN, root)
 
-    def test_routes_routine_implementation_to_luna_high(self):
-        spec = self.router.resolve({"command": "run", "scope": "phase", "work_item": "P01-I01", "item_kind": "implementation"}, {"risk_profile": "medium"})
-        self.assertEqual((spec["role"], spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("worker", "gpt-5.6-luna", "high"))
+    def test_routes_routine_implementation_to_fast_high(self):
+        spec = self.router.resolve(
+            {"command": "run", "scope": "phase", "work_item": "P01-I01", "item_kind": "implementation"},
+            {"risk_profile": "medium"},
+        )
+        self.assertEqual(spec["role"], "worker")
+        self.assert_route(spec, "fast", "high")
         self.assertEqual(spec["execution"]["backend"], "codex_exec")
 
-    def test_task_kind_routes_worker_to_matching_model_and_effort(self):
+    def test_task_kind_routes_worker_to_matching_alias_and_effort(self):
         cases = [
-            ("documentation", "gpt-5.6-luna", "medium"),
-            ("test", "gpt-5.6-luna", "high"),
-            ("evidence", "gpt-5.6-terra", "high"),
-            ("remediation", "gpt-5.6-terra", "xhigh"),
-            ("migration", "gpt-5.6-terra", "xhigh"),
+            ("documentation", "fast", "medium"),
+            ("test", "fast", "high"),
+            ("evidence", "balanced", "high"),
+            ("remediation", "balanced", "xhigh"),
+            ("migration", "balanced", "xhigh"),
         ]
-        for item_kind, model, effort in cases:
+        for item_kind, alias, effort in cases:
             with self.subTest(item_kind=item_kind):
                 spec = self.router.resolve(
                     {"command": "run", "scope": "phase", "item_kind": item_kind},
                     {"risk_profile": "medium"},
                 )
-                self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), (model, effort))
+                self.assert_route(spec, alias, effort)
 
-    def test_routes_planning_to_sol_xhigh(self):
+    def test_routes_planning_to_frontier_xhigh(self):
         spec = self.router.resolve({"command": "plan", "scope": "project"}, {"risk_profile": "medium"})
-        self.assertEqual((spec["role"], spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("architect", "gpt-5.6-sol", "xhigh"))
+        self.assertEqual(spec["role"], "architect")
+        self.assert_route(spec, "frontier", "xhigh")
         self.assertEqual(spec["execution"]["backend"], "native_agent")
 
-    def test_critical_integration_audit_routes_to_sol_max(self):
-        spec = self.router.resolve({"command": "audit", "scope": "integration", "mode": "initial"}, {"risk_profile": "critical"})
-        self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-sol", "max"))
+    def test_critical_integration_audit_routes_to_frontier_max(self):
+        spec = self.router.resolve(
+            {"command": "audit", "scope": "integration", "mode": "initial"},
+            {"risk_profile": "critical"},
+        )
+        self.assert_route(spec, "frontier", "max")
 
-    def test_work_verification_uses_terra_then_promotes_to_sol_for_high_risk(self):
+    def test_work_verification_uses_balanced_then_frontier_for_high_risk(self):
         medium = self.router.resolve(
             {"command": "audit", "scope": "work", "item_kind": "implementation", "item_risk": "medium"},
             {"risk_profile": "medium"},
@@ -113,14 +152,16 @@ class AutopilotRoutingTests(unittest.TestCase):
             {"command": "audit", "scope": "work", "item_kind": "implementation", "item_risk": "critical"},
             {"risk_profile": "medium"},
         )
-        self.assertEqual((medium["model"]["selected"], medium["model"]["reasoning_effort"]), ("gpt-5.6-terra", "high"))
-        self.assertEqual((high["model"]["selected"], high["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
-        self.assertEqual((critical["model"]["selected"], critical["model"]["reasoning_effort"]), ("gpt-5.6-sol", "max"))
+        self.assert_route(medium, "balanced", "high")
+        self.assert_route(high, "frontier", "xhigh")
+        self.assert_route(critical, "frontier", "max")
 
-    def test_high_risk_worker_uses_terra_xhigh(self):
-        spec = self.router.resolve({"command": "run", "scope": "phase", "item_kind": "implementation"}, {"risk_profile": "high"})
-        self.assertEqual(spec["model"]["selected"], "gpt-5.6-terra")
-        self.assertEqual(spec["model"]["reasoning_effort"], "xhigh")
+    def test_high_risk_worker_uses_balanced_xhigh(self):
+        spec = self.router.resolve(
+            {"command": "run", "scope": "phase", "item_kind": "implementation"},
+            {"risk_profile": "high"},
+        )
+        self.assert_route(spec, "balanced", "xhigh")
 
     def test_high_work_risk_overrides_medium_domain_risk(self):
         spec = self.router.resolve(
@@ -128,15 +169,15 @@ class AutopilotRoutingTests(unittest.TestCase):
             {"risk_profile": "medium"},
         )
         self.assertEqual(spec["effective_risk"], "high")
-        self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-terra", "xhigh"))
+        self.assert_route(spec, "balanced", "xhigh")
 
-    def test_critical_work_risk_routes_worker_to_sol_xhigh(self):
+    def test_critical_work_risk_routes_worker_to_frontier_xhigh(self):
         spec = self.router.resolve(
             {"command": "run", "scope": "phase", "item_kind": "implementation", "item_risk": "critical"},
             {"risk_profile": "medium"},
         )
         self.assertEqual(spec["effective_risk"], "critical")
-        self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
+        self.assert_route(spec, "frontier", "xhigh")
 
     def test_domain_risk_is_a_floor_for_lower_work_risk(self):
         spec = self.router.resolve(
@@ -144,29 +185,60 @@ class AutopilotRoutingTests(unittest.TestCase):
             {"risk_profile": "critical"},
         )
         self.assertEqual(spec["effective_risk"], "critical")
-        self.assertEqual((spec["model"]["selected"], spec["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
+        self.assert_route(spec, "frontier", "xhigh")
 
     def test_unavailable_model_backend_pair_falls_back_to_next_candidate(self):
-        self.caps.mark_unavailable("gpt-5.6-luna", "codex_exec", "model unavailable")
+        self.caps.mark_unavailable("fast", "codex_exec", "model unavailable")
         spec = self.router.resolve(
             {"command": "run", "scope": "phase", "item_kind": "implementation"},
             {"risk_profile": "medium"},
         )
-        self.assertEqual(spec["model"]["selected"], "gpt-5.6-terra")
+        self.assertEqual(spec["model"]["alias"], "balanced")
         self.assertEqual(spec["execution"]["backend"], "native_agent")
+
+    def test_unavailable_state_records_alias_and_restores_same_model(self):
+        self.caps.mark_unavailable("fast", "codex_exec", "model unavailable")
+        rows = self.caps.unavailable_rows()
+        self.assertEqual(rows[0]["alias"], "fast")
+        self.assertEqual(rows[0]["model"], self.models["fast"])
+
+        restored = self.ap.CapabilityRegistry.assumed(self.policy, exec_available=True)
+        restored.restore_unavailable(rows)
+        self.assertIsNone(restored.backend_for("fast", ["codex_exec"]))
+
+    def test_stale_unavailable_state_is_ignored_after_alias_remap(self):
+        self.caps.mark_unavailable("fast", "codex_exec", "model unavailable")
+        rows = self.caps.unavailable_rows()
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = root / ".devflow"
+            config.mkdir()
+            (config / "models.yaml").write_text(
+                "models:\n  fast:\n    id: replacement-fast-model\n",
+                encoding="utf-8",
+            )
+            policy = self.ap.load_policy(PLUGIN, root)
+            remapped = self.ap.CapabilityRegistry.assumed(policy, exec_available=True)
+            remapped.restore_unavailable(rows)
+            remapped.restore_unavailable([
+                {"model": self.models["fast"], "backend": "codex_exec", "reason": "legacy failure"},
+            ])
+            self.assertEqual(remapped.unavailable_rows(), [])
+            self.assertEqual(remapped.backend_for("fast", ["codex_exec"]), "codex_exec")
 
     def test_codex_backend_enforces_minimum_cli_version(self):
         old_caps = self.ap.CapabilityRegistry.assumed(
             self.policy, exec_available=True, codex_version="0.143.9",
         )
-        self.assertIsNone(old_caps.backend_for("gpt-5.6-sol", ["codex_exec"]))
-        self.assertIsNone(old_caps.backend_for("gpt-5.6-terra", ["codex_exec"]))
+        self.assertIsNone(old_caps.backend_for("frontier", ["codex_exec"]))
+        self.assertIsNone(old_caps.backend_for("balanced", ["codex_exec"]))
 
         new_caps = self.ap.CapabilityRegistry.assumed(
             self.policy, exec_available=True, codex_version="0.144.0",
         )
-        self.assertEqual(new_caps.backend_for("gpt-5.6-sol", ["codex_exec"]), "codex_exec")
-        self.assertEqual(new_caps.backend_for("gpt-5.6-terra", ["codex_exec"]), "codex_exec")
+        self.assertEqual(new_caps.backend_for("frontier", ["codex_exec"]), "codex_exec")
+        self.assertEqual(new_caps.backend_for("balanced", ["codex_exec"]), "codex_exec")
 
     def test_detected_codex_version_controls_per_model_compatibility(self):
         import os
@@ -188,29 +260,40 @@ class AutopilotRoutingTests(unittest.TestCase):
                     os.environ["DEVFLOW_NATIVE_AGENT_MODELS"] = old_models
             self.assertEqual(caps.codex_version, "0.143.9")
             self.assertTrue(caps.exec_available)
-            self.assertIsNone(caps.backend_for("gpt-5.6-sol", ["codex_exec"]))
-            self.assertIsNone(caps.backend_for("gpt-5.6-terra", ["codex_exec"]))
+            self.assertIsNone(caps.backend_for("frontier", ["codex_exec"]))
+            self.assertIsNone(caps.backend_for("balanced", ["codex_exec"]))
+
+    def test_capabilities_keep_legacy_model_keys_and_add_alias_registry(self):
+        doc = self.caps.as_dict()
+        fast_model = self.models["fast"]
+        self.assertIn(fast_model, doc["models"])
+        self.assertEqual(doc["model_registry"]["models"]["fast"]["id"], fast_model)
+        self.assertIn(fast_model, doc["codex_exec"]["model_compatibility"])
+        self.assertEqual(doc["codex_exec"]["alias_compatibility"]["fast"]["model"], fast_model)
 
     def test_route_consumes_context_delegation_and_multi_agent_policy(self):
         spec = self.router.resolve({"command": "plan", "scope": "project"}, {"risk_profile": "medium"})
-        self.assertEqual(spec["execution"]["context_mode"], self.policy["context"]["default_mode"] )
-        self.assertEqual(spec["execution"]["native_fork_turns"], self.policy["context"]["native_fork_turns"] )
-        self.assertFalse(spec["execution"]["allow_recursive_delegation"] )
+        self.assertEqual(spec["execution"]["context_mode"], self.policy["context"]["default_mode"])
+        self.assertEqual(spec["execution"]["native_fork_turns"], self.policy["context"]["native_fork_turns"])
+        self.assertFalse(spec["execution"]["allow_recursive_delegation"])
         self.assertEqual(spec["model"]["alias"], "frontier")
-        self.assertEqual(spec["execution"]["model_multi_agent"], self.caps.model_meta(spec["model"]["alias"])["multi_agent"] )
+        self.assertEqual(
+            spec["execution"]["model_multi_agent"],
+            self.caps.model_meta(spec["model"]["alias"])["multi_agent"],
+        )
 
-    def test_retry_escalates_worker_model_then_diagnosis_and_sol_retry(self):
+    def test_retry_escalates_worker_alias_then_diagnosis_and_frontier_retry(self):
         action = {"command": "run", "scope": "phase", "item_kind": "implementation"}
         state = {"risk_profile": "medium"}
         first = self.router.resolve(action, state, attempt=0)
         retry = self.router.resolve(action, state, attempt=1)
         diag = self.router.resolve(action, state, attempt=2)
         post_diag = self.router.resolve(action, state, attempt=3)
-        self.assertEqual((first["model"]["selected"], first["model"]["reasoning_effort"]), ("gpt-5.6-luna", "high"))
-        self.assertEqual((retry["model"]["selected"], retry["model"]["reasoning_effort"]), ("gpt-5.6-terra", "xhigh"))
+        self.assert_route(first, "fast", "high")
+        self.assert_route(retry, "balanced", "xhigh")
         self.assertEqual(diag["role"], "diagnostician")
-        self.assertEqual((diag["model"]["selected"], diag["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
-        self.assertEqual((post_diag["model"]["selected"], post_diag["model"]["reasoning_effort"]), ("gpt-5.6-sol", "xhigh"))
+        self.assert_route(diag, "frontier", "xhigh")
+        self.assert_route(post_diag, "frontier", "xhigh")
 
 
 class AutopilotRuntimeTests(unittest.TestCase):
@@ -219,18 +302,18 @@ class AutopilotRuntimeTests(unittest.TestCase):
 
     def test_codex_exec_command_contains_model_effort_and_isolated_session(self):
         backend = self.ap.CodexExecBackend("codex")
-        spec = {"model": {"selected": "gpt-5.6-luna", "reasoning_effort": "xhigh"}, "execution": {"sandbox": "workspace-write"}}
+        spec = {"model": {"selected": "fixture-fast-model", "reasoning_effort": "xhigh"}, "execution": {"sandbox": "workspace-write"}}
         cmd = backend.build_command(Path("/repo"), spec)
         joined = " ".join(cmd)
         self.assertIn("exec", cmd)
         self.assertIn("--ephemeral", cmd)
-        self.assertIn("gpt-5.6-luna", cmd)
+        self.assertIn("fixture-fast-model", cmd)
         self.assertIn('model_reasoning_effort="xhigh"', joined)
         self.assertIn("--json", cmd)
 
     def test_context_capsule_contains_role_contract_and_packet_without_parent_history(self):
         assembler = self.ap.ContextAssembler(PLUGIN)
-        spec = {"role": "worker", "task_id": "P01-I01", "model": {"selected": "gpt-5.6-luna", "reasoning_effort": "high"}}
+        spec = {"role": "worker", "task_id": "P01-I01", "model": {"selected": "fixture-fast-model", "reasoning_effort": "high"}}
         text = assembler.build(spec, "RENDERED_PACKET", diagnosis="prior diagnosis")
         self.assertIn("RENDERED_PACKET", text)
         self.assertIn("prior diagnosis", text)
@@ -244,7 +327,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
         spec = {
             "role": "diagnostician",
             "task_id": "P01-I01",
-            "model": {"selected": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
+            "model": {"selected": "fixture-frontier-model", "reasoning_effort": "xhigh"},
             "execution": {"allow_recursive_delegation": False},
         }
         text = assembler.build(spec, "RENDERED_PACKET")
@@ -312,7 +395,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
             lambda _action: "packet",
             lambda action, _state, attempt: {
                 "role": "worker",
-                "model": {"selected": "gpt-5.6-luna", "reasoning_effort": "high"},
+                "model": {"selected": "fixture-fast-model", "reasoning_effort": "high"},
                 "execution": {"backend": "codex_exec", "sandbox": "workspace-write"},
                 "action": action,
                 "attempt": attempt,
@@ -384,7 +467,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
         self.assertEqual(calls["dispatch"], 1)
         self.assertEqual(result["steps"], 1)
 
-    def test_controller_changes_models_across_lifecycle_roles(self):
+    def test_controller_changes_model_aliases_across_lifecycle_roles(self):
         policy = self.ap.load_policy(PLUGIN, None)
         caps = self.ap.CapabilityRegistry.assumed(policy, exec_available=True, codex_version="0.153.0")
         router = self.ap.RouteEngine(policy, caps)
@@ -399,7 +482,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
         selected = []
 
         def dispatch(spec, _prompt):
-            selected.append((spec["role"], spec["model"]["selected"], spec["model"]["reasoning_effort"]))
+            selected.append((spec["role"], spec["model"]["alias"], spec["model"]["reasoning_effort"]))
             index = actions.index(state["next_action"])
             state["next_action"] = actions[index + 1]
             return {"status": "success", "exit_code": 0, "usage": {"total_tokens": 10}}
@@ -411,10 +494,10 @@ class AutopilotRuntimeTests(unittest.TestCase):
         result = controller.run()
         self.assertEqual(result["status"], "complete")
         self.assertEqual(selected, [
-            ("architect", "gpt-5.6-sol", "xhigh"),
-            ("worker", "gpt-5.6-luna", "high"),
-            ("verifier", "gpt-5.6-terra", "high"),
-            ("integration_auditor", "gpt-5.6-sol", "max"),
+            ("architect", "frontier", "xhigh"),
+            ("worker", "fast", "high"),
+            ("verifier", "balanced", "high"),
+            ("integration_auditor", "frontier", "max"),
         ])
 
     def test_controller_runs_one_scout_before_expensive_specialist(self):
@@ -427,7 +510,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
             return {
                 "role": role,
                 "task_id": None,
-                "model": {"selected": "gpt-5.6-luna" if role == "scout" else "gpt-5.6-sol", "reasoning_effort": "medium" if role == "scout" else "xhigh"},
+                "model": {"selected": "fixture-fast-model" if role == "scout" else "fixture-frontier-model", "reasoning_effort": "medium" if role == "scout" else "xhigh"},
                 "execution": {"sandbox": "read-only" if role == "scout" else "workspace-write"},
                 "action": action,
                 "attempt": attempt,
@@ -483,18 +566,21 @@ class AutopilotRuntimeTests(unittest.TestCase):
         state = {"risk_profile": "medium", "next_action": {"command": "run", "role": "executor", "scope": "phase", "work_item": "P01-I01", "item_kind": "implementation"}}
         selected = []
         calls = {"n": 0}
+
         def dispatch(spec, prompt):
-            selected.append(spec["model"]["selected"]); calls["n"] += 1
+            selected.append(spec["model"]["alias"])
+            calls["n"] += 1
             if calls["n"] == 1:
                 return {"status": "failed", "exit_code": 1, "stderr": "model unavailable", "failure_kind": "capability_unavailable"}
             state["next_action"] = {"command": "complete", "role": "none", "scope": "project"}
             return {"status": "success", "exit_code": 0}
+
         controller = self.ap.AutopilotController(
             lambda: state, lambda a: "packet", router.resolve, dispatch, None, 4, capabilities=caps
         )
         result = controller.run()
         self.assertEqual(result["status"], "complete")
-        self.assertEqual(selected, ["gpt-5.6-luna", "gpt-5.6-terra"])
+        self.assertEqual(selected, ["fast", "balanced"])
 
     def test_controller_capacity_response_falls_back_to_next_model(self):
         policy = self.ap.load_policy(PLUGIN, None)
@@ -507,7 +593,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
         selected = []
 
         def dispatch(spec, _prompt):
-            selected.append(spec["model"]["selected"])
+            selected.append(spec["model"]["alias"])
             if len(selected) == 1:
                 return {"status": "failed", "exit_code": 1, "stderr": "Selected model is at capacity. Please try a different model."}
             state["next_action"] = {"command": "complete", "role": "none", "scope": "project"}
@@ -518,7 +604,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
         )
         result = controller.run()
         self.assertEqual(result["status"], "complete")
-        self.assertEqual(selected, ["gpt-5.6-luna", "gpt-5.6-terra"])
+        self.assertEqual(selected, ["fast", "balanced"])
         self.assertEqual(controller.attempts, {})
 
     def test_capacity_failure_is_classified_for_model_fallback(self):
@@ -538,13 +624,27 @@ class AutopilotRuntimeTests(unittest.TestCase):
 
 
 class AutopilotCliTests(unittest.TestCase):
+    def setUp(self):
+        self.ap = load_module()
+        policy = self.ap.load_policy(PLUGIN, None)
+        registry = self.ap.ModelRegistry.from_policy(policy)
+        self.models = {alias: registry.model_id(alias) for alias in registry.aliases()}
+
     def test_cli_exposes_autopilot_capabilities(self):
         import subprocess, sys
         proc = subprocess.run([sys.executable, str(PLUGIN / "scripts" / "devflow.py"), "autopilot", "capabilities"], text=True, capture_output=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         doc = json.loads(proc.stdout)
         self.assertIn("models", doc)
+        self.assertIn("model_registry", doc)
         self.assertIn("codex_exec", doc)
+        self.assertIn(self.models["fast"], doc["models"])
+        self.assertEqual(doc["model_registry"]["models"]["fast"]["id"], self.models["fast"])
+        self.assertIn(self.models["fast"], doc["codex_exec"]["model_compatibility"])
+        self.assertEqual(
+            doc["codex_exec"]["alias_compatibility"]["fast"]["model"],
+            self.models["fast"],
+        )
 
     def test_cli_help_exposes_autopilot(self):
         import subprocess, sys
@@ -581,7 +681,7 @@ class AutopilotCliTests(unittest.TestCase):
             runner.chmod(0o755)
             env = os.environ.copy()
             env["DEVFLOW_NATIVE_AGENT_RUNNER"] = str(runner)
-            env["DEVFLOW_NATIVE_AGENT_MODELS"] = "gpt-5.6-sol"
+            env["DEVFLOW_NATIVE_AGENT_MODELS"] = self.models["frontier"]
             cli = str(PLUGIN / "scripts" / "devflow.py")
             boot = subprocess.run(
                 [sys.executable, cli, "autopilot", "bootstrap", "sample", "--requirements-file", str(requirements)],
@@ -593,7 +693,7 @@ class AutopilotCliTests(unittest.TestCase):
             self.assertIn("command: plan", state)
             result = json.loads(boot.stdout)
             self.assertEqual(result["route"]["role"], "architect")
-            self.assertEqual(result["route"]["model"]["selected"], "gpt-5.6-sol")
+            self.assertEqual(result["route"]["model"]["selected"], self.models["frontier"])
 
     def test_goal_skill_delegates_new_domain_prd_bootstrap_to_autopilot(self):
         text = (PLUGIN / "skills" / "goal" / "SKILL.md").read_text(encoding="utf-8")
@@ -607,7 +707,7 @@ class AutopilotCliTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             env = os.environ.copy()
             env["DEVFLOW_NATIVE_AGENT_RUNNER"] = "/bin/true"
-            env["DEVFLOW_NATIVE_AGENT_MODELS"] = "gpt-5.6-sol,gpt-5.6-terra"
+            env["DEVFLOW_NATIVE_AGENT_MODELS"] = ",".join([self.models["frontier"], self.models["balanced"]])
             cli = str(PLUGIN / "scripts" / "devflow.py")
             init = subprocess.run([sys.executable, cli, "init", "sample"], cwd=root, env=env, text=True, capture_output=True)
             self.assertEqual(init.returncode, 0, init.stderr)
@@ -616,14 +716,14 @@ class AutopilotCliTests(unittest.TestCase):
             (runtime / "controller.json").write_text(json.dumps({
                 "run_id": "run-a",
                 "unavailable_candidates": [
-                    {"model": "gpt-5.6-sol", "backend": "native_agent", "reason": "model unavailable"},
-                    {"model": "gpt-5.6-sol", "backend": "codex_exec", "reason": "model unavailable"}
+                    {"alias": "frontier", "model": self.models["frontier"], "backend": "native_agent", "reason": "model unavailable"},
+                    {"alias": "frontier", "model": self.models["frontier"], "backend": "codex_exec", "reason": "model unavailable"}
                 ],
             }))
             routed = subprocess.run([sys.executable, cli, "autopilot", "route", "sample"], cwd=root, env=env, text=True, capture_output=True)
             self.assertEqual(routed.returncode, 0, routed.stderr)
             doc = json.loads(routed.stdout)
-            self.assertEqual(doc["dispatch"]["model"]["selected"], "gpt-5.6-terra")
+            self.assertEqual(doc["dispatch"]["model"]["selected"], self.models["balanced"])
 
     def test_route_is_observational_when_runtime_directory_is_absent(self):
         import os, subprocess, sys
@@ -632,7 +732,7 @@ class AutopilotCliTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             env = os.environ.copy()
             env["DEVFLOW_NATIVE_AGENT_RUNNER"] = "/bin/true"
-            env["DEVFLOW_NATIVE_AGENT_MODELS"] = "gpt-5.6-sol,gpt-5.6-terra"
+            env["DEVFLOW_NATIVE_AGENT_MODELS"] = ",".join([self.models["frontier"], self.models["balanced"]])
             cli = str(PLUGIN / "scripts" / "devflow.py")
             init = subprocess.run([sys.executable, cli, "init", "sample"], cwd=root, env=env, text=True, capture_output=True)
             self.assertEqual(init.returncode, 0, init.stderr)
@@ -649,7 +749,7 @@ class AutopilotCliTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             env = os.environ.copy()
             env["DEVFLOW_NATIVE_AGENT_RUNNER"] = "/bin/true"
-            env["DEVFLOW_NATIVE_AGENT_MODELS"] = "gpt-5.6-sol,gpt-5.6-terra"
+            env["DEVFLOW_NATIVE_AGENT_MODELS"] = ",".join([self.models["frontier"], self.models["balanced"]])
             cli = str(PLUGIN / "scripts" / "devflow.py")
             init = subprocess.run([sys.executable, cli, "init", "sample"], cwd=root, env=env, text=True, capture_output=True)
             self.assertEqual(init.returncode, 0, init.stderr)
@@ -671,7 +771,7 @@ class AutopilotCliTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             env = os.environ.copy()
             env["DEVFLOW_NATIVE_AGENT_RUNNER"] = "/bin/true"
-            env["DEVFLOW_NATIVE_AGENT_MODELS"] = "gpt-5.6-sol,gpt-5.6-terra"
+            env["DEVFLOW_NATIVE_AGENT_MODELS"] = ",".join([self.models["frontier"], self.models["balanced"]])
             cli = str(PLUGIN / "scripts" / "devflow.py")
             init = subprocess.run([sys.executable, cli, "init", "sample"], cwd=root, env=env, text=True, capture_output=True)
             self.assertEqual(init.returncode, 0, init.stderr)
@@ -680,7 +780,7 @@ class AutopilotCliTests(unittest.TestCase):
             (runtime / "controller.json").write_text(json.dumps({
                 "status": "blocked", "run_id": "old-run",
                 "unavailable_candidates": [
-                    {"model": "gpt-5.6-sol", "backend": "native_agent", "reason": "old failure"}
+                    {"alias": "frontier", "model": self.models["frontier"], "backend": "native_agent", "reason": "old failure"}
                 ],
             }))
             started = subprocess.run([sys.executable, cli, "autopilot", "start", "sample", "--max-steps", "1"], cwd=root, env=env, text=True, capture_output=True)
@@ -689,7 +789,7 @@ class AutopilotCliTests(unittest.TestCase):
             self.assertNotEqual(controller["run_id"], "old-run")
             self.assertFalse(
                 any(
-                    row.get("model") == "gpt-5.6-sol"
+                    row.get("model") == self.models["frontier"]
                     and row.get("backend") == "native_agent"
                     and row.get("reason") == "old failure"
                     for row in controller.get("unavailable_candidates", [])

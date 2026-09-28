@@ -156,7 +156,21 @@ def _apply_legacy_model_overrides(registry_config: dict[str, Any], legacy: Any) 
         concrete = str(model_id)
         alias = aliases_by_id.get(concrete, concrete)
         current = models.get(alias) if isinstance(models.get(alias), dict) else {"id": concrete}
-        models[alias] = _merge(current, {"id": concrete, **meta})
+        override_meta = copy.deepcopy(meta)
+        legacy_minimum = override_meta.pop("codex_min_version", None)
+        if legacy_minimum is not None:
+            raw_backends = override_meta.get("backends")
+            if raw_backends is not None and not isinstance(raw_backends, dict):
+                raise ValueError(f"Legacy model override backends must be a mapping: {model_id}")
+            backends = copy.deepcopy(raw_backends or {})
+            raw_codex = backends.get("codex_exec")
+            if raw_codex is not None and not isinstance(raw_codex, dict):
+                raise ValueError(f"Legacy codex_exec override must be a mapping: {model_id}")
+            codex_exec = copy.deepcopy(raw_codex or {})
+            codex_exec["min_version"] = legacy_minimum
+            backends["codex_exec"] = codex_exec
+            override_meta["backends"] = backends
+        models[alias] = _merge(current, {"id": concrete, **override_meta})
     return out
 
 
@@ -499,14 +513,34 @@ class CapabilityRegistry:
         if not isinstance(rows, list):
             return
         for row in rows:
-            if isinstance(row, dict) and row.get("model") and row.get("backend"):
-                self.mark_unavailable(str(row["model"]), str(row["backend"]), str(row.get("reason") or "unavailable"))
+            if not isinstance(row, dict):
+                continue
+            alias = str(row.get("alias") or "").strip()
+            model = str(row.get("model") or "").strip()
+            backend = str(row.get("backend") or "").strip()
+            if not backend or not (alias or model):
+                continue
+            if alias and self.model_registry.contains(alias):
+                reference = alias
+            elif model and self.model_registry.contains(model):
+                reference = model
+            else:
+                continue
+            current_model = self.model_id(reference)
+            if model and current_model != model:
+                continue
+            self.mark_unavailable(reference, backend, str(row.get("reason") or "unavailable"))
 
     def unavailable_rows(self) -> list[dict[str, str]]:
-        return [
-            {"model": model, "backend": backend, "reason": reason}
-            for (model, backend), reason in sorted(self.unavailable.items())
-        ]
+        rows: list[dict[str, str]] = []
+        for (model, backend), reason in sorted(self.unavailable.items()):
+            rows.append({
+                "alias": self.model_registry.alias_for(model),
+                "model": model,
+                "backend": backend,
+                "reason": reason,
+            })
+        return rows
 
     def backend_for(self, model: str, preference: list[str]) -> str | None:
         concrete = self.model_id(model)
@@ -520,6 +554,7 @@ class CapabilityRegistry:
         return None
 
     def as_dict(self) -> dict[str, Any]:
+        aliases = self.model_registry.aliases()
         return {
             "codex_exec": {
                 "available": self.exec_available,
@@ -527,16 +562,24 @@ class CapabilityRegistry:
                 "version": self.codex_version,
                 "version_error": self.codex_version_error,
                 "model_compatibility": {
+                    self.model_id(alias): {
+                        "compatible": self.codex_compatible(alias),
+                        "minimum_version": self.model_registry.codex_min_version(alias),
+                    }
+                    for alias in aliases
+                },
+                "alias_compatibility": {
                     alias: {
                         "model": self.model_id(alias),
                         "compatible": self.codex_compatible(alias),
                         "minimum_version": self.model_registry.codex_min_version(alias),
                     }
-                    for alias in self.model_registry.aliases()
+                    for alias in aliases
                 },
             },
             "native_agent": {"models": sorted(self.native_models)},
-            "models": self.model_registry.as_dict()["models"],
+            "models": self.model_registry.as_legacy_models(),
+            "model_registry": self.model_registry.as_dict(),
             "unavailable": self.unavailable_rows(),
         }
 

@@ -1,0 +1,11 @@
+version: 1
+required: [version, models]
+model_required: [id, efforts, multi_agent]
+notes:
+  - Model aliases are stable routing references; id is the replaceable concrete model ID.
+  - Each concrete model ID must map to exactly one alias.
+  - efforts lists the reasoning-effort values accepted by the model.
+  - multi_agent records the model's recursive delegation capability.
+  - backends.codex_exec.min_version declares the minimum compatible Codex CLI version.
+  - Project overrides in .devflow/models.yaml merge by alias.
+  - Legacy models entries in .devflow/routing.yaml remain readable and are translated into this registry shape.
