@@ -384,12 +384,9 @@ def final_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path
     for branch, record in branches.items():
         # A completed receipt stays conditional on the files and extant branch tips it describes.
         try:
-            try:
-                tip = delivery.resolve_commit(root, 'refs/heads/' + branch)
-            except ValueError:
-                tip = record['head_sha']  # Deleted/merged branches retain immutable provenance.
-            if tip != record['head_sha']:
-                errors.append('delivery branch tip advanced beyond delivered WORK: ' + branch)
+            tip_error = delivery.branch_tip_error(root, branch, record)
+            if tip_error:
+                errors.append(tip_error)
             for path_key, hash_key in [('pr_file', 'pr_sha256'), ('postman_file', 'postman_sha256')]:
                 _, actual = delivery.read_artifact(root, record[path_key], path_key)
                 if actual != record[hash_key]:

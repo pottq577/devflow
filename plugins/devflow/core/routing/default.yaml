@@ -10,14 +10,15 @@ profiles:
     candidates: [frontier, balanced]
 profile_order: [economy, balanced, frontier, hardest]
 roles:
-  scout: {profile: economy, effort: medium, sandbox: read-only}
-  architect: {profile: frontier, effort: xhigh, sandbox: workspace-write}
-  worker: {profile: economy, effort: high, sandbox: workspace-write}
-  verifier: {profile: balanced, effort: high, sandbox: workspace-write}
-  auditor: {profile: frontier, effort: xhigh, sandbox: workspace-write}
-  integration_auditor: {profile: hardest, effort: xhigh, sandbox: workspace-write}
-  diagnostician: {profile: frontier, effort: xhigh, sandbox: read-only}
-  finalizer: {profile: frontier, effort: xhigh, sandbox: workspace-write}
+  scout: { profile: economy, effort: medium, sandbox: read-only }
+  architect: { profile: frontier, effort: xhigh, sandbox: workspace-write }
+  worker: { profile: economy, effort: high, sandbox: workspace-write }
+  verifier: { profile: balanced, effort: high, sandbox: workspace-write }
+  auditor: { profile: frontier, effort: xhigh, sandbox: workspace-write }
+  integration_auditor:
+    { profile: hardest, effort: xhigh, sandbox: workspace-write }
+  diagnostician: { profile: frontier, effort: xhigh, sandbox: read-only }
+  finalizer: { profile: frontier, effort: xhigh, sandbox: workspace-write }
 escalation:
   kind:
     documentation:
@@ -52,13 +53,13 @@ escalation:
       worker_effort: xhigh
       scout_effort: high
       verifier_profile: hardest
-      verifier_effort: max
+      verifier_effort: xhigh
       auditor_profile: hardest
-      auditor_effort: max
+      auditor_effort: xhigh
       integration_auditor_profile: hardest
-      integration_auditor_effort: max
+      integration_auditor_effort: xhigh
       finalizer_profile: hardest
-      finalizer_effort: max
+      finalizer_effort: xhigh
   retries:
     worker_promote_at: 1
     worker_retry_profile: balanced

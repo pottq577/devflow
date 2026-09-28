@@ -36,7 +36,8 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
    1. Each entry names a fact to confirm.
    2. If one is false, the premise moved: stop, do not adapt the plan yourself.
 5. For a ready item, run `devflow work start <domain> <ID>`.
-   1. For an already `in_progress` item, resume it with its existing `evidence.start_sha`; keep the original source baseline intact.
+   1. This captures `evidence.delivery.branch`. On a detached linked worktree, DevFlow infers a unique sibling branch at the same starting HEAD; if that is ambiguous, rerun with `--branch <name>`.
+   2. For an already `in_progress` item, resume it with its existing `evidence.start_sha` and `evidence.delivery.branch`; keep both baselines intact.
 6. Establish the failing test or verification criterion first, where the change admits one.
 7. Implement only the coherent change boundary defined by the WORK item, staying inside `scope.allowed`.
    1. Follow repository rules and existing patterns.
@@ -50,10 +51,10 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 9. If a stop condition is reached, run `devflow work block <domain> <ID> --reason "..."` and stop.
    1. Record a decision when human or product authority is required.
 10. Commit the verified source/test changes first.
-    1. Read the actual `docs/PR/templates.md`, run `devflow delivery paths <domain>`, and generate/update the cumulative PR body and Postman v2.1 collection at those paths against this HEAD.
-    2. Preserve the actual branch base, template headings, prior WORK coverage, empty credential variables and honest execution status.
+    1. Read the actual `docs/PR/templates.md`, then run `devflow delivery paths <domain> --branch <evidence.delivery.branch>` and generate/update the cumulative PR body and Postman v2.1 collection at those paths against this HEAD.
+    2. Preserve the captured delivery branch, actual branch base, template headings, prior WORK coverage, empty credential variables and honest execution status.
     3. Follow the full `delivery-artifacts` protocol in the rendered packet.
-    4. Fill `evidence.delivery` and comment anchors in WORK.
+    4. Fill the remaining `evidence.delivery` fields and comment anchors in WORK without replacing its machine-owned `branch`.
     5. Keep derived output local/ignored; do not alter the source PR template.
     6. When acceptance criteria and these deliverables are supported by evidence, run `devflow work done <domain> <ID> --commit <sha> --command '<cmd> -> <result>' ...`.
     7. It refuses a completion with missing comments, artifacts, source provenance or required command evidence.

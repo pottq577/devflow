@@ -83,12 +83,14 @@ class DeliveryTests(unittest.TestCase):
         return json.loads(result.stdout)
 
     def write_artifacts(self, *, endpoints=None, empty=False):
-        paths = self.paths()
+        doc = self.read_work()
+        branch = ((doc['items'][-1].get('evidence') or {}).get('delivery') or {}).get('branch')
+        paths = self.paths(branch)
         self.pr = self.root / paths['pr_file']
         self.postman = self.root / paths['postman_file']
         self.pr.parent.mkdir(parents=True, exist_ok=True)
         self.postman.parent.mkdir(parents=True, exist_ok=True)
-        self.metadata = {'branch': self.git('branch', '--show-current'), 'base_sha': self.base, 'head_sha': self.head}
+        self.metadata = {'branch': paths['branch'], 'base_sha': self.base, 'head_sha': self.head}
         self.pr.write_text('<!-- devflow-delivery: ' + json.dumps(self.metadata) + ' -->\n'
                            '# Summary\n\nImplements the sample boundary and preserves retry semantics.\n\n'
                            '## Verification\n\nUnit checks executed; API execution is pending local credentials.\n')
@@ -105,15 +107,19 @@ class DeliveryTests(unittest.TestCase):
         doc = self.read_work()
         entry = doc['items'][-1]
         entry['evidence']['comments'] = [{'path': self.source, 'line': 1, 'reason': 'Explain the idempotency boundary for duplicate submissions.'}]
-        entry['evidence']['delivery'] = {
+        delivery_evidence = entry['evidence'].setdefault('delivery', {})
+        delivery_evidence.update({
             'base_ref': 'delivery-base', 'pr_file': paths['pr_file'], 'postman_file': paths['postman_file'],
             'api_endpoints': ([] if empty else ['GET /api/sample']) if endpoints is None else endpoints,
             'api_note': 'No HTTP surface is affected; this WORK changes a private scheduling helper.' if empty else 'Covers the changed sample endpoint.',
-        }
+        })
         fixtures.dump(self.work_path, doc)
 
-    def done(self, item='P01-I01', head=None):
-        return self.cli('work', 'done', 'sample', item, '--commit', head or self.head, '--command', 'unit checks -> passed')
+    def done(self, item='P01-I01', head=None, branch=None):
+        args = ['work', 'done', 'sample', item, '--commit', head or self.head, '--command', 'unit checks -> passed']
+        if branch:
+            args += ['--branch', branch]
+        return self.cli(*args)
 
     def assert_refused_atomically(self, expected):
         before = (self.state_path.read_bytes(), self.work_path.read_bytes())
@@ -164,7 +170,79 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(record['work_ids'], ['P01-I01'])
         self.assertEqual(len(record['pr_sha256']), 64)
         self.assertEqual(self.read_work()['items'][0]['evidence']['start_sha'], self.base)
+        self.assertEqual(self.read_work()['items'][0]['evidence']['delivery']['branch'], 'feature/sample')
         self.assertEqual(self.cli('validate', 'sample').returncode, 0)
+
+    def test_detached_start_infers_branch_from_sibling_worktree(self):
+        self.enable()
+        parent = Path(tempfile.mkdtemp(prefix='devflow-linked-worktree-'))
+        self.addCleanup(shutil.rmtree, parent, True)
+        sandbox = parent / 'sandbox'
+        result = subprocess.run(
+            ['git', 'worktree', 'add', '--detach', str(sandbox), 'HEAD'],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        shutil.copytree(self.root / 'docs', sandbox / 'docs')
+        shutil.copytree(self.root / '.devflow', sandbox / '.devflow')
+        started = fixtures.invoke_runtime(sandbox, self.runtime, 'work', 'start', 'sample', 'P01-I01')
+        self.assertEqual(started.returncode, 0, started.stderr)
+        work_doc = yaml.safe_load((sandbox / 'docs/domains/sample/work/phase-01.yaml').read_text())
+        self.assertEqual(work_doc['items'][0]['evidence']['delivery']['branch'], 'feature/sample')
+        self.assertEqual(work_doc['items'][0]['evidence']['delivery']['branch_start_sha'], self.base)
+
+    def test_attached_start_rejects_explicit_branch_mismatch(self):
+        self.enable()
+        result = self.cli('work', 'start', 'sample', 'P01-I01', '--branch', 'delivery-base')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('does not match current branch', result.stderr)
+
+    def test_detached_completion_uses_captured_branch_and_allows_unapplied_tip(self):
+        self.enable()
+        started = self.cli('work', 'start', 'sample', 'P01-I01')
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.git('switch', '--detach')
+        source = self.root / 'src/service.py'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('# Keep retries inside one transaction so duplicate submissions share a result.\n'
+                          'def execute():\n    return 1\n')
+        self.git('add', 'src/service.py')
+        self.git('commit', '-qm', 'implement detached sample')
+        self.head = self.git('rev-parse', 'HEAD')
+        self.source = 'src/service.py'
+        self.write_artifacts()
+        result = self.done()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = self.read_state()['delivery']['branches']['feature/sample']
+        self.assertEqual(record['checkout_mode'], 'detached')
+        self.assertEqual(record['branch_start_sha'], self.base)
+        self.assertEqual(self.cli('delivery', 'check', 'sample', '--final').returncode, 0)
+        self.pr.write_text(self.pr.read_text() + '\nDetached handoff clarification.\n')
+        refresh = self.cli('delivery', 'refresh', 'sample', '--branch', 'feature/sample')
+        self.assertEqual(refresh.returncode, 0, refresh.stderr)
+
+    def test_detached_completion_rejects_diverged_target_branch(self):
+        self.enable()
+        started = self.cli('work', 'start', 'sample', 'P01-I01')
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.git('switch', '--detach')
+        source = self.root / 'src/service.py'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('# Keep retries inside one transaction so duplicate submissions share a result.\n'
+                          'def execute():\n    return 1\n')
+        self.git('add', 'src/service.py')
+        self.git('commit', '-qm', 'implement detached sample')
+        self.head = self.git('rev-parse', 'HEAD')
+        self.source = 'src/service.py'
+        tree = self.git('rev-parse', f'{self.base}^{{tree}}')
+        diverged = self.git('commit-tree', tree, '-p', self.base, '-m', 'diverge target branch')
+        self.git('update-ref', 'refs/heads/feature/sample', diverged)
+        self.write_artifacts()
+        result = self.done()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('descend from delivery branch tip', result.stderr)
 
     def test_wrong_commit_is_rejected(self):
         self.start_and_commit(); self.write_artifacts()

@@ -28,7 +28,10 @@ Include an explained N/A where a section does not apply.
 Never mark an unexecuted check as passed.
 PR generation prepares a local body, with remote publication/push/merge controlled by the user.
 
-Run `devflow delivery paths <domain>` for the exact output filenames.
+`devflow work start <domain> <ID>` captures the delivery branch in `evidence.delivery.branch`.
+On a detached linked worktree, DevFlow infers the branch only when exactly one sibling worktree at the same starting HEAD owns a named branch; use `devflow work start <domain> <ID> --branch <name>` when that identity is ambiguous.
+The linked checkout must already expose `docs/` and `.devflow/`; branch handling does not copy ignored lifecycle files.
+After source commits, run `devflow delivery paths <domain> --branch <evidence.delivery.branch>` for the exact output filenames.
 The runtime derives safe, collision-resistant names from both domain and branch.
 One cumulative PR body and one cumulative Postman collection represent each implemented branch, including stacked branches and remediation.
 Update the pair after every WORK on that branch; preserve earlier branch changes and requests.
@@ -60,6 +63,7 @@ evidence:
       reason: Explains why a retry shares the same transaction and idempotency result.
   comments_note: null
   delivery:
+    branch: feature/example  # machine-owned by work start; preserve it
     base_ref: develop
     # base_sha: <approved pinned base SHA>  # optional; useful for stacked branches
     pr_file: <pr_file returned by delivery paths>
@@ -69,7 +73,8 @@ evidence:
 ```
 
 Continue using `devflow work done <domain> <ID> --commit <HEAD> --command '<cmd> -> <actual result>'`.
-The runtime resolves the source commit, derives changed files, checks comments and both artifacts, and records their hashes/provenance in STATE and WORK in the existing atomic transaction.
+For a legacy in-progress WORK that predates branch capture, pass `--branch <name>` explicitly.
+The runtime resolves the source commit, preserves the captured delivery branch, derives changed files, checks comments and both artifacts, and records their hashes/provenance in STATE and WORK in the existing atomic transaction.
 The narrow artifact allowance covers these two files plus WORK/STATE evidence even when an older WORK.scope.allowed predates this policy.
 It grants no other implementation scope expansion.
 
@@ -109,6 +114,8 @@ failed servers, tools and credentials never become `not_applicable`.
 
 `devflow delivery check <domain>` checks all recorded artifacts and source evidence.
 `devflow delivery check <domain> --final` also checks extant local branch tips.
+For attached delivery, the branch tip must still equal the delivered HEAD.
+For detached delivery, an unapplied target branch may remain an ancestor of the delivered HEAD; divergence or commits beyond the delivered HEAD are rejected.
 Integration verification invokes the final checks through normal domain validation.
 A deleted/merged local branch retains its pinned commit provenance; no checkout or branch recreation is required.
 

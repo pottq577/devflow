@@ -49,11 +49,88 @@ def resolve_commit(root: Path, ref: Any) -> str:
     return value
 
 
+def symbolic_branch(root: Path) -> str | None:
+    result = subprocess.run(
+        ['git', 'symbolic-ref', '--quiet', '--short', 'HEAD'],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    if result.returncode == 0:
+        branch = result.stdout.strip()
+        return branch or None
+    if result.returncode == 1:
+        return None
+    raise ValueError(result.stderr.strip() or 'Git inspection failed: symbolic-ref')
+
+
+def worktree_branch_candidates(root: Path) -> list[str]:
+    head = resolve_commit(root, 'HEAD')
+    output = git(root, 'worktree', 'list', '--porcelain')
+    candidates: list[str] = []
+    record_head: str | None = None
+    record_branch: str | None = None
+    for line in [*output.splitlines(), '']:
+        if not line:
+            if record_head == head and record_branch and record_branch.startswith('refs/heads/'):
+                candidates.append(record_branch.removeprefix('refs/heads/'))
+            record_head = None
+            record_branch = None
+        elif line.startswith('HEAD '):
+            record_head = line.removeprefix('HEAD ')
+        elif line.startswith('branch '):
+            record_branch = line.removeprefix('branch ')
+    return sorted(set(candidates))
+
+
 def current_branch(root: Path) -> str:
-    branch = git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD')
-    if not branch:
-        raise ValueError('delivery completion requires a named branch')
-    return branch
+    branch = symbolic_branch(root)
+    if branch:
+        return branch
+    candidates = worktree_branch_candidates(root)
+    if len(candidates) == 1:
+        return candidates[0]
+    detail = f" Candidates at this HEAD: {', '.join(candidates)}." if candidates else ''
+    raise ValueError('detached HEAD requires an explicit delivery branch (--branch).' + detail)
+
+
+def delivery_context(root: Path, preferred_branch: str | None = None) -> tuple[str, str, str]:
+    attached = symbolic_branch(root)
+    if attached:
+        if preferred_branch and preferred_branch != attached:
+            raise ValueError(f'delivery branch {preferred_branch} does not match current branch {attached}')
+        return attached, 'attached', resolve_commit(root, 'HEAD')
+
+    branch = preferred_branch or current_branch(root)
+    try:
+        branch_tip = resolve_commit(root, 'refs/heads/' + branch)
+    except ValueError as exc:
+        raise ValueError(f'detached delivery branch must exist locally: {branch}') from exc
+    head = resolve_commit(root, 'HEAD')
+    if git(root, 'merge-base', branch_tip, head) != branch_tip:
+        raise ValueError(f'detached HEAD must descend from delivery branch tip: {branch}')
+    return branch, 'detached', branch_tip
+
+
+def branch_tip_error(root: Path, branch: str, record: dict[str, Any]) -> str | None:
+    try:
+        tip = resolve_commit(root, 'refs/heads/' + branch)
+    except ValueError:
+        return None
+    head = record.get('head_sha')
+    if not isinstance(head, str) or not head:
+        return f'delivery branch {branch} has no recorded head_sha'
+    if tip == head:
+        return None
+    if record.get('checkout_mode') == 'detached':
+        start = record.get('branch_start_sha')
+        try:
+            if isinstance(start, str) and git(root, 'merge-base', start, tip) == start and git(root, 'merge-base', tip, head) == tip:
+                return None
+        except (ValueError, subprocess.TimeoutExpired):
+            pass
+    return f'delivery branch tip advanced or diverged beyond delivered WORK: {branch}'
 
 
 def slug(value: str) -> str:
@@ -209,7 +286,15 @@ def inspect_artifacts(root: Path, domain: str, branch: str, record: dict[str, An
     return {'template_sha256': template_hash, 'pr_sha256': pr_hash, 'postman_sha256': postman_hash}
 
 
-def prepare_completion(root: Path, domain: str, state: dict[str, Any], item: dict[str, Any], sections: Callable, base_ref: str | None = None) -> None:
+def prepare_completion(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    item: dict[str, Any],
+    sections: Callable,
+    base_ref: str | None = None,
+    branch: str | None = None,
+) -> None:
     """Apply provenance to prospective objects only; the caller validates and writes them atomically."""
     if not active(state):
         return
@@ -217,7 +302,6 @@ def prepare_completion(root: Path, domain: str, state: dict[str, Any], item: dic
     head = resolve_commit(root, evidence.get('commit'))
     if head != resolve_commit(root, 'HEAD'):
         raise ValueError('delivery evidence.commit must identify current HEAD')
-    branch = current_branch(root)
     # Uncommitted implementation must never be masked by valid evidence for an older HEAD.
     dirty = git(root, 'diff', '--no-ext-diff', '--name-only', '-z', 'HEAD', '--')
     untracked = git(root, 'ls-files', '--others', '--exclude-standard', '-z')
@@ -230,6 +314,15 @@ def prepare_completion(root: Path, domain: str, state: dict[str, Any], item: dic
     supplied = evidence.get('delivery')
     if not isinstance(supplied, dict):
         raise ValueError('work done requires evidence.delivery with base_ref, PR/Postman paths and API assessment')
+    supplied_branch = supplied.get('branch')
+    if supplied_branch is not None and (not isinstance(supplied_branch, str) or not supplied_branch.strip()):
+        raise ValueError('evidence.delivery.branch must be a nonblank string')
+    if branch and supplied_branch and branch != supplied_branch:
+        raise ValueError(f'--branch {branch} disagrees with evidence.delivery.branch {supplied_branch}')
+    branch, checkout_mode, observed_tip = delivery_context(root, branch or supplied_branch)
+    supplied_start = supplied.get('branch_start_sha')
+    if supplied_start is not None:
+        supplied_start = resolve_commit(root, supplied_start)
     previous = policy['branches'].get(branch) or {}
     ref = supplied.get('base_ref') or previous.get('base_ref') or base_ref
     if not isinstance(ref, str) or not ref.strip():
@@ -247,7 +340,13 @@ def prepare_completion(root: Path, domain: str, state: dict[str, Any], item: dic
     changes = git(root, 'diff', '--no-ext-diff', '--name-only', '-z', evidence['start_sha'], head, '--')
     evidence['changed_files'] = [name for name in changes.split('\0') if name]
     record = {key: supplied.get(key) for key in ('pr_file', 'postman_file', 'api_endpoints', 'api_note')}
-    record.update(base_ref=ref, base_sha=base, head_sha=head)
+    record.update(base_ref=ref, base_sha=base, head_sha=head, checkout_mode=checkout_mode)
+    if checkout_mode == 'detached':
+        branch_start = supplied_start or previous.get('branch_start_sha') or observed_tip
+        branch_start = resolve_commit(root, branch_start)
+        if git(root, 'merge-base', branch_start, observed_tip) != branch_start:
+            raise ValueError(f'delivery branch {branch} moved behind captured branch_start_sha')
+        record['branch_start_sha'] = branch_start
     record.update(inspect_artifacts(root, domain, branch, record, sections))
     ids = list(previous.get('work_ids', []))
     if item['id'] not in ids:
@@ -301,6 +400,15 @@ def validation_errors(root: Path, domain: str, state: dict[str, Any], docs: dict
             for key in ('base_sha', 'head_sha'):
                 if not SHA.fullmatch(record[key]) or resolve_commit(root, record[key]) != record[key]:
                     raise ValueError(f'delivery {key} must be a full existing source commit')
+            checkout_mode = record.get('checkout_mode', 'attached')
+            if checkout_mode not in {'attached', 'detached'}:
+                raise ValueError(f'delivery branch {branch} has invalid checkout_mode')
+            if checkout_mode == 'detached':
+                branch_start = record.get('branch_start_sha')
+                if not isinstance(branch_start, str) or not SHA.fullmatch(branch_start) or resolve_commit(root, branch_start) != branch_start:
+                    raise ValueError(f'delivery branch {branch} requires branch_start_sha for detached checkout')
+                if git(root, 'merge-base', branch_start, record['head_sha']) != branch_start:
+                    raise ValueError(f'delivery branch {branch} detached head no longer descends from branch_start_sha')
             ids = record.get('work_ids')
             if not isinstance(ids, list) or not ids or any(not isinstance(i, str) for i in ids) or len(ids) != len(set(ids)):
                 raise ValueError(f'delivery branch {branch} requires unique work_ids')
@@ -313,14 +421,9 @@ def validation_errors(root: Path, domain: str, state: dict[str, Any], docs: dict
                 if not HASH.fullmatch(record[key]) or record[key] != value:
                     errors.append(f'delivery {branch} stale {key}; regenerate artifacts and run delivery refresh')
             if final:
-                ref = 'refs/heads/' + branch
-                try:
-                    tip = resolve_commit(root, ref)
-                except ValueError:
-                    # A deleted, already-merged local branch still has its pinned source provenance.
-                    tip = record['head_sha']
-                if tip != record['head_sha']:
-                    errors.append(f'delivery branch tip advanced beyond delivered WORK: {branch}')
+                tip_error = branch_tip_error(root, branch, record)
+                if tip_error:
+                    errors.append(tip_error)
         except (ValueError, KeyError, TypeError, OSError, subprocess.TimeoutExpired) as exc:
             errors.append(f'delivery {branch}: {exc}')
     return errors
@@ -331,6 +434,9 @@ def refresh_artifacts(root: Path, domain: str, state: dict[str, Any], branch: st
     record = (policy.get('branches') or {}).get(branch)
     if not isinstance(record, dict):
         raise ValueError(f'delivery branch has no completed WORK record: {branch}')
-    if resolve_commit(root, 'refs/heads/' + branch) != record.get('head_sha'):
-        raise ValueError('delivery refresh requires the recorded branch tip; new source changes require WORK evidence')
+    if resolve_commit(root, 'HEAD') != record.get('head_sha'):
+        raise ValueError('delivery refresh requires the recorded source HEAD; new source changes require WORK evidence')
+    tip_error = branch_tip_error(root, branch, record)
+    if tip_error:
+        raise ValueError(tip_error)
     record.update(inspect_artifacts(root, domain, branch, record, sections))

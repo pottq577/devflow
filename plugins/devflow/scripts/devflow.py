@@ -1713,7 +1713,20 @@ def work_update(args: argparse.Namespace) -> int:
         item["status"] = "in_progress"
         item["block_reason"] = None
         if delivery.active(state):
-            item.setdefault("evidence", {})["start_sha"] = current_sha(root)
+            evidence = item.setdefault("evidence", {})
+            evidence["start_sha"] = current_sha(root)
+            branch, checkout_mode, branch_start = delivery.delivery_context(root, getattr(args, "branch", None))
+            delivery_evidence = evidence.setdefault("delivery", {})
+            recorded_branch = delivery_evidence.get("branch")
+            if recorded_branch and recorded_branch != branch:
+                return reject_transition(
+                    args.item,
+                    "start",
+                    [f"evidence.delivery.branch={recorded_branch} disagrees with checkout branch {branch}"],
+                )
+            delivery_evidence["branch"] = branch
+            if checkout_mode == "detached":
+                delivery_evidence["branch_start_sha"] = branch_start
     elif args.work_command == "done":
         if document_errors:
             return reject_transition(args.item, "done", document_errors)
@@ -1740,7 +1753,15 @@ def work_update(args: argparse.Namespace) -> int:
         item["status"] = "done"
         item["block_reason"] = None
         phase = normalized_phases(state).get(item_phase(path, doc), {})
-        delivery.prepare_completion(root, args.domain, state, item, markdown_sections, phase.get("base_ref"))
+        delivery.prepare_completion(
+            root,
+            args.domain,
+            state,
+            item,
+            markdown_sections,
+            phase.get("base_ref"),
+            getattr(args, "branch", None),
+        )
     elif args.work_command == "block":
         if document_errors:
             return reject_transition(args.item, "block", document_errors)
@@ -3850,9 +3871,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("work")
     worksub = sp.add_subparsers(dest="work_command", required=True)
     s = worksub.add_parser("start")
-    s.add_argument("domain"); s.add_argument("item"); s.set_defaults(func=work_update)
+    s.add_argument("domain"); s.add_argument("item"); s.add_argument("--branch"); s.set_defaults(func=work_update)
     s = worksub.add_parser("done")
-    s.add_argument("domain"); s.add_argument("item"); s.add_argument("--commit")
+    s.add_argument("domain"); s.add_argument("item"); s.add_argument("--commit"); s.add_argument("--branch")
     s.add_argument("--changed-file", action="append", default=[])
     s.add_argument("--command", action="append", default=[])
     s.add_argument("--deviation", action="append", default=[])

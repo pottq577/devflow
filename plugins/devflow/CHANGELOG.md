@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Support Codex-style detached linked worktrees in delivery lifecycle handling by capturing the target branch at `work start`, preserving it through completion, and allowing final checks/refresh while the target branch remains an ancestor of isolated delivered commits.
+- Keep attached-branch provenance strict: explicit branch mismatches, detached divergence, and branch commits beyond delivered HEAD still fail closed.
+
 ## 0.9.0 - Autonomous routing
 
 - Add foreground `/goal` / Autopilot lifecycle execution over the existing deterministic next-action state machine.
