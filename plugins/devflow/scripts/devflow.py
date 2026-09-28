@@ -3723,6 +3723,8 @@ def autopilot_command(args: argparse.Namespace) -> int:
     if args.autopilot_command == "status":
         print(json.dumps(ledger.load_controller() if ledger else {}, ensure_ascii=False, indent=2))
         return 0
+    if args.until != "complete" and effective_workflow_type(state) != "delivery":
+        raise ValueError("Staged execution boundaries are supported only for delivery workflows")
 
     prior = ledger.load_controller() if args.autopilot_command == "resume" else {}
     router = autopilot.RouteEngine(policy, capabilities)
@@ -3755,7 +3757,7 @@ def autopilot_command(args: argparse.Namespace) -> int:
     controller = autopilot.AutopilotController(status_fn, render_fn, route_fn, dispatch_fn, ledger,
         max_steps=args.max_steps, max_no_progress=int(policy["escalation"]["retries"]["max_no_progress"]),
         resume_state=prior, capabilities=capabilities, budget=budget,
-        scout_before=set(policy.get("orchestration", {}).get("scout_before", [])))
+        scout_before=set(policy.get("orchestration", {}).get("scout_before", [])), until=args.until)
     try:
         with autopilot.DomainLease(controller_dir, int(policy["concurrency"]["mutating"])):
             result = controller.run()
@@ -3764,7 +3766,7 @@ def autopilot_command(args: argparse.Namespace) -> int:
             raise
         result = {"status": "blocked", "reason": "mutating_concurrency_limit"}
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("status") == "complete" else 1
+    return 0 if result.get("status") in {"complete", "checkpoint"} else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3809,6 +3811,7 @@ def build_parser() -> argparse.ArgumentParser:
             s.add_argument("--max-steps", type=int, default=100)
             s.add_argument("--token-budget", type=int)
             s.add_argument("--timeout", type=int, default=1800)
+            s.add_argument("--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete")
         s.set_defaults(func=autopilot_command)
 
     sp = sub.add_parser("delivery")

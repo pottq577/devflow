@@ -451,6 +451,111 @@ class AutopilotRuntimeTests(unittest.TestCase):
         controller = self.ap.AutopilotController(lambda: state, lambda a: "", lambda a, s, n: {}, lambda s, p: {}, None, 3)
         self.assertEqual(controller.run()["status"], "paused")
 
+    def test_execution_boundary_rejects_unknown_value(self):
+        with self.assertRaises(ValueError):
+            self.ap.ExecutionBoundary("unknown")
+
+    def test_plan_boundary_runs_plan_review_remediation_then_stops_before_phase_work(self):
+        actions = [
+            {"command": "plan", "role": "architect", "scope": "project"},
+            {"command": "audit", "role": "auditor", "scope": "plan", "mode": "initial"},
+            {"command": "run", "role": "executor", "scope": "integration", "work_item": "P00-R01"},
+            {"command": "audit", "role": "auditor", "scope": "work", "mode": "initial", "work_item": "P00-R01"},
+            {"command": "audit", "role": "auditor", "scope": "plan", "mode": "closure"},
+            {"command": "run", "role": "executor", "scope": "phase", "phase": "01", "work_item": "P01-I01"},
+        ]
+        state = {
+            "risk_profile": "high",
+            "plan_review": {"required": True, "status": "pending", "remediation_work_ids": []},
+            "next_action": actions[0],
+        }
+        rendered = []
+        dispatched = []
+
+        def route(action, _state, attempt):
+            if action["command"] == "plan":
+                role = "architect"
+            elif action["command"] == "run":
+                role = "worker"
+            else:
+                role = "auditor"
+            return {
+                "role": role,
+                "model": {"selected": "fixture-model", "reasoning_effort": "high"},
+                "execution": {"sandbox": "workspace-write"},
+                "action": action,
+                "attempt": attempt,
+            }
+
+        def dispatch(_spec, _prompt):
+            current = state["next_action"]
+            dispatched.append(current)
+            index = actions.index(current)
+            if index == 1:
+                state["plan_review"]["status"] = "remediation"
+                state["plan_review"]["remediation_work_ids"] = ["P00-R01"]
+            elif index == 4:
+                state["plan_review"]["status"] = "verified"
+            state["next_action"] = actions[index + 1]
+            return {"status": "success", "exit_code": 0}
+
+        controller = self.ap.AutopilotController(
+            lambda: state, lambda action: rendered.append(action) or "packet", route, dispatch, None, 10,
+            until="plan",
+        )
+        result = controller.run()
+        self.assertEqual(result["status"], "checkpoint")
+        self.assertEqual(result["reason"], "execution_boundary_reached")
+        self.assertEqual(result["execution_boundary"], "plan")
+        self.assertEqual(result["action"], actions[-1])
+        self.assertEqual(dispatched, actions[:-1])
+        self.assertEqual(rendered, actions[:-1])
+
+    def test_implementation_boundary_stops_before_finalization_without_render_or_dispatch(self):
+        actions = [
+            {"command": "run", "role": "executor", "scope": "phase", "phase": "01", "work_item": "P01-I01"},
+            {"command": "audit", "role": "auditor", "scope": "phase", "phase": "01", "mode": "initial"},
+            {"command": "finalize", "role": "executor", "scope": "project"},
+        ]
+        state = {"risk_profile": "medium", "next_action": actions[0]}
+        rendered = []
+        dispatched = []
+
+        def dispatch(_spec, _prompt):
+            current = state["next_action"]
+            dispatched.append(current)
+            state["next_action"] = actions[actions.index(current) + 1]
+            return {"status": "success", "exit_code": 0}
+
+        controller = self.ap.AutopilotController(
+            lambda: state, lambda action: rendered.append(action) or "packet",
+            lambda action, _state, attempt: {
+                "role": "worker" if action["command"] == "run" else "auditor",
+                "model": {"selected": "fixture-model", "reasoning_effort": "high"},
+                "execution": {"sandbox": "workspace-write"},
+                "action": action,
+                "attempt": attempt,
+            },
+            dispatch, None, 6, until="implementation",
+        )
+        result = controller.run()
+        self.assertEqual(result["status"], "checkpoint")
+        self.assertEqual(result["execution_boundary"], "implementation")
+        self.assertEqual(result["action"], actions[-1])
+        self.assertEqual(dispatched, actions[:-1])
+        self.assertEqual(rendered, actions[:-1])
+        planning_state = {"plan_review": {"remediation_work_ids": ["P00-R01"]}}
+        self.assertFalse(
+            self.ap.ExecutionBoundary("implementation").reached(
+                planning_state, {"command": "run", "scope": "integration", "work_item": "P00-R01"}
+            )
+        )
+        self.assertTrue(
+            self.ap.ExecutionBoundary("implementation").reached(
+                state, {"command": "audit", "scope": "integration", "mode": "initial"}
+            )
+        )
+
     def test_controller_dispatches_until_state_progresses_then_completes(self):
         states = [
             {"risk_profile": "medium", "next_action": {"command": "run", "role": "executor", "scope": "phase", "work_item": "P01-I01"}},
@@ -657,6 +762,34 @@ class AutopilotCliTests(unittest.TestCase):
         proc = subprocess.run([sys.executable, str(PLUGIN / "scripts" / "devflow.py"), "autopilot", "start", "--help"], text=True, capture_output=True)
         self.assertEqual(proc.returncode, 0)
         self.assertIn("--token-budget", proc.stdout)
+        self.assertIn("--until", proc.stdout)
+
+    def test_resume_help_exposes_execution_boundary(self):
+        import subprocess, sys
+        proc = subprocess.run([sys.executable, str(PLUGIN / "scripts" / "devflow.py"), "autopilot", "resume", "--help"], text=True, capture_output=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("--until", proc.stdout)
+        self.assertIn("plan", proc.stdout)
+        self.assertIn("implementation", proc.stdout)
+        self.assertIn("complete", proc.stdout)
+
+    def test_staged_boundary_rejects_audit_remediation_workflow(self):
+        import subprocess, sys
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            cli = str(PLUGIN / "scripts" / "devflow.py")
+            initialized = subprocess.run(
+                [sys.executable, cli, "init", "sample", "--workflow", "audit-remediation"],
+                cwd=root, text=True, capture_output=True,
+            )
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            started = subprocess.run(
+                [sys.executable, cli, "autopilot", "start", "sample", "--until", "plan"],
+                cwd=root, text=True, capture_output=True,
+            )
+            self.assertEqual(started.returncode, 2)
+            self.assertIn("Staged execution boundaries are supported only for delivery workflows", started.stderr)
 
     def test_bootstrap_routes_prd_creation_through_architect_then_initializes_domain(self):
         import os, subprocess, sys
@@ -698,6 +831,8 @@ class AutopilotCliTests(unittest.TestCase):
     def test_goal_skill_delegates_new_domain_prd_bootstrap_to_autopilot(self):
         text = (PLUGIN / "skills" / "goal" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("autopilot bootstrap", text)
+        self.assertIn("--until", text)
+        self.assertIn("Do not write execution-control options", text)
         self.assertNotIn("turn the user's approved requirements into a PRD", text)
 
     def test_route_honors_persisted_unavailable_candidate(self):

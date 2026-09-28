@@ -3,6 +3,7 @@
 ## 0.9.0 - Autonomous routing
 
 - Add foreground `/goal` / Autopilot lifecycle execution over the existing deterministic next-action state machine.
+- Add `--until plan|implementation|complete` execution boundaries with successful runtime checkpoints before the next stage dispatch.
 - Add task-aware logical model profiles with per-WORK risk promotion, risk/retry escalation, and runtime model/backend fallback persisted across resume.
 - Add isolated Codex exec dispatch, optional host native-agent bridge, bounded context capsules, dedicated read-only scouting/diagnosis, measured-token budgeting, a cross-process mutating lease, atomic controller checkpoints, and dispatch ledger.
 - Route new-domain `/goal` PRD bootstrap through the Architect profile before initialization, inject the concrete installed DevFlow CLI path into specialist capsules, and fail closed on invalid routed PRDs.

@@ -95,18 +95,22 @@ This is bounded lifecycle context assembly rather than semantic repository RAG. 
 
 ## Autonomous `/goal` routing (0.9.0 / protocol 1.8.0)
 
-DevFlow has two equivalent lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Autopilot executes the same `STATE -> compute_next_action()` result until completion or a human or blocker gate.
+DevFlow has two equivalent lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Autopilot executes the same `STATE -> compute_next_action()` result until completion, a human or blocker gate, or an explicit execution boundary.
 
 ```bash
 devflow autopilot capabilities
 devflow autopilot bootstrap billing --requirements-file .devflow/runtime/billing/goal-requirements.md
 devflow autopilot route billing
-devflow autopilot start billing
+devflow autopilot start billing [--until plan|implementation|complete]
 devflow autopilot status billing
-devflow autopilot resume billing
+devflow autopilot resume billing [--until plan|implementation|complete]
 ```
 
-For a new `/goal`, the supervisor stores approved requirements verbatim and calls `autopilot bootstrap`. The Architect profile writes the PRD before `devflow init`. Routing policy lives in `core/routing/default.yaml`, while concrete model bindings and capabilities live in `core/routing/models.yaml`. Projects can override them independently with `.devflow/routing.yaml` and `.devflow/models.yaml`.
+For a new `/goal`, the supervisor stores approved requirements verbatim and calls `autopilot bootstrap`. Execution controls such as `--until` stay outside the requirements file. The Architect profile writes the PRD before `devflow init`. Routing policy lives in `core/routing/default.yaml`, while concrete model bindings and capabilities live in `core/routing/models.yaml`. Projects can override them independently with `.devflow/routing.yaml` and `.devflow/models.yaml`.
+
+Use `--until plan` to finish planning, including required plan review and remediation, then stop before ordinary phase delivery. Use `--until implementation` to finish phase WORK and required work/phase review gates, then stop before integration or whole-delivery finalization. `--until complete` is the default and preserves the existing full lifecycle. Staged boundaries apply only to `delivery` workflows.
+
+A reached boundary writes controller status `checkpoint` and exits successfully before route, render, scout, or specialist dispatch for the next stage. Start the next stage with a fresh `autopilot start` so it gets a new run budget and operational state. Use `autopilot resume` for interrupted or blocked runs that must retain their operational telemetry.
 
 Routine implementation and test WORK use the `fast` alias at `high`. Documentation uses `fast` at `medium`. Evidence WORK uses `balanced` at `high`; remediation and migration use `balanced` at `xhigh`. High-risk WORK promotes execution to `balanced` at `xhigh`, while critical WORK promotes execution to `frontier` at `xhigh`. Work verification uses `balanced` at `high` by default, `frontier` at `xhigh` for high risk, and `frontier` at `max` for critical risk. Planning, phase and integration audits, diagnosis, and finalization use `frontier`. The first stalled worker retry promotes to `balanced` at `xhigh`; diagnosis and post-diagnosis retry use `frontier` at `xhigh`. Model or backend availability failures fall through to the next alias in the selected profile.
 

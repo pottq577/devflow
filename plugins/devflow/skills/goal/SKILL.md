@@ -1,6 +1,6 @@
 ---
 name: goal
-description: Start or resume a complete DevFlow autonomous delivery goal. Use when the user invokes /goal or asks DevFlow to carry approved requirements through planning, implementation, verification, remediation, finalization, and integration audit without manually selecting each lifecycle step.
+description: Start or resume a DevFlow autonomous delivery goal, optionally bounded at planning or implementation. Use when the user invokes /goal or asks DevFlow to carry approved requirements through routed lifecycle work without manually selecting each step.
 ---
 
 # DevFlow Goal
@@ -10,10 +10,12 @@ Operate as the thin **Goal Supervisor**. DevFlow runtime owns lifecycle selectio
 ## Bootstrap
 
 1. Resolve the repository root and domain slug from the request and existing DevFlow domains.
-2. For a new domain, persist the user's approved requirements **verbatim** to a runtime input file such as `.devflow/runtime/<domain>/goal-requirements.md`.
+2. Separate explicit `/goal` execution controls from product requirements. `--until plan|implementation|complete` is supervisor control, not product intent.
+3. For a new domain, persist the user's approved requirements **verbatim** to a runtime input file such as `.devflow/runtime/<domain>/goal-requirements.md`.
    - Do not summarize, reinterpret, decompose, or turn them into a PRD in the parent session.
+   - Do not write execution-control options such as `--until` into the requirements file.
    - Preserve any requirement/acceptance IDs exactly as supplied.
-3. Run the routed bootstrap from the repository root:
+4. Run the routed bootstrap from the repository root:
 
 ```bash
 python3 <this-skill-directory>/scripts/invoke.py autopilot bootstrap <domain> \
@@ -24,19 +26,25 @@ python3 <this-skill-directory>/scripts/invoke.py autopilot bootstrap <domain> \
    - Use an explicit user-provided risk level when present; otherwise use `medium`.
    - Autopilot routes PRD creation to the Architect profile, validates the generated PRD, and initializes the domain only after the routed specialist succeeds.
    - Capability failures use the normal candidate fallback rules.
-4. For an existing domain, preserve its current PRD/PLAN/WORK/STATE and skip bootstrap.
+5. For an existing domain, preserve its current PRD/PLAN/WORK/STATE and skip bootstrap.
 
 ## Autonomous execution
 
-For a newly initialized domain or an existing domain without an interrupted controller, run:
+For a newly initialized domain or an existing domain without an interrupted controller, run `autopilot start` with the user's explicit execution boundary. Omit `--until` for the default `complete` behavior.
 
 ```bash
-python3 <this-skill-directory>/scripts/invoke.py autopilot start <domain>
+python3 <this-skill-directory>/scripts/invoke.py autopilot start <domain> [--until plan|implementation|complete]
 ```
 
-Use `autopilot resume` only when an interrupted or blocked controller checkpoint for the same run should continue. The foreground controller continues until project completion, a human decision gate, bounded retry exhaustion, or an execution blocker.
+Boundary semantics are deterministic controller policy:
 
-The Goal Supervisor does not author product artifacts, implement product code, choose the next WORK item, or manually swap models. Routing is owned by `core/routing/default.yaml` plus optional `.devflow/routing.yaml` overrides.
+- `plan`: finish planning, including required plan audit, remediation, and closure, then stop before ordinary phase delivery.
+- `implementation`: finish phase WORK and required work/phase review gates, then stop before integration or whole-delivery finalization.
+- `complete`: preserve the existing full lifecycle through integration completion.
+
+A boundary stop returns controller status `checkpoint` and is a successful requested outcome. Continue from a checkpoint with a fresh `autopilot start` and the next desired boundary. Use `autopilot resume` only when an interrupted or blocked controller run should continue with the same operational telemetry.
+
+The Goal Supervisor does not author product artifacts, implement product code, choose the next WORK item, or manually swap models. Routing policy is owned by `core/routing/default.yaml` plus optional `.devflow/routing.yaml` overrides; concrete model bindings live in `core/routing/models.yaml` plus optional `.devflow/models.yaml` overrides.
 
 ## Visibility
 

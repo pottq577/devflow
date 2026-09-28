@@ -965,13 +965,47 @@ class DispatchBroker:
         return classify_receipt(receipt)
 
 
+class ExecutionBoundary:
+    VALUES = ("plan", "implementation", "complete")
+
+    def __init__(self, value: str = "complete"):
+        if value not in self.VALUES:
+            raise ValueError(f"Unsupported execution boundary: {value}")
+        self.value = value
+
+    @staticmethod
+    def _plan_remediation_ids(state: dict[str, Any]) -> set[str]:
+        review = state.get("plan_review") or {}
+        values = review.get("remediation_work_ids") or []
+        return {str(item_id) for item_id in values}
+
+    @classmethod
+    def _is_planning_action(cls, state: dict[str, Any], action: dict[str, Any]) -> bool:
+        if action.get("command") == "plan" or action.get("scope") == "plan":
+            return True
+        work_item = action.get("work_item")
+        return work_item is not None and str(work_item) in cls._plan_remediation_ids(state)
+
+    def reached(self, state: dict[str, Any], action: dict[str, Any]) -> bool:
+        if self.value == "complete":
+            return False
+        if self.value == "plan":
+            return not self._is_planning_action(state, action)
+        if self.value == "implementation":
+            if self._is_planning_action(state, action):
+                return False
+            return action.get("command") == "finalize" or action.get("scope") == "integration"
+        raise AssertionError(f"Unhandled execution boundary: {self.value}")
+
+
 class AutopilotController:
     def __init__(self, status_fn: Callable[[], dict[str, Any]], render_fn: Callable[[dict[str, Any]], str],
                  route_fn: Callable[[dict[str, Any], dict[str, Any], int], dict[str, Any]],
                  dispatch_fn: Callable[[dict[str, Any], str], dict[str, Any]], ledger: RuntimeLedger | None,
                  max_steps: int = 100, max_no_progress: int = 3, *, run_id: str | None = None,
                  resume_state: dict[str, Any] | None = None, capabilities: CapabilityRegistry | None = None,
-                 budget: TokenBudget | None = None, scout_before: set[str] | None = None):
+                 budget: TokenBudget | None = None, scout_before: set[str] | None = None,
+                 until: str = "complete"):
         self.status_fn = status_fn
         self.render_fn = render_fn
         self.route_fn = route_fn
@@ -982,6 +1016,7 @@ class AutopilotController:
         self.capabilities = capabilities
         self.budget = budget
         self.scout_before = set(scout_before or set())
+        self.boundary = ExecutionBoundary(until)
         resume = resume_state or {}
         self.run_id = run_id or str(resume.get("run_id") or f"run_{uuid.uuid4().hex[:12]}")
         self.attempts = {str(k): int(v) for k, v in (resume.get("attempts") or {}).items()}
@@ -1005,6 +1040,7 @@ class AutopilotController:
         payload: dict[str, Any] = {
             "status": status,
             "run_id": self.run_id,
+            "execution_boundary": self.boundary.value,
             "steps_completed": self.steps_completed if steps is None else steps,
             "attempts": dict(self.attempts),
             "diagnoses": dict(self.diagnoses),
@@ -1074,6 +1110,13 @@ class AutopilotController:
             if command == "decision" or action.get("role") == "human":
                 self.steps_completed = step
                 result = self._checkpoint("paused", action=action, steps=step)
+                result["steps"] = step
+                return result
+            if self.boundary.reached(state, action):
+                self.steps_completed = step
+                result = self._checkpoint(
+                    "checkpoint", action=action, reason="execution_boundary_reached", steps=step,
+                )
                 result["steps"] = step
                 return result
 
