@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -31,6 +32,37 @@ CODEX_VERSION = re.compile(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)")
 def _version_tuple(value: str | None) -> tuple[int, int, int] | None:
     match = CODEX_VERSION.search(str(value or ""))
     return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _env_argv(name: str) -> list[str]:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return []
+    try:
+        return shlex.split(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} is not valid shell-style argv: {exc}") from exc
+
+
+def _resolve_codex_executable() -> tuple[str | None, str | None]:
+    override = os.environ.get("DEVFLOW_CODEX_BIN", "").strip()
+    if not override:
+        return shutil.which("codex"), None
+
+    expanded = os.path.expandvars(os.path.expanduser(override))
+    has_separator = os.path.sep in expanded or bool(
+        os.path.altsep and os.path.altsep in expanded
+    )
+    if has_separator:
+        candidate = Path(expanded)
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate), None
+        return None, f"DEVFLOW_CODEX_BIN is not an executable file: {candidate}"
+
+    resolved = shutil.which(expanded)
+    if resolved:
+        return resolved, None
+    return None, (f"DEVFLOW_CODEX_BIN is not executable or not on PATH: {override}")
 
 
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -547,6 +579,9 @@ class CapabilityRegistry:
         codex_path: str | None = None,
         codex_version: str | None = None,
         codex_version_error: str | None = None,
+        codex_launch_error: str | None = None,
+        codex_wrapper: list[str] | None = None,
+        codex_args: list[str] | None = None,
     ):
         self.model_registry = (
             models
@@ -560,6 +595,9 @@ class CapabilityRegistry:
         self.codex_version = codex_version
         self.codex_version_tuple = _version_tuple(codex_version)
         self.codex_version_error = codex_version_error
+        self.codex_launch_error = codex_launch_error
+        self.codex_wrapper = list(codex_wrapper or [])
+        self.codex_args = list(codex_args or [])
         self.unavailable: dict[tuple[str, str], str] = {}
 
     @classmethod
@@ -582,9 +620,16 @@ class CapabilityRegistry:
 
     @classmethod
     def detect(cls, policy: dict[str, Any]) -> CapabilityRegistry:
-        codex = shutil.which("codex")
+        codex, launch_error = _resolve_codex_executable()
         codex_version = None
         version_error = None
+        codex_wrapper: list[str] = []
+        codex_args: list[str] = []
+        try:
+            codex_wrapper = _env_argv("DEVFLOW_CODEX_WRAPPER")
+            codex_args = _env_argv("DEVFLOW_CODEX_ARGS")
+        except ValueError as exc:
+            launch_error = "; ".join(part for part in (launch_error, str(exc)) if part)
         if codex:
             try:
                 proc = subprocess.run(
@@ -615,10 +660,13 @@ class CapabilityRegistry:
         return cls(
             ModelRegistry.from_policy(policy),
             native_models=native,
-            exec_available=bool(codex and codex_version),
+            exec_available=bool(codex and codex_version and not launch_error),
             codex_path=codex,
             codex_version=codex_version,
             codex_version_error=version_error,
+            codex_launch_error=launch_error,
+            codex_wrapper=codex_wrapper,
+            codex_args=codex_args,
         )
 
     def model_id(self, model: str) -> str:
@@ -708,6 +756,9 @@ class CapabilityRegistry:
                 "path": self.codex_path,
                 "version": self.codex_version,
                 "version_error": self.codex_version_error,
+                "launch_error": self.codex_launch_error,
+                "wrapper": list(self.codex_wrapper),
+                "args": list(self.codex_args),
                 "model_compatibility": {
                     self.model_id(alias): {
                         "compatible": self.codex_compatible(alias),
@@ -1135,15 +1186,25 @@ class RuntimeLedger:
 
 
 class CodexExecBackend:
-    def __init__(self, executable: str = "codex"):
+    def __init__(
+        self,
+        executable: str = "codex",
+        *,
+        wrapper: list[str] | None = None,
+        global_args: list[str] | None = None,
+    ):
         self.executable = executable
+        self.wrapper = list(wrapper or [])
+        self.global_args = list(global_args or [])
 
     def build_command(self, repo_root: Path, spec: dict[str, Any]) -> list[str]:
         model = spec["model"]["selected"]
         effort = spec["model"]["reasoning_effort"]
         sandbox = spec.get("execution", {}).get("sandbox", "workspace-write")
         return [
+            *self.wrapper,
             self.executable,
+            *self.global_args,
             "exec",
             "--ephemeral",
             "--json",
@@ -1291,7 +1352,11 @@ class DispatchBroker:
     def __init__(self, repo_root: Path, capabilities: CapabilityRegistry):
         self.repo_root = repo_root
         self.backends = {
-            "codex_exec": CodexExecBackend(capabilities.codex_path or "codex"),
+            "codex_exec": CodexExecBackend(
+                capabilities.codex_path or "codex",
+                wrapper=capabilities.codex_wrapper,
+                global_args=capabilities.codex_args,
+            ),
             "native_agent": NativeAgentBackend(),
         }
 
@@ -1395,6 +1460,7 @@ class AutopilotController:
             if str(v).strip()
         }
         self.steps_completed = int(resume.get("steps_completed") or 0)
+        self.last_route_error: str | None = None
         if self.capabilities:
             self.capabilities.restore_unavailable(resume.get("unavailable_candidates"))
 
@@ -1427,6 +1493,7 @@ class AutopilotController:
         *,
         action: dict[str, Any] | None = None,
         reason: str | None = None,
+        detail: str | None = None,
         steps: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -1446,6 +1513,8 @@ class AutopilotController:
         }
         if reason:
             payload["reason"] = reason
+        if detail:
+            payload["detail"] = detail
         if self.ledger:
             self.ledger.write_controller(payload)
         return payload
@@ -1497,9 +1566,11 @@ class AutopilotController:
     def _route(
         self, action: dict[str, Any], state: dict[str, Any], attempt: int
     ) -> dict[str, Any] | None:
+        self.last_route_error = None
         try:
             return self.route_fn(action, state, attempt)
-        except Exception:
+        except Exception as exc:
+            self.last_route_error = f"{type(exc).__name__}: {exc}"
             return None
 
     def run(self) -> dict[str, Any]:
@@ -1543,7 +1614,11 @@ class AutopilotController:
             if spec is None:
                 self.steps_completed = step
                 result = self._checkpoint(
-                    "blocked", action=action, reason="route_unavailable", steps=step
+                    "blocked",
+                    action=action,
+                    reason="route_unavailable",
+                    detail=self.last_route_error,
+                    steps=step,
                 )
                 result["steps"] = step
                 return result

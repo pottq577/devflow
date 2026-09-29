@@ -181,16 +181,21 @@ def collection_errors(doc: Any, endpoints: Any, api_note: Any) -> list[str]:
                 errors.append("Postman auth attribute requires a key")
                 continue
             val = entry.get("value", "")
-            if entry["key"] in {
-                "token",
-                "password",
-                "secret",
-                "accessKey",
-                "secretKey",
-                "accessToken",
-                "clientSecret",
-                "value",
-            } and val and (not isinstance(val, str) or not VARIABLE.fullmatch(val)):
+            if (
+                entry["key"]
+                in {
+                    "token",
+                    "password",
+                    "secret",
+                    "accessKey",
+                    "secretKey",
+                    "accessToken",
+                    "clientSecret",
+                    "value",
+                }
+                and val
+                and (not isinstance(val, str) or not VARIABLE.fullmatch(val))
+            ):
                 errors.append(
                     "Postman credential auth values must be variable references"
                 )

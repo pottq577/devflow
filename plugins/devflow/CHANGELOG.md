@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Remove the accidental `typing_extensions` runtime dependency introduced by lint-only cleanup so the documented Python 3.10+ and PyYAML-only runtime contract remains sufficient.
+- Harden Codex backend discovery with an explicit `DEVFLOW_CODEX_BIN` override and separate optional `DEVFLOW_CODEX_WRAPPER` / `DEVFLOW_CODEX_ARGS` launch configuration, while surfacing resolved launch metadata through `autopilot capabilities`.
+- Preserve the concrete routing exception in blocked controller checkpoints instead of collapsing every routing failure to an opaque `route_unavailable`, and lock critical Luna `max` execution to fail closed when that executor is unavailable.
+
 ## 0.9.1 - 2026-09-29 - Cost-aware routing and detached delivery
 
 - Support Codex-style detached linked worktrees in delivery lifecycle handling by capturing the target branch at `work start`, preserving it through completion, and allowing final checks/refresh while the target branch remains an ancestor of isolated delivered commits.

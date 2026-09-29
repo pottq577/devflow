@@ -310,6 +310,19 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertEqual(spec["effective_risk"], "critical")
         self.assert_route(spec, "fast", "max")
 
+    def test_critical_worker_fails_closed_when_luna_is_unavailable(self):
+        self.caps.mark_unavailable("fast", "codex_exec", "model unavailable")
+        with self.assertRaisesRegex(RuntimeError, "profile=economy effort=max"):
+            self.router.resolve(
+                {
+                    "command": "run",
+                    "scope": "phase",
+                    "item_kind": "implementation",
+                    "item_risk": "critical",
+                },
+                {"risk_profile": "medium"},
+            )
+
     def test_unavailable_model_backend_pair_falls_back_to_next_candidate(self):
         self.caps.mark_unavailable("fast", "codex_exec", "model unavailable")
         spec = self.router.resolve(
@@ -389,6 +402,9 @@ class AutopilotRoutingTests(unittest.TestCase):
             codex.write_text("#!/bin/sh\necho 'codex-cli 0.143.9'\n", encoding="utf-8")
             codex.chmod(0o755)
             old_path = os.environ.get("PATH", "")
+            old_bin = os.environ.pop("DEVFLOW_CODEX_BIN", None)
+            old_wrapper = os.environ.pop("DEVFLOW_CODEX_WRAPPER", None)
+            old_args = os.environ.pop("DEVFLOW_CODEX_ARGS", None)
             old_runner = os.environ.pop("DEVFLOW_NATIVE_AGENT_RUNNER", None)
             old_models = os.environ.pop("DEVFLOW_NATIVE_AGENT_MODELS", None)
             try:
@@ -396,6 +412,12 @@ class AutopilotRoutingTests(unittest.TestCase):
                 caps = self.ap.CapabilityRegistry.detect(self.policy)
             finally:
                 os.environ["PATH"] = old_path
+                if old_bin is not None:
+                    os.environ["DEVFLOW_CODEX_BIN"] = old_bin
+                if old_wrapper is not None:
+                    os.environ["DEVFLOW_CODEX_WRAPPER"] = old_wrapper
+                if old_args is not None:
+                    os.environ["DEVFLOW_CODEX_ARGS"] = old_args
                 if old_runner is not None:
                     os.environ["DEVFLOW_NATIVE_AGENT_RUNNER"] = old_runner
                 if old_models is not None:
@@ -404,6 +426,47 @@ class AutopilotRoutingTests(unittest.TestCase):
             self.assertTrue(caps.exec_available)
             self.assertIsNone(caps.backend_for("frontier", ["codex_exec"]))
             self.assertIsNone(caps.backend_for("balanced", ["codex_exec"]))
+
+    def test_detect_prefers_explicit_codex_bin_when_path_has_no_codex(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as td:
+            codex = Path(td) / "explicit-codex"
+            codex.write_text("#!/bin/sh\necho 'codex-cli 0.158.0'\n", encoding="utf-8")
+            codex.chmod(0o755)
+            old_path = os.environ.get("PATH", "")
+            old_bin = os.environ.get("DEVFLOW_CODEX_BIN")
+            try:
+                os.environ["PATH"] = ""
+                os.environ["DEVFLOW_CODEX_BIN"] = str(codex)
+                caps = self.ap.CapabilityRegistry.detect(self.policy)
+            finally:
+                os.environ["PATH"] = old_path
+                if old_bin is None:
+                    os.environ.pop("DEVFLOW_CODEX_BIN", None)
+                else:
+                    os.environ["DEVFLOW_CODEX_BIN"] = old_bin
+            self.assertTrue(caps.exec_available)
+            self.assertEqual(caps.codex_path, str(codex))
+            self.assertEqual(caps.codex_version, "0.158.0")
+
+    def test_invalid_explicit_codex_bin_fails_closed(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "missing-codex"
+            old_bin = os.environ.get("DEVFLOW_CODEX_BIN")
+            try:
+                os.environ["DEVFLOW_CODEX_BIN"] = str(missing)
+                caps = self.ap.CapabilityRegistry.detect(self.policy)
+            finally:
+                if old_bin is None:
+                    os.environ.pop("DEVFLOW_CODEX_BIN", None)
+                else:
+                    os.environ["DEVFLOW_CODEX_BIN"] = old_bin
+            self.assertFalse(caps.exec_available)
+            self.assertIsNone(caps.codex_path)
+            self.assertIn("DEVFLOW_CODEX_BIN", caps.codex_launch_error)
 
     def test_capabilities_keep_legacy_model_keys_and_add_alias_registry(self):
         doc = self.caps.as_dict()
@@ -468,6 +531,29 @@ class AutopilotRuntimeTests(unittest.TestCase):
         self.assertIn("fixture-fast-model", cmd)
         self.assertIn('model_reasoning_effort="xhigh"', joined)
         self.assertIn("--json", cmd)
+
+    def test_codex_exec_command_supports_wrapper_and_global_args(self):
+        backend = self.ap.CodexExecBackend(
+            "/opt/codex",
+            wrapper=["headroom", "wrap"],
+            global_args=["--code-memory", "none"],
+        )
+        spec = {
+            "model": {"selected": "fixture-fast-model", "reasoning_effort": "high"},
+            "execution": {"sandbox": "workspace-write"},
+        }
+        cmd = backend.build_command(Path("/repo"), spec)
+        self.assertEqual(
+            cmd[:6],
+            [
+                "headroom",
+                "wrap",
+                "/opt/codex",
+                "--code-memory",
+                "none",
+                "exec",
+            ],
+        )
 
     def test_context_capsule_contains_role_contract_and_packet_without_parent_history(
         self,
@@ -1075,6 +1161,36 @@ class AutopilotRuntimeTests(unittest.TestCase):
                 for line in (Path(td) / "dispatch.jsonl").read_text().splitlines()
             ]
             self.assertEqual(rows[-1]["receipt"]["failure_kind"], "timeout")
+
+    def test_controller_preserves_route_failure_detail(self):
+        state = {
+            "risk_profile": "medium",
+            "next_action": {
+                "command": "run",
+                "role": "executor",
+                "scope": "phase",
+                "work_item": "P01-I01",
+            },
+        }
+
+        def route(_action, _state, _attempt):
+            raise RuntimeError(
+                "No available model/backend for profile=economy effort=max"
+            )
+
+        controller = self.ap.AutopilotController(
+            lambda: state,
+            lambda _action: "packet",
+            route,
+            lambda _spec, _packet: {"status": "success", "exit_code": 0},
+            None,
+            1,
+        )
+        result = controller.run()
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "route_unavailable")
+        self.assertIn("No available model/backend", result["detail"])
+        self.assertIn("profile=economy effort=max", result["detail"])
 
     def test_controller_capability_failure_marks_pair_and_retries_without_progress_penalty(
         self,
