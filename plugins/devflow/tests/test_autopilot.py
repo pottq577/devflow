@@ -486,9 +486,7 @@ class AutopilotRoutingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             codex = Path(td) / "codex"
-            codex.write_text(
-                "#!/bin/sh\necho 'codex-cli 0.158.0'\n", encoding="utf-8"
-            )
+            codex.write_text("#!/bin/sh\necho 'codex-cli 0.158.0'\n", encoding="utf-8")
             codex.chmod(0o755)
             old_path = os.environ.get("PATH", "")
             old_bin = os.environ.pop("DEVFLOW_CODEX_BIN", None)
@@ -505,9 +503,7 @@ class AutopilotRoutingTests(unittest.TestCase):
                     os.environ.pop("OPENAI_BASE_URL", None)
                 else:
                     os.environ["OPENAI_BASE_URL"] = old_base_url
-            self.assertEqual(
-                caps.codex_openai_base_url, "http://127.0.0.1:8787/v1"
-            )
+            self.assertEqual(caps.codex_openai_base_url, "http://127.0.0.1:8787/v1")
             self.assertEqual(
                 caps.as_dict()["codex_exec"]["transport"],
                 "inherited_openai_base_url",

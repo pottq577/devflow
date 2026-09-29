@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
+from typing_extensions import Self
 
 MODEL_CAPABILITY_FAILURE = re.compile(
     r"(?:unknown|unsupported|invalid|unavailable|not available|not found|no access|access denied).*model|"
@@ -422,7 +423,7 @@ class DomainLease:
             except FileNotFoundError:
                 pass
 
-    def __enter__(self) -> "DomainLease":
+    def __enter__(self) -> Self:
         return self.acquire()
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -1016,9 +1017,7 @@ class RouteEngine:
 
         legacy_sandbox = cfg.get("sandbox")
         if legacy_sandbox is not None:
-            permissions = (
-                "read-only" if legacy_sandbox == "read-only" else "inherit"
-            )
+            permissions = "read-only" if legacy_sandbox == "read-only" else "inherit"
         else:
             permissions = str(cfg.get("permissions") or "inherit")
         if permissions not in {"inherit", "read-only"}:
@@ -1231,9 +1230,7 @@ class CodexExecBackend:
     def build_command(self, repo_root: Path, spec: dict[str, Any]) -> list[str]:
         model = spec["model"]["selected"]
         effort = spec["model"]["reasoning_effort"]
-        permissions = str(
-            spec.get("execution", {}).get("permissions") or "inherit"
-        )
+        permissions = str(spec.get("execution", {}).get("permissions") or "inherit")
         if permissions not in {"inherit", "read-only"}:
             raise ValueError(f"Unsupported Codex permission mode: {permissions}")
 
@@ -1821,9 +1818,7 @@ class AutopilotController:
                         action=action,
                         reason="timeout_diagnosis_failed",
                         detail=(
-                            _failure_text(receipt)
-                            or failure_kind
-                            or "diagnosis failed"
+                            _failure_text(receipt) or failure_kind or "diagnosis failed"
                         ),
                         failure_kind=failure_kind or "execution_failed",
                         steps=self.steps_completed,
