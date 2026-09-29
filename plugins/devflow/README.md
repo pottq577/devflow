@@ -10,8 +10,8 @@ The point is that a fresh session reconstructs what to do next by running one co
 
 ## Commands and skills
 
-| Skill    | Role      | Does                                                          |
-| -------- | --------- | ------------------------------------------------------------- |
+| Skill       | Role            | Does                                                          |
+| ----------- | --------------- | ------------------------------------------------------------- |
 | `plan`      | Architect       | Repository-grounded architecture and WORK generation          |
 | `run`       | Executor        | One WORK item, or the computed whole-work finalization action |
 | `audit`     | Auditor         | Independent plan, work, phase, and integration verification   |
@@ -92,10 +92,11 @@ Work and phase audit render include scope-linked WORK and origin context.
 Integration render supplies the current PLAN, phase manifest, audit paths, and integration WORK without inlining every phase WORK body.
 This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
 
-
 ## Autonomous `/goal` routing (0.9.2 / protocol 1.8.0)
 
-DevFlow has two equivalent lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Autopilot executes the same `STATE -> compute_next_action()` result until completion, a human or blocker gate, or an explicit execution boundary.
+DevFlow has two lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Both consume the same `STATE -> compute_next_action()` result and stop at completion, a human or blocker gate, or an explicit execution boundary.
+
+Inside a Codex host session, `/goal` uses host-native sub-agents. The Goal Supervisor asks `scripts/devflow_host.py` for one deterministic dispatch at a time, then passes the routed model, reasoning effort, and compact repository-recovery message to `spawn_agent`. The child renders the authoritative packet from the repository instead of receiving a copied PRD/PLAN/WORK packet from a nested `codex exec` session.
 
 ```bash
 devflow autopilot capabilities
@@ -106,7 +107,9 @@ devflow autopilot status billing
 devflow autopilot resume billing [--until plan|implementation|complete]
 ```
 
-For a new `/goal`, the supervisor stores approved requirements verbatim and calls `autopilot bootstrap`. Execution controls such as `--until` stay outside the requirements file. The Architect profile writes the PRD before `devflow init`. Routing policy lives in `core/routing/default.yaml`, while concrete model bindings and capabilities live in `core/routing/models.yaml`. Projects can override them independently with `.devflow/routing.yaml` and `.devflow/models.yaml`.
+For a new hosted `/goal`, the supervisor stores approved requirements verbatim, prepares a host-native Architect bootstrap dispatch, then validates the generated PRD before `devflow init`. Execution controls such as `--until` stay outside the requirements file. Routing policy lives in `core/routing/default.yaml`, while concrete model bindings and capabilities live in `core/routing/models.yaml`. Projects can override them independently with `.devflow/routing.yaml` and `.devflow/models.yaml`.
+
+Unless a paragraph below says otherwise, timeout, token-budget, dispatch-ledger, mutating-lease, and `autopilot status` behavior describes the standalone controller. The host-native Goal path delegates child runtime and cancellation to Codex, keeps retry/scout/diagnosis state in the active supervisor session, and reads lifecycle authority through `devflow status`.
 
 Use `--until plan` to finish planning, including required plan review and remediation, then stop before ordinary phase delivery. Use `--until implementation` to finish phase WORK and required work/phase review gates, then stop before integration or whole-delivery finalization. `--until complete` is the default and preserves the existing full lifecycle. Staged boundaries apply only to `delivery` workflows.
 

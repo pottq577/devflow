@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a Codex-hosted `/goal` driver that delegates routed specialists through native `spawn_agent` calls instead of nesting `codex exec` under the parent session.
+- Keep model and reasoning-effort routing deterministic while sending compact repository-recovery messages. Each child renders the authoritative DevFlow packet from disk, which avoids duplicating large runtime packets in a second Codex session.
+- Keep `autopilot start`, `autopilot resume`, and `autopilot bootstrap` as standalone compatibility drivers. Hosted Goal execution no longer depends on their blocking subprocess timeout path.
+- Add host-dispatch regression coverage for routed models, execution boundaries, packet recovery, bootstrap finalization, and operation without a Codex subprocess backend. Protocol version remains `1.8.0` because lifecycle artifacts and transitions are unchanged.
+
 ## 0.9.2 - 2026-09-29 - Permission inheritance and resilient dispatch
 
 - Remove the accidental `typing_extensions` runtime dependency so the documented Python 3.10+ and PyYAML-only runtime contract remains sufficient.
