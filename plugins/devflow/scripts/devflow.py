@@ -5254,6 +5254,7 @@ def autopilot_command(args: argparse.Namespace) -> int:
         total_tokens=args.token_budget,
         state=prior.get("budget") if prior else None,
     )
+    retries = policy["escalation"]["retries"]
     controller = autopilot.AutopilotController(
         status_fn,
         render_fn,
@@ -5261,7 +5262,9 @@ def autopilot_command(args: argparse.Namespace) -> int:
         dispatch_fn,
         ledger,
         max_steps=args.max_steps,
-        max_no_progress=int(policy["escalation"]["retries"]["max_no_progress"]),
+        max_no_progress=int(retries["max_no_progress"]),
+        max_consecutive_timeouts=int(retries.get("max_consecutive_timeouts", 2)),
+        timeout_diagnose_at=int(retries.get("timeout_diagnose_at", 1)),
         resume_state=prior,
         capabilities=capabilities,
         budget=budget,

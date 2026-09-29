@@ -104,6 +104,22 @@ class AutopilotRoutingTests(unittest.TestCase):
             self.assertEqual(spec["model"]["alias"], "fast")
             self.assertEqual(spec["model"]["selected"], replacement)
 
+    def test_legacy_sandbox_override_maps_to_permission_profile(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = root / ".devflow"
+            config.mkdir()
+            (config / "routing.yaml").write_text(
+                "roles:\n  worker:\n    sandbox: read-only\n", encoding="utf-8"
+            )
+            policy = self.ap.load_policy(PLUGIN, root)
+            caps = self.ap.CapabilityRegistry.assumed(policy, exec_available=True)
+            spec = self.ap.RouteEngine(policy, caps).resolve(
+                {"command": "run", "scope": "phase", "item_kind": "implementation"},
+                {"risk_profile": "medium"},
+            )
+            self.assertEqual(spec["execution"]["permissions"], "read-only")
+
     def test_legacy_worker_retry_override_replaces_staged_defaults(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -403,8 +419,7 @@ class AutopilotRoutingTests(unittest.TestCase):
             codex.chmod(0o755)
             old_path = os.environ.get("PATH", "")
             old_bin = os.environ.pop("DEVFLOW_CODEX_BIN", None)
-            old_wrapper = os.environ.pop("DEVFLOW_CODEX_WRAPPER", None)
-            old_args = os.environ.pop("DEVFLOW_CODEX_ARGS", None)
+            old_base_url = os.environ.pop("OPENAI_BASE_URL", None)
             old_runner = os.environ.pop("DEVFLOW_NATIVE_AGENT_RUNNER", None)
             old_models = os.environ.pop("DEVFLOW_NATIVE_AGENT_MODELS", None)
             try:
@@ -414,10 +429,8 @@ class AutopilotRoutingTests(unittest.TestCase):
                 os.environ["PATH"] = old_path
                 if old_bin is not None:
                     os.environ["DEVFLOW_CODEX_BIN"] = old_bin
-                if old_wrapper is not None:
-                    os.environ["DEVFLOW_CODEX_WRAPPER"] = old_wrapper
-                if old_args is not None:
-                    os.environ["DEVFLOW_CODEX_ARGS"] = old_args
+                if old_base_url is not None:
+                    os.environ["OPENAI_BASE_URL"] = old_base_url
                 if old_runner is not None:
                     os.environ["DEVFLOW_NATIVE_AGENT_RUNNER"] = old_runner
                 if old_models is not None:
@@ -468,6 +481,38 @@ class AutopilotRoutingTests(unittest.TestCase):
             self.assertIsNone(caps.codex_path)
             self.assertIn("DEVFLOW_CODEX_BIN", caps.codex_launch_error)
 
+    def test_detect_inherits_openai_base_url_for_child_codex_transport(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as td:
+            codex = Path(td) / "codex"
+            codex.write_text(
+                "#!/bin/sh\necho 'codex-cli 0.158.0'\n", encoding="utf-8"
+            )
+            codex.chmod(0o755)
+            old_path = os.environ.get("PATH", "")
+            old_bin = os.environ.pop("DEVFLOW_CODEX_BIN", None)
+            old_base_url = os.environ.get("OPENAI_BASE_URL")
+            try:
+                os.environ["PATH"] = td + os.pathsep + old_path
+                os.environ["OPENAI_BASE_URL"] = "http://127.0.0.1:8787/v1"
+                caps = self.ap.CapabilityRegistry.detect(self.policy)
+            finally:
+                os.environ["PATH"] = old_path
+                if old_bin is not None:
+                    os.environ["DEVFLOW_CODEX_BIN"] = old_bin
+                if old_base_url is None:
+                    os.environ.pop("OPENAI_BASE_URL", None)
+                else:
+                    os.environ["OPENAI_BASE_URL"] = old_base_url
+            self.assertEqual(
+                caps.codex_openai_base_url, "http://127.0.0.1:8787/v1"
+            )
+            self.assertEqual(
+                caps.as_dict()["codex_exec"]["transport"],
+                "inherited_openai_base_url",
+            )
+
     def test_capabilities_keep_legacy_model_keys_and_add_alias_registry(self):
         doc = self.caps.as_dict()
         fast_model = self.models["fast"]
@@ -490,6 +535,7 @@ class AutopilotRoutingTests(unittest.TestCase):
             self.policy["context"]["native_fork_turns"],
         )
         self.assertFalse(spec["execution"]["allow_recursive_delegation"])
+        self.assertEqual(spec["execution"]["permissions"], "inherit")
         self.assertEqual(spec["model"]["alias"], "frontier")
         self.assertEqual(
             spec["execution"]["model_multi_agent"],
@@ -518,11 +564,11 @@ class AutopilotRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.ap = load_module()
 
-    def test_codex_exec_command_contains_model_effort_and_isolated_session(self):
+    def test_codex_exec_command_contains_model_effort_and_inherits_permissions(self):
         backend = self.ap.CodexExecBackend("codex")
         spec = {
             "model": {"selected": "fixture-fast-model", "reasoning_effort": "xhigh"},
-            "execution": {"sandbox": "workspace-write"},
+            "execution": {"permissions": "inherit"},
         }
         cmd = backend.build_command(Path("/repo"), spec)
         joined = " ".join(cmd)
@@ -531,29 +577,31 @@ class AutopilotRuntimeTests(unittest.TestCase):
         self.assertIn("fixture-fast-model", cmd)
         self.assertIn('model_reasoning_effort="xhigh"', joined)
         self.assertIn("--json", cmd)
+        self.assertNotIn("--sandbox", cmd)
+        self.assertNotIn('default_permissions=":read-only"', cmd)
 
-    def test_codex_exec_command_supports_wrapper_and_global_args(self):
+    def test_codex_exec_command_reuses_inherited_openai_base_url(self):
         backend = self.ap.CodexExecBackend(
-            "/opt/codex",
-            wrapper=["headroom", "wrap"],
-            global_args=["--code-memory", "none"],
+            "/opt/codex", openai_base_url="http://127.0.0.1:8787/v1"
         )
         spec = {
             "model": {"selected": "fixture-fast-model", "reasoning_effort": "high"},
-            "execution": {"sandbox": "workspace-write"},
+            "execution": {"permissions": "inherit"},
         }
         cmd = backend.build_command(Path("/repo"), spec)
-        self.assertEqual(
-            cmd[:6],
-            [
-                "headroom",
-                "wrap",
-                "/opt/codex",
-                "--code-memory",
-                "none",
-                "exec",
-            ],
-        )
+        self.assertEqual(cmd[0:2], ["/opt/codex", "exec"])
+        self.assertIn('openai_base_url="http://127.0.0.1:8787/v1"', cmd)
+        self.assertNotIn("headroom", cmd)
+
+    def test_codex_exec_read_only_uses_permission_profile_not_legacy_sandbox(self):
+        backend = self.ap.CodexExecBackend("codex")
+        spec = {
+            "model": {"selected": "fixture-fast-model", "reasoning_effort": "high"},
+            "execution": {"permissions": "read-only"},
+        }
+        cmd = backend.build_command(Path("/repo"), spec)
+        self.assertIn('default_permissions=":read-only"', cmd)
+        self.assertNotIn("--sandbox", cmd)
 
     def test_context_capsule_contains_role_contract_and_packet_without_parent_history(
         self,
@@ -1144,7 +1192,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
                     "model": {"selected": "x", "reasoning_effort": "high"},
                     "execution": {
                         "backend": "codex_exec",
-                        "sandbox": "workspace-write",
+                        "permissions": "inherit",
                     },
                     "action": a,
                     "attempt": n,
@@ -1153,14 +1201,116 @@ class AutopilotRuntimeTests(unittest.TestCase):
                 ledger,
                 1,
                 max_no_progress=0,
+                max_consecutive_timeouts=1,
             )
             result = controller.run()
             self.assertEqual(result["status"], "blocked")
+            self.assertEqual(result["reason"], "consecutive_dispatch_timeouts")
+            self.assertEqual(controller.attempts, {})
             rows = [
                 json.loads(line)
                 for line in (Path(td) / "dispatch.jsonl").read_text().splitlines()
             ]
             self.assertEqual(rows[-1]["receipt"]["failure_kind"], "timeout")
+
+    def test_controller_timeout_enters_diagnosis_then_blocks_on_second_timeout(self):
+        state = {
+            "risk_profile": "medium",
+            "next_action": {
+                "command": "run",
+                "role": "executor",
+                "scope": "phase",
+                "work_item": "P01-I01",
+            },
+        }
+        roles = []
+
+        def route(action, _state, attempt):
+            role = action.get("_role_override") or "worker"
+            return {
+                "role": role,
+                "model": {"selected": f"fixture-{role}", "reasoning_effort": "high"},
+                "execution": {"backend": "codex_exec", "permissions": "inherit"},
+                "action": action,
+                "attempt": attempt,
+            }
+
+        def dispatch(spec, _prompt):
+            roles.append(spec["role"])
+            if spec["role"] == "diagnostician":
+                return {
+                    "status": "success",
+                    "exit_code": 0,
+                    "message": "inspect the stalled command before retrying",
+                }
+            return {
+                "status": "failed",
+                "exit_code": 124,
+                "failure_kind": "timeout",
+                "stderr": "dispatch timed out",
+            }
+
+        controller = self.ap.AutopilotController(
+            lambda: state,
+            lambda _action: "packet",
+            route,
+            dispatch,
+            None,
+            4,
+            max_no_progress=5,
+            max_consecutive_timeouts=2,
+            timeout_diagnose_at=1,
+        )
+        result = controller.run()
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "consecutive_dispatch_timeouts")
+        self.assertEqual(roles, ["worker", "diagnostician", "worker"])
+        self.assertEqual(controller.attempts, {})
+        self.assertEqual(next(iter(controller.timeout_counts.values())), 2)
+
+    def test_controller_infrastructure_failure_blocks_without_model_poisoning(self):
+        policy = self.ap.load_policy(PLUGIN, None)
+        caps = self.ap.CapabilityRegistry.assumed(policy, exec_available=True)
+        router = self.ap.RouteEngine(policy, caps)
+        state = {
+            "risk_profile": "medium",
+            "next_action": {
+                "command": "run",
+                "role": "executor",
+                "scope": "phase",
+                "work_item": "P01-I01",
+                "item_kind": "implementation",
+            },
+        }
+        calls = []
+
+        def dispatch(spec, _prompt):
+            calls.append(spec["model"]["alias"])
+            return {
+                "status": "failed",
+                "exit_code": 1,
+                "stderr": (
+                    'Network access to "raw.githubusercontent.com" was blocked: '
+                    "domain is not on the allowlist"
+                ),
+            }
+
+        controller = self.ap.AutopilotController(
+            lambda: state,
+            lambda _action: "packet",
+            router.resolve,
+            dispatch,
+            None,
+            4,
+            capabilities=caps,
+        )
+        result = controller.run()
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "dispatch_infrastructure_failure")
+        self.assertEqual(result["failure_kind"], "network_unavailable")
+        self.assertEqual(calls, ["fast"])
+        self.assertEqual(caps.unavailable_rows(), [])
+        self.assertEqual(controller.attempts, {})
 
     def test_controller_preserves_route_failure_detail(self):
         state = {
@@ -1297,6 +1447,28 @@ class AutopilotRuntimeTests(unittest.TestCase):
             }
         )
         self.assertEqual(receipt["failure_kind"], "capability_unavailable")
+
+    def test_infrastructure_failures_are_not_classified_as_model_capability(self):
+        cases = [
+            (
+                (
+                    'Network access to "raw.githubusercontent.com" was blocked: '
+                    "domain is not on the allowlist"
+                ),
+                "network_unavailable",
+            ),
+            ("Request denied for codex to run command", "permission_denied"),
+            (
+                "Error: Proxy dependencies not installed: No module named socksio",
+                "backend_unavailable",
+            ),
+        ]
+        for stderr, expected in cases:
+            with self.subTest(stderr=stderr):
+                receipt = self.ap.classify_receipt(
+                    {"status": "failed", "exit_code": 1, "stderr": stderr}
+                )
+                self.assertEqual(receipt["failure_kind"], expected)
 
     def test_ledger_appends_jsonl(self):
         with tempfile.TemporaryDirectory() as td:

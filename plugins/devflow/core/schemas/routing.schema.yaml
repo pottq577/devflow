@@ -11,6 +11,8 @@ notes:
   - escalation.retries.worker_stages is an ordered retry ladder keyed by minimum attempt; legacy retry fields remain readable; a project override using them replaces the bundled staged retry defaults.
   - Retry stages normally respect profile/effort floors; replace: true explicitly switches to an alternative model family after diagnosis.
   - Dispatcher capabilities choose execution backend after a model alias resolves to a concrete model.
+  - roles.permissions uses inherit for the caller's Codex permission profile and read-only for an explicit :read-only override; legacy sandbox keys remain readable for project overrides.
+  - Timeout retries are separate from semantic no-progress retries: timeout_diagnose_at schedules diagnosis without incrementing the no-progress attempt, and max_consecutive_timeouts blocks repeated timeouts for one action.
   - Budget total_tokens is a measured-usage pre-dispatch guard; percentage buckets may borrow only from reserve.
   - dispatch_reserve_tokens and scout_reserve_tokens must fit before a new dispatch starts; one in-flight backend run may report usage above its reservation.
   - orchestration.scout_before names Sol decision roles that receive one persisted Terra pre-analysis capsule per action when budget permits.

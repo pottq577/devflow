@@ -2,9 +2,15 @@
 
 ## Unreleased
 
-- Remove the accidental `typing_extensions` runtime dependency introduced by lint-only cleanup so the documented Python 3.10+ and PyYAML-only runtime contract remains sufficient.
-- Harden Codex backend discovery with an explicit `DEVFLOW_CODEX_BIN` override and separate optional `DEVFLOW_CODEX_WRAPPER` / `DEVFLOW_CODEX_ARGS` launch configuration, while surfacing resolved launch metadata through `autopilot capabilities`.
-- Preserve the concrete routing exception in blocked controller checkpoints instead of collapsing every routing failure to an opaque `route_unavailable`, and lock critical Luna `max` execution to fail closed when that executor is unavailable.
+## 0.9.2 - 2026-09-29 - Permission inheritance and resilient dispatch
+
+- Remove the accidental `typing_extensions` runtime dependency so the documented Python 3.10+ and PyYAML-only runtime contract remains sufficient.
+- Keep `DEVFLOW_CODEX_BIN` as the explicit raw Codex executable override, remove generic wrapper/argv composition, and reuse an inherited `OPENAI_BASE_URL` for child `codex exec` dispatches. This lets a parent Headroom session own one proxy lifecycle instead of nesting `headroom wrap` around every specialist.
+- Replace forced legacy `--sandbox` flags with permission-profile routing. Mutating roles inherit the caller's `default_permissions`, scout and diagnostician roles use `:read-only`, and legacy routing overrides remain readable.
+- Separate model capability failures from network, permission, backend, and wrapper failures. Only model-specific capability failures mark a model/backend pair unavailable; infrastructure failures block without contaminating later routing.
+- Separate timeout recovery from semantic no-progress retries. The first timeout schedules independent diagnosis without incrementing the no-progress attempt, while a second timeout for the same action blocks with persisted timeout telemetry instead of starting another 30-minute retry cycle.
+- Preserve the concrete routing exception in blocked controller checkpoints instead of collapsing every routing failure to an opaque `route_unavailable`, and keep critical Luna `max` execution fail-closed when that executor is unavailable.
+- Protocol version remains `1.8.0`; these changes affect runtime orchestration and plugin metadata only.
 
 ## 0.9.1 - 2026-09-29 - Cost-aware routing and detached delivery
 

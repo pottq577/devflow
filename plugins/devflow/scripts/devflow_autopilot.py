@@ -6,7 +6,6 @@ import datetime as dt
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import time
@@ -14,16 +13,40 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
-from typing_extensions import Self
 
-CAPABILITY_FAILURE = re.compile(
+MODEL_CAPABILITY_FAILURE = re.compile(
     r"(?:unknown|unsupported|invalid|unavailable|not available|not found|no access|access denied).*model|"
-    r"model.*(?:unknown|unsupported|invalid|unavailable|not available|not found|no access|access denied)|"
-    r"authentication|unauthorized|forbidden|rate.?limit|quota|http\s*(?:401|403|404|426|429)|"
-    r"adapter_eof|upgrade required|at\s+capacity|overloaded|temporarily unavailable|server(?:\s+is)?\s+busy",
+    r"model.*(?:unknown|unsupported|invalid|unavailable|not available|not found|no access|access denied|at\s+capacity|overloaded)|"
+    r"selected model is at capacity",
     re.IGNORECASE,
+)
+NETWORK_FAILURE = re.compile(
+    r"network access.*blocked|domain is not on the allowlist|blocked-by-allowlist|"
+    r"could not resolve host|name or service not known|temporary failure in name resolution|"
+    r"network is unreachable|connection refused|connection reset|proxy(?:\s+\w+)*\s+(?:failed|error)",
+    re.IGNORECASE,
+)
+PERMISSION_FAILURE = re.compile(
+    r"request denied|approval(?: request)? denied|permission denied|operation not permitted|"
+    r"sandbox.*(?:denied|blocked)|not allowed by policy",
+    re.IGNORECASE,
+)
+BACKEND_FAILURE = re.compile(
+    r"authentication|unauthorized|forbidden|rate.?limit|quota|http\s*(?:401|403|404|426|429)|"
+    r"no such command|proxy dependencies not installed|socksio|adapter_eof|"
+    r"upgrade required|overloaded|temporarily unavailable|server(?:\s+is)?\s+busy",
+    re.IGNORECASE,
+)
+INFRASTRUCTURE_FAILURE_KINDS = frozenset(
+    {
+        "backend_unavailable",
+        "network_unavailable",
+        "permission_denied",
+        "execution_exception",
+    }
 )
 
 CODEX_VERSION = re.compile(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)")
@@ -34,14 +57,14 @@ def _version_tuple(value: str | None) -> tuple[int, int, int] | None:
     return tuple(int(part) for part in match.groups()) if match else None
 
 
-def _env_argv(name: str) -> list[str]:
-    value = os.environ.get(name, "").strip()
+def _resolve_inherited_openai_base_url() -> tuple[str | None, str | None]:
+    value = os.environ.get("OPENAI_BASE_URL", "").strip()
     if not value:
-        return []
-    try:
-        return shlex.split(value)
-    except ValueError as exc:
-        raise ValueError(f"{name} is not valid shell-style argv: {exc}") from exc
+        return None, None
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None, "OPENAI_BASE_URL must be an absolute HTTP(S) URL"
+    return value, None
 
 
 def _resolve_codex_executable() -> tuple[str | None, str | None]:
@@ -399,7 +422,7 @@ class DomainLease:
             except FileNotFoundError:
                 pass
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "DomainLease":
         return self.acquire()
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -580,8 +603,7 @@ class CapabilityRegistry:
         codex_version: str | None = None,
         codex_version_error: str | None = None,
         codex_launch_error: str | None = None,
-        codex_wrapper: list[str] | None = None,
-        codex_args: list[str] | None = None,
+        codex_openai_base_url: str | None = None,
     ):
         self.model_registry = (
             models
@@ -596,8 +618,7 @@ class CapabilityRegistry:
         self.codex_version_tuple = _version_tuple(codex_version)
         self.codex_version_error = codex_version_error
         self.codex_launch_error = codex_launch_error
-        self.codex_wrapper = list(codex_wrapper or [])
-        self.codex_args = list(codex_args or [])
+        self.codex_openai_base_url = codex_openai_base_url
         self.unavailable: dict[tuple[str, str], str] = {}
 
     @classmethod
@@ -621,15 +642,13 @@ class CapabilityRegistry:
     @classmethod
     def detect(cls, policy: dict[str, Any]) -> CapabilityRegistry:
         codex, launch_error = _resolve_codex_executable()
+        openai_base_url, base_url_error = _resolve_inherited_openai_base_url()
+        if base_url_error:
+            launch_error = "; ".join(
+                part for part in (launch_error, base_url_error) if part
+            )
         codex_version = None
         version_error = None
-        codex_wrapper: list[str] = []
-        codex_args: list[str] = []
-        try:
-            codex_wrapper = _env_argv("DEVFLOW_CODEX_WRAPPER")
-            codex_args = _env_argv("DEVFLOW_CODEX_ARGS")
-        except ValueError as exc:
-            launch_error = "; ".join(part for part in (launch_error, str(exc)) if part)
         if codex:
             try:
                 proc = subprocess.run(
@@ -665,8 +684,7 @@ class CapabilityRegistry:
             codex_version=codex_version,
             codex_version_error=version_error,
             codex_launch_error=launch_error,
-            codex_wrapper=codex_wrapper,
-            codex_args=codex_args,
+            codex_openai_base_url=openai_base_url,
         )
 
     def model_id(self, model: str) -> str:
@@ -757,8 +775,11 @@ class CapabilityRegistry:
                 "version": self.codex_version,
                 "version_error": self.codex_version_error,
                 "launch_error": self.codex_launch_error,
-                "wrapper": list(self.codex_wrapper),
-                "args": list(self.codex_args),
+                "transport": (
+                    "inherited_openai_base_url"
+                    if self.codex_openai_base_url
+                    else "direct"
+                ),
                 "model_compatibility": {
                     self.model_id(alias): {
                         "compatible": self.codex_compatible(alias),
@@ -831,7 +852,7 @@ class ModelResolver:
             },
             "execution": {
                 "backend": backend,
-                "sandbox": decision["sandbox"],
+                "permissions": decision["permissions"],
                 "context_mode": context.get("default_mode", "capsule"),
                 "native_fork_turns": context.get("native_fork_turns", "none"),
                 "allow_recursive_delegation": recursive,
@@ -993,11 +1014,23 @@ class RouteEngine:
                         cfg["effort"], retries.get("worker_retry_effort", "xhigh")
                     )
 
+        legacy_sandbox = cfg.get("sandbox")
+        if legacy_sandbox is not None:
+            permissions = (
+                "read-only" if legacy_sandbox == "read-only" else "inherit"
+            )
+        else:
+            permissions = str(cfg.get("permissions") or "inherit")
+        if permissions not in {"inherit", "read-only"}:
+            raise ValueError(
+                f"Routing role {role!r} has unsupported permissions: {permissions}"
+            )
+
         return {
             "role": role,
             "profile": cfg["profile"],
             "effort": cfg["effort"],
-            "sandbox": cfg.get("sandbox", "workspace-write"),
+            "permissions": permissions,
             "effective_risk": risk,
         }
 
@@ -1190,34 +1223,47 @@ class CodexExecBackend:
         self,
         executable: str = "codex",
         *,
-        wrapper: list[str] | None = None,
-        global_args: list[str] | None = None,
+        openai_base_url: str | None = None,
     ):
         self.executable = executable
-        self.wrapper = list(wrapper or [])
-        self.global_args = list(global_args or [])
+        self.openai_base_url = openai_base_url
 
     def build_command(self, repo_root: Path, spec: dict[str, Any]) -> list[str]:
         model = spec["model"]["selected"]
         effort = spec["model"]["reasoning_effort"]
-        sandbox = spec.get("execution", {}).get("sandbox", "workspace-write")
-        return [
-            *self.wrapper,
+        permissions = str(
+            spec.get("execution", {}).get("permissions") or "inherit"
+        )
+        if permissions not in {"inherit", "read-only"}:
+            raise ValueError(f"Unsupported Codex permission mode: {permissions}")
+
+        command = [
             self.executable,
-            *self.global_args,
             "exec",
             "--ephemeral",
             "--json",
             "--cd",
             str(repo_root),
-            "--sandbox",
-            sandbox,
-            "--model",
-            model,
-            "--config",
-            f'model_reasoning_effort="{effort}"',
-            "-",
         ]
+        if permissions == "read-only":
+            command.extend(["--config", 'default_permissions=":read-only"'])
+        if self.openai_base_url:
+            command.extend(
+                [
+                    "--config",
+                    f"openai_base_url={json.dumps(self.openai_base_url)}",
+                ]
+            )
+        command.extend(
+            [
+                "--model",
+                model,
+                "--config",
+                f'model_reasoning_effort="{effort}"',
+                "-",
+            ]
+        )
+        return command
 
     def execute(
         self,
@@ -1308,11 +1354,17 @@ def classify_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
     if out.get("failure_kind"):
         return out
     text = _failure_text(out)
-    out["failure_kind"] = (
-        "capability_unavailable"
-        if CAPABILITY_FAILURE.search(text)
-        else "execution_failed"
-    )
+    if MODEL_CAPABILITY_FAILURE.search(text):
+        failure_kind = "capability_unavailable"
+    elif NETWORK_FAILURE.search(text):
+        failure_kind = "network_unavailable"
+    elif PERMISSION_FAILURE.search(text):
+        failure_kind = "permission_denied"
+    elif BACKEND_FAILURE.search(text):
+        failure_kind = "backend_unavailable"
+    else:
+        failure_kind = "execution_failed"
+    out["failure_kind"] = failure_kind
     return out
 
 
@@ -1331,7 +1383,7 @@ def exception_receipt(exc: BaseException) -> dict[str, Any]:
         return {
             "status": "failed",
             "exit_code": 127,
-            "failure_kind": "capability_unavailable",
+            "failure_kind": "backend_unavailable",
             "message": str(exc),
             "stderr": str(exc),
             "stdout": "",
@@ -1354,8 +1406,7 @@ class DispatchBroker:
         self.backends = {
             "codex_exec": CodexExecBackend(
                 capabilities.codex_path or "codex",
-                wrapper=capabilities.codex_wrapper,
-                global_args=capabilities.codex_args,
+                openai_base_url=capabilities.codex_openai_base_url,
             ),
             "native_agent": NativeAgentBackend(),
         }
@@ -1422,6 +1473,8 @@ class AutopilotController:
         max_steps: int = 100,
         max_no_progress: int = 3,
         *,
+        max_consecutive_timeouts: int = 2,
+        timeout_diagnose_at: int = 1,
         run_id: str | None = None,
         resume_state: dict[str, Any] | None = None,
         capabilities: CapabilityRegistry | None = None,
@@ -1437,6 +1490,12 @@ class AutopilotController:
         self.ledger = ledger
         self.max_steps = max_steps
         self.max_no_progress = max_no_progress
+        self.max_consecutive_timeouts = int(max_consecutive_timeouts)
+        self.timeout_diagnose_at = int(timeout_diagnose_at)
+        if self.max_consecutive_timeouts < 1:
+            raise ValueError("max_consecutive_timeouts must be positive")
+        if self.timeout_diagnose_at < 1:
+            raise ValueError("timeout_diagnose_at must be positive")
         self.capabilities = capabilities
         self.budget = budget
         self.scout_before = set(scout_before or set())
@@ -1459,6 +1518,14 @@ class AutopilotController:
             for k, v in (resume.get("scouts") or {}).items()
             if str(v).strip()
         }
+        self.timeout_counts = {
+            str(k): int(v) for k, v in (resume.get("timeout_counts") or {}).items()
+        }
+        self.timeout_diagnosis_pending = {
+            str(value)
+            for value in (resume.get("timeout_diagnosis_pending") or [])
+            if str(value).strip()
+        }
         self.steps_completed = int(resume.get("steps_completed") or 0)
         self.last_route_error: str | None = None
         if self.capabilities:
@@ -1479,6 +1546,13 @@ class AutopilotController:
             (right.get("model") or {}).get("selected") or ""
         )
 
+    def _clear_action_runtime(self, fingerprint: str) -> None:
+        self.attempts.pop(fingerprint, None)
+        self.diagnoses.pop(fingerprint, None)
+        self.scouts.pop(fingerprint, None)
+        self.timeout_counts.pop(fingerprint, None)
+        self.timeout_diagnosis_pending.discard(fingerprint)
+
     def _bounded_scout_digest(self, value: str) -> str:
         digest = value.strip()
         if len(digest) <= self.scout_max_chars:
@@ -1494,6 +1568,7 @@ class AutopilotController:
         action: dict[str, Any] | None = None,
         reason: str | None = None,
         detail: str | None = None,
+        failure_kind: str | None = None,
         steps: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -1504,6 +1579,8 @@ class AutopilotController:
             "attempts": dict(self.attempts),
             "diagnoses": dict(self.diagnoses),
             "scouts": dict(self.scouts),
+            "timeout_counts": dict(self.timeout_counts),
+            "timeout_diagnosis_pending": sorted(self.timeout_diagnosis_pending),
             "action": copy.deepcopy(action) if action is not None else None,
             "unavailable_candidates": self.capabilities.unavailable_rows()
             if self.capabilities
@@ -1515,6 +1592,8 @@ class AutopilotController:
             payload["reason"] = reason
         if detail:
             payload["detail"] = detail
+        if failure_kind:
+            payload["failure_kind"] = failure_kind
         if self.ledger:
             self.ledger.write_controller(payload)
         return payload
@@ -1610,7 +1689,12 @@ class AutopilotController:
 
             fp = self.fingerprint(action)
             attempt = self.attempts.get(fp, 0)
-            spec = self._route(action, state, attempt)
+            timeout_diagnosis = fp in self.timeout_diagnosis_pending
+            route_action = action
+            if timeout_diagnosis:
+                route_action = copy.deepcopy(action)
+                route_action["_role_override"] = "diagnostician"
+            spec = self._route(route_action, state, attempt)
             if spec is None:
                 self.steps_completed = step
                 result = self._checkpoint(
@@ -1641,6 +1725,8 @@ class AutopilotController:
                 result["steps"] = step
                 result["budget"] = self.budget.snapshot(bucket)
                 return result
+            if timeout_diagnosis:
+                spec["timeout_diagnosis"] = True
             if fp in self.diagnoses:
                 spec["diagnosis"] = self.diagnoses[fp]
             if fp in self.scouts:
@@ -1656,7 +1742,8 @@ class AutopilotController:
                 return result
 
             if (
-                spec.get("role") in self.scout_before
+                not timeout_diagnosis
+                and spec.get("role") in self.scout_before
                 and fp not in self.scouts
                 and (
                     self.budget is None
@@ -1706,9 +1793,113 @@ class AutopilotController:
                 return result
 
             receipt = self._dispatch(spec, packet, step=step, budget_bucket=bucket)
+            failure_kind = str(receipt.get("failure_kind") or "")
+            if failure_kind != "timeout" and not timeout_diagnosis:
+                self.timeout_counts.pop(fp, None)
+                self.timeout_diagnosis_pending.discard(fp)
             if self._mark_capability_failure(spec, receipt):
                 self.steps_completed = step + 1
                 self._checkpoint("running", action=action, steps=self.steps_completed)
+                continue
+            if failure_kind in INFRASTRUCTURE_FAILURE_KINDS:
+                self.steps_completed = step + 1
+                result = self._checkpoint(
+                    "blocked",
+                    action=action,
+                    reason="dispatch_infrastructure_failure",
+                    detail=_failure_text(receipt) or failure_kind,
+                    failure_kind=failure_kind,
+                    steps=self.steps_completed,
+                )
+                result["steps"] = self.steps_completed
+                return result
+            if timeout_diagnosis:
+                if receipt.get("status") != "success":
+                    self.steps_completed = step + 1
+                    result = self._checkpoint(
+                        "blocked",
+                        action=action,
+                        reason="timeout_diagnosis_failed",
+                        detail=(
+                            _failure_text(receipt)
+                            or failure_kind
+                            or "diagnosis failed"
+                        ),
+                        failure_kind=failure_kind or "execution_failed",
+                        steps=self.steps_completed,
+                    )
+                    result["steps"] = self.steps_completed
+                    return result
+                self.diagnoses[fp] = str(
+                    receipt.get("message")
+                    or receipt.get("stdout")
+                    or "diagnosis completed"
+                )
+                self.timeout_diagnosis_pending.discard(fp)
+                self.steps_completed = step + 1
+                self._checkpoint(
+                    "running",
+                    action=action,
+                    reason="timeout_diagnosis_completed",
+                    steps=self.steps_completed,
+                )
+                continue
+            if failure_kind == "timeout":
+                try:
+                    after = self.status_fn()
+                except Exception as exc:
+                    self.steps_completed = step + 1
+                    result = self._checkpoint(
+                        "blocked",
+                        action=action,
+                        reason=f"status_failed_after_dispatch: {exc}",
+                        steps=self.steps_completed,
+                    )
+                    result["steps"] = self.steps_completed
+                    return result
+                after_fp = self.fingerprint(after.get("next_action") or {})
+                if after_fp != fp:
+                    self._clear_action_runtime(fp)
+                    self.steps_completed = step + 1
+                    self._checkpoint(
+                        "running",
+                        action=after.get("next_action") or {},
+                        steps=self.steps_completed,
+                    )
+                    continue
+                timeout_count = self.timeout_counts.get(fp, 0) + 1
+                self.timeout_counts[fp] = timeout_count
+                if timeout_count >= self.max_consecutive_timeouts:
+                    self.steps_completed = step + 1
+                    result = self._checkpoint(
+                        "blocked",
+                        action=action,
+                        reason="consecutive_dispatch_timeouts",
+                        detail=(
+                            f"action timed out {timeout_count} times without lifecycle progress"
+                        ),
+                        failure_kind="timeout",
+                        steps=self.steps_completed,
+                    )
+                    result["steps"] = self.steps_completed
+                    return result
+                if (
+                    timeout_count >= self.timeout_diagnose_at
+                    and fp not in self.diagnoses
+                ):
+                    self.timeout_diagnosis_pending.add(fp)
+                self.steps_completed = step + 1
+                self._checkpoint(
+                    "running",
+                    action=action,
+                    reason="dispatch_timeout",
+                    detail=(
+                        f"timeout {timeout_count}/{self.max_consecutive_timeouts}; "
+                        "no-progress retry count unchanged"
+                    ),
+                    failure_kind="timeout",
+                    steps=self.steps_completed,
+                )
                 continue
             if (
                 spec.get("role") == "diagnostician"
@@ -1747,9 +1938,7 @@ class AutopilotController:
                     result["steps"] = self.steps_completed
                     return result
             else:
-                self.attempts.pop(fp, None)
-                self.diagnoses.pop(fp, None)
-                self.scouts.pop(fp, None)
+                self._clear_action_runtime(fp)
             self.steps_completed = step + 1
             self._checkpoint(
                 "running",

@@ -12,15 +12,15 @@ profiles:
     candidates: [frontier]
 profile_order: [economy, balanced, alternative, frontier, hardest]
 roles:
-  scout: { profile: balanced, effort: medium, sandbox: read-only }
-  architect: { profile: frontier, effort: high, sandbox: workspace-write }
-  worker: { profile: economy, effort: high, sandbox: workspace-write }
-  verifier: { profile: frontier, effort: high, sandbox: workspace-write }
-  auditor: { profile: frontier, effort: high, sandbox: workspace-write }
+  scout: { profile: balanced, effort: medium, permissions: read-only }
+  architect: { profile: frontier, effort: high, permissions: inherit }
+  worker: { profile: economy, effort: high, permissions: inherit }
+  verifier: { profile: frontier, effort: high, permissions: inherit }
+  auditor: { profile: frontier, effort: high, permissions: inherit }
   integration_auditor:
-    { profile: hardest, effort: xhigh, sandbox: workspace-write }
-  diagnostician: { profile: frontier, effort: xhigh, sandbox: read-only }
-  finalizer: { profile: frontier, effort: high, sandbox: workspace-write }
+    { profile: hardest, effort: xhigh, permissions: inherit }
+  diagnostician: { profile: frontier, effort: xhigh, permissions: read-only }
+  finalizer: { profile: frontier, effort: high, permissions: inherit }
 escalation:
   kind:
     documentation:
@@ -76,6 +76,8 @@ escalation:
       - { attempt: 5, profile: alternative, effort: xhigh, replace: true }
     diagnose_at: 3
     max_no_progress: 5
+    timeout_diagnose_at: 1
+    max_consecutive_timeouts: 2
 delegation:
   recursive: false
 context:

@@ -1,8 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version
-0.9.1 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.9.2 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -37,9 +36,9 @@ adopt the new completion requirements; completed WORK is preserved. New domains 
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
 
-## Version 0.9.1 cost-aware autonomous routing
+## Version 0.9.2 transport-safe autonomous routing
 
-`/goal` keeps one user-facing session while DevFlow separates context processing, judgment, execution, and verification. Terra performs bounded read-only pre-analysis and compresses the full runtime/repository context into an evidence capsule. Sol receives that capsule instead of the full rendered packet for planning, verification, audit, diagnosis, and finalization, while retaining an explicit re-render escape hatch when evidence is incomplete. Luna owns mutation WORK and escalates `high -> xhigh -> max`; after independent Sol diagnosis, Luna retries at `max` before Terra `xhigh` is used as the final alternative executor. Sol remains the final decision authority and does not silently fall back to Terra. Runtime capacity/model/backend failures, retry/diagnosis state, measured-token budgeting, and the per-domain mutating lease remain resumable and observable.
+`/goal` keeps one user-facing session while DevFlow separates context processing, judgment, execution, and verification. Terra performs bounded read-only pre-analysis, Sol owns planning and verification decisions, and Luna owns mutation WORK. Codex specialists now inherit the caller's permission profile instead of forcing legacy `--sandbox` modes, and a parent `OPENAI_BASE_URL` is forwarded to child `codex exec` processes so an existing Headroom session is reused without nested wrappers. Model capability failures can still fall through to another candidate, while network, permission, wrapper, and backend failures block as infrastructure errors. A timed-out action enters an independent diagnosis path after the first timeout and blocks after the second timeout without consuming the semantic no-progress retry ladder.
 
 Adopt an existing domain with `devflow delivery enable <domain>`, then use `devflow status <domain>`.
 Use `devflow autopilot start <domain>` or invoke the `goal` skill to run the complete lifecycle; use `devflow autopilot status <domain>` and `route` for observability.
