@@ -10,11 +10,12 @@ import shutil
 import subprocess
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
-
+from typing_extensions import Self
 
 CAPABILITY_FAILURE = re.compile(
     r"(?:unknown|unsupported|invalid|unavailable|not available|not found|no access|access denied).*model|"
@@ -63,25 +64,35 @@ class ModelRegistry:
             if not model_id:
                 raise ValueError(f"Model registry alias {alias!r} must define id")
             if model_id in self._aliases_by_id:
-                raise ValueError(f"Concrete model id is mapped more than once: {model_id}")
+                raise ValueError(
+                    f"Concrete model id is mapped more than once: {model_id}"
+                )
             efforts = meta.get("efforts")
-            if not isinstance(efforts, list) or not efforts or any(not str(value).strip() for value in efforts):
-                raise ValueError(f"Model registry alias {alias!r} must define non-empty efforts")
+            if (
+                not isinstance(efforts, list)
+                or not efforts
+                or any(not str(value).strip() for value in efforts)
+            ):
+                raise ValueError(
+                    f"Model registry alias {alias!r} must define non-empty efforts"
+                )
             self._models[alias] = meta
             self._aliases_by_id[model_id] = alias
 
     @classmethod
-    def from_legacy(cls, models: dict[str, dict[str, Any]]) -> "ModelRegistry":
-        return cls({
-            "version": 0,
-            "models": {
-                str(model_id): {"id": str(model_id), **copy.deepcopy(meta or {})}
-                for model_id, meta in (models or {}).items()
-            },
-        })
+    def from_legacy(cls, models: dict[str, dict[str, Any]]) -> ModelRegistry:
+        return cls(
+            {
+                "version": 0,
+                "models": {
+                    str(model_id): {"id": str(model_id), **copy.deepcopy(meta or {})}
+                    for model_id, meta in (models or {}).items()
+                },
+            }
+        )
 
     @classmethod
-    def from_policy(cls, policy: dict[str, Any]) -> "ModelRegistry":
+    def from_policy(cls, policy: dict[str, Any]) -> ModelRegistry:
         config = policy.get("model_registry")
         if isinstance(config, dict) and config.get("models"):
             return cls(config)
@@ -111,8 +122,10 @@ class ModelRegistry:
 
     def codex_min_version(self, reference: str) -> str:
         meta = self.meta(reference)
-        backend = ((meta.get("backends") or {}).get("codex_exec") or {})
-        return str(backend.get("min_version") or meta.get("codex_min_version") or "").strip()
+        backend = (meta.get("backends") or {}).get("codex_exec") or {}
+        return str(
+            backend.get("min_version") or meta.get("codex_min_version") or ""
+        ).strip()
 
     def aliases(self) -> list[str]:
         return list(self._models)
@@ -140,7 +153,9 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return value
 
 
-def _apply_legacy_model_overrides(registry_config: dict[str, Any], legacy: Any) -> dict[str, Any]:
+def _apply_legacy_model_overrides(
+    registry_config: dict[str, Any], legacy: Any
+) -> dict[str, Any]:
     if not isinstance(legacy, dict) or not legacy:
         return registry_config
     out = copy.deepcopy(registry_config)
@@ -155,17 +170,25 @@ def _apply_legacy_model_overrides(registry_config: dict[str, Any], legacy: Any) 
             raise ValueError(f"Legacy model override must be a mapping: {model_id}")
         concrete = str(model_id)
         alias = aliases_by_id.get(concrete, concrete)
-        current = models.get(alias) if isinstance(models.get(alias), dict) else {"id": concrete}
+        current = (
+            models.get(alias)
+            if isinstance(models.get(alias), dict)
+            else {"id": concrete}
+        )
         override_meta = copy.deepcopy(meta)
         legacy_minimum = override_meta.pop("codex_min_version", None)
         if legacy_minimum is not None:
             raw_backends = override_meta.get("backends")
             if raw_backends is not None and not isinstance(raw_backends, dict):
-                raise ValueError(f"Legacy model override backends must be a mapping: {model_id}")
+                raise ValueError(
+                    f"Legacy model override backends must be a mapping: {model_id}"
+                )
             backends = copy.deepcopy(raw_backends or {})
             raw_codex = backends.get("codex_exec")
             if raw_codex is not None and not isinstance(raw_codex, dict):
-                raise ValueError(f"Legacy codex_exec override must be a mapping: {model_id}")
+                raise ValueError(
+                    f"Legacy codex_exec override must be a mapping: {model_id}"
+                )
             codex_exec = copy.deepcopy(raw_codex or {})
             codex_exec["min_version"] = legacy_minimum
             backends["codex_exec"] = codex_exec
@@ -174,7 +197,9 @@ def _apply_legacy_model_overrides(registry_config: dict[str, Any], legacy: Any) 
     return out
 
 
-def _validate_routing_model_refs(policy: dict[str, Any], registry: ModelRegistry) -> None:
+def _validate_routing_model_refs(
+    policy: dict[str, Any], registry: ModelRegistry
+) -> None:
     profiles = policy.get("profiles")
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError("Routing policy must define profiles")
@@ -182,13 +207,21 @@ def _validate_routing_model_refs(policy: dict[str, Any], registry: ModelRegistry
         candidates = profile.get("candidates") if isinstance(profile, dict) else None
         if not isinstance(candidates, list) or not candidates:
             raise ValueError(f"Routing profile {profile_name!r} must define candidates")
-        unknown = [str(candidate) for candidate in candidates if not registry.contains(str(candidate))]
+        unknown = [
+            str(candidate)
+            for candidate in candidates
+            if not registry.contains(str(candidate))
+        ]
         if unknown:
-            raise ValueError(f"Routing profile {profile_name!r} references unknown model(s): {', '.join(unknown)}")
+            raise ValueError(
+                f"Routing profile {profile_name!r} references unknown model(s): {', '.join(unknown)}"
+            )
     for role, config in (policy.get("roles") or {}).items():
         profile = str((config or {}).get("profile") or "")
         if profile not in profiles:
-            raise ValueError(f"Routing role {role!r} references unknown profile: {profile}")
+            raise ValueError(
+                f"Routing role {role!r} references unknown profile: {profile}"
+            )
 
 
 def load_policy(plugin_root: Path, repo_root: Path | None) -> dict[str, Any]:
@@ -200,26 +233,39 @@ def load_policy(plugin_root: Path, repo_root: Path | None) -> dict[str, Any]:
         if override.exists():
             routing_override = _load_yaml(override)
             policy = _merge(policy, routing_override)
-            override_retries = ((routing_override.get("escalation") or {}).get("retries") or {})
+            override_retries = (routing_override.get("escalation") or {}).get(
+                "retries"
+            ) or {}
             legacy_retry_keys = {
-                "worker_promote_at", "worker_xhigh_at", "worker_retry_profile", "worker_retry_effort",
-                "worker_post_diagnosis_profile", "worker_post_diagnosis_effort",
+                "worker_promote_at",
+                "worker_xhigh_at",
+                "worker_retry_profile",
+                "worker_retry_effort",
+                "worker_post_diagnosis_profile",
+                "worker_post_diagnosis_effort",
             }
-            if isinstance(override_retries, dict) and "worker_stages" not in override_retries and any(
-                key in override_retries for key in legacy_retry_keys
+            if (
+                isinstance(override_retries, dict)
+                and "worker_stages" not in override_retries
+                and any(key in override_retries for key in legacy_retry_keys)
             ):
-                policy.setdefault("escalation", {})["retries"] = _merge({
-                    "worker_promote_at": 1,
-                    "worker_retry_profile": "balanced",
-                    "worker_retry_effort": "xhigh",
-                    "diagnose_at": 2,
-                    "worker_post_diagnosis_profile": "frontier",
-                    "worker_post_diagnosis_effort": "xhigh",
-                    "max_no_progress": 3,
-                }, override_retries)
+                policy.setdefault("escalation", {})["retries"] = _merge(
+                    {
+                        "worker_promote_at": 1,
+                        "worker_retry_profile": "balanced",
+                        "worker_retry_effort": "xhigh",
+                        "diagnose_at": 2,
+                        "worker_post_diagnosis_profile": "frontier",
+                        "worker_post_diagnosis_effort": "xhigh",
+                        "max_no_progress": 3,
+                    },
+                    override_retries,
+                )
 
     registry_config = _load_yaml(models_path)
-    registry_config = _apply_legacy_model_overrides(registry_config, policy.pop("models", None))
+    registry_config = _apply_legacy_model_overrides(
+        registry_config, policy.pop("models", None)
+    )
     if repo_root is not None:
         model_override = repo_root / ".devflow" / "models.yaml"
         if model_override.exists():
@@ -292,7 +338,7 @@ class DomainLease:
                 return True
         return False
 
-    def acquire(self) -> "DomainLease":
+    def acquire(self) -> DomainLease:
         if self.acquired:
             return self
         if self.limit < 1:
@@ -301,7 +347,9 @@ class DomainLease:
         for slot in range(self.limit):
             if self._try_slot(self.lock_dir / f"mutating-{slot}.lock"):
                 return self
-        raise RuntimeError(f"Autopilot mutating concurrency limit reached ({self.limit})")
+        raise RuntimeError(
+            f"Autopilot mutating concurrency limit reached ({self.limit})"
+        )
 
     def release(self) -> None:
         path = self.path
@@ -319,7 +367,7 @@ class DomainLease:
             except FileNotFoundError:
                 pass
 
-    def __enter__(self) -> "DomainLease":
+    def __enter__(self) -> Self:
         return self.acquire()
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -339,10 +387,19 @@ class TokenBudget:
         "scout": "implementation",
     }
 
-    def __init__(self, config: dict[str, Any] | None, *, total_tokens: int | None = None,
-                 state: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        config: dict[str, Any] | None,
+        *,
+        total_tokens: int | None = None,
+        state: dict[str, Any] | None = None,
+    ):
         config = config or {}
-        configured_total = total_tokens if total_tokens is not None else config.get("total_tokens", 1_000_000)
+        configured_total = (
+            total_tokens
+            if total_tokens is not None
+            else config.get("total_tokens", 1_000_000)
+        )
         self.total_tokens = int(configured_total)
         if self.total_tokens < 1:
             raise ValueError("Autopilot token budget must be a positive integer")
@@ -353,12 +410,21 @@ class TokenBudget:
                 raise ValueError(f"budget.{bucket}_percent must be non-negative")
             self.percent[bucket] = value
         self.reserve_percent = int(config.get("reserve_percent", 0))
-        if self.reserve_percent < 0 or sum(self.percent.values()) + self.reserve_percent != 100:
-            raise ValueError("Autopilot budget percentages including reserve must total 100")
-        self.dispatch_reserve_tokens = max(1, int(config.get("dispatch_reserve_tokens", 1)))
+        if (
+            self.reserve_percent < 0
+            or sum(self.percent.values()) + self.reserve_percent != 100
+        ):
+            raise ValueError(
+                "Autopilot budget percentages including reserve must total 100"
+            )
+        self.dispatch_reserve_tokens = max(
+            1, int(config.get("dispatch_reserve_tokens", 1))
+        )
         self.scout_reserve_tokens = max(1, int(config.get("scout_reserve_tokens", 1)))
         previous = (state or {}).get("used_by_bucket") or {}
-        self.used_by_bucket = {bucket: max(0, int(previous.get(bucket, 0))) for bucket in self.BUCKETS}
+        self.used_by_bucket = {
+            bucket: max(0, int(previous.get(bucket, 0))) for bucket in self.BUCKETS
+        }
 
     @staticmethod
     def tokens_from_usage(usage: Any) -> int:
@@ -393,7 +459,10 @@ class TokenBudget:
 
     @property
     def reserve_used(self) -> int:
-        return sum(max(0, used - self.allocation(bucket)) for bucket, used in self.used_by_bucket.items())
+        return sum(
+            max(0, used - self.allocation(bucket))
+            for bucket, used in self.used_by_bucket.items()
+        )
 
     @property
     def reserve_remaining(self) -> int:
@@ -404,11 +473,19 @@ class TokenBudget:
         total_remaining = self.total_tokens - self.total_used
         if total_remaining < required:
             return False
-        bucket_remaining = self.allocation(bucket) + self.reserve_remaining - self.used_by_bucket[bucket]
+        bucket_remaining = (
+            self.allocation(bucket)
+            + self.reserve_remaining
+            - self.used_by_bucket[bucket]
+        )
         return bucket_remaining >= required
 
     def reservation_for_role(self, role: str) -> int:
-        return self.scout_reserve_tokens if role == "scout" else self.dispatch_reserve_tokens
+        return (
+            self.scout_reserve_tokens
+            if role == "scout"
+            else self.dispatch_reserve_tokens
+        )
 
     def consume(self, bucket: str, usage: Any) -> int:
         tokens = self.tokens_from_usage(usage)
@@ -422,7 +499,9 @@ class TokenBudget:
         used = self.used_by_bucket[bucket]
         if not self.can_dispatch(bucket):
             pressure = "exhausted"
-        elif (allocation and used >= allocation * 0.8) or self.total_used >= self.total_tokens * 0.85:
+        elif (
+            allocation and used >= allocation * 0.8
+        ) or self.total_used >= self.total_tokens * 0.85:
             pressure = "high"
         else:
             pressure = "normal"
@@ -444,7 +523,10 @@ class TokenBudget:
         required = self.scout_reserve_tokens
         if next_role:
             required += self.reservation_for_role(next_role)
-        return self.can_dispatch(bucket, required_tokens=required) and self.snapshot(bucket)["pressure"] == "normal"
+        return (
+            self.can_dispatch(bucket, required_tokens=required)
+            and self.snapshot(bucket)["pressure"] == "normal"
+        )
 
     def state_dict(self) -> dict[str, Any]:
         return {
@@ -456,10 +538,21 @@ class TokenBudget:
 
 
 class CapabilityRegistry:
-    def __init__(self, models: ModelRegistry | dict[str, dict[str, Any]], *, native_models: set[str] | None = None,
-                 exec_available: bool = False, codex_path: str | None = None,
-                 codex_version: str | None = None, codex_version_error: str | None = None):
-        self.model_registry = models if isinstance(models, ModelRegistry) else ModelRegistry.from_legacy(models)
+    def __init__(
+        self,
+        models: ModelRegistry | dict[str, dict[str, Any]],
+        *,
+        native_models: set[str] | None = None,
+        exec_available: bool = False,
+        codex_path: str | None = None,
+        codex_version: str | None = None,
+        codex_version_error: str | None = None,
+    ):
+        self.model_registry = (
+            models
+            if isinstance(models, ModelRegistry)
+            else ModelRegistry.from_legacy(models)
+        )
         self.models = self.model_registry.as_legacy_models()
         self.native_models = native_models or set()
         self.exec_available = exec_available
@@ -470,37 +563,62 @@ class CapabilityRegistry:
         self.unavailable: dict[tuple[str, str], str] = {}
 
     @classmethod
-    def assumed(cls, policy: dict[str, Any], *, native_models: set[str] | None = None,
-                exec_available: bool = True, codex_version: str | None = None) -> "CapabilityRegistry":
+    def assumed(
+        cls,
+        policy: dict[str, Any],
+        *,
+        native_models: set[str] | None = None,
+        exec_available: bool = True,
+        codex_version: str | None = None,
+    ) -> CapabilityRegistry:
         assumed_version = codex_version or ("999.0.0" if exec_available else None)
-        return cls(ModelRegistry.from_policy(policy), native_models=native_models, exec_available=exec_available,
-                   codex_path="codex" if exec_available else None, codex_version=assumed_version)
+        return cls(
+            ModelRegistry.from_policy(policy),
+            native_models=native_models,
+            exec_available=exec_available,
+            codex_path="codex" if exec_available else None,
+            codex_version=assumed_version,
+        )
 
     @classmethod
-    def detect(cls, policy: dict[str, Any]) -> "CapabilityRegistry":
+    def detect(cls, policy: dict[str, Any]) -> CapabilityRegistry:
         codex = shutil.which("codex")
         codex_version = None
         version_error = None
         if codex:
             try:
                 proc = subprocess.run(
-                    [codex, "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+                    [codex, "--version"],
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
                 )
-                output = "\n".join(part for part in (proc.stdout.strip(), proc.stderr.strip()) if part)
+                output = "\n".join(
+                    part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
+                )
                 version = _version_tuple(output)
                 if proc.returncode == 0 and version:
                     codex_version = ".".join(str(part) for part in version)
                 else:
-                    version_error = output or f"codex --version exited {proc.returncode}"
+                    version_error = (
+                        output or f"codex --version exited {proc.returncode}"
+                    )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 version_error = str(exc)
         native_env = os.environ.get("DEVFLOW_NATIVE_AGENT_MODELS", "")
         native_runner = os.environ.get("DEVFLOW_NATIVE_AGENT_RUNNER")
-        native = {x.strip() for x in native_env.split(",") if x.strip()} if native_runner else set()
+        native = (
+            {x.strip() for x in native_env.split(",") if x.strip()}
+            if native_runner
+            else set()
+        )
         return cls(
-            ModelRegistry.from_policy(policy), native_models=native,
-            exec_available=bool(codex and codex_version), codex_path=codex,
-            codex_version=codex_version, codex_version_error=version_error,
+            ModelRegistry.from_policy(policy),
+            native_models=native,
+            exec_available=bool(codex and codex_version),
+            codex_path=codex,
+            codex_version=codex_version,
+            codex_version_error=version_error,
         )
 
     def model_id(self, model: str) -> str:
@@ -518,14 +636,21 @@ class CapabilityRegistry:
         return bool(self.model_meta(model).get("multi_agent"))
 
     def mark_unavailable(self, model: str, backend: str, reason: str) -> None:
-        self.unavailable[(self.model_id(model), backend)] = reason.strip() or "unavailable"
+        self.unavailable[(self.model_id(model), backend)] = (
+            reason.strip() or "unavailable"
+        )
 
     def codex_compatible(self, model: str) -> bool:
         minimum = self.model_registry.codex_min_version(model)
         if not minimum:
             return self.exec_available
         required = _version_tuple(minimum)
-        return bool(self.exec_available and required and self.codex_version_tuple and self.codex_version_tuple >= required)
+        return bool(
+            self.exec_available
+            and required
+            and self.codex_version_tuple
+            and self.codex_version_tuple >= required
+        )
 
     def restore_unavailable(self, rows: Any) -> None:
         if not isinstance(rows, list):
@@ -547,17 +672,21 @@ class CapabilityRegistry:
             current_model = self.model_id(reference)
             if model and current_model != model:
                 continue
-            self.mark_unavailable(reference, backend, str(row.get("reason") or "unavailable"))
+            self.mark_unavailable(
+                reference, backend, str(row.get("reason") or "unavailable")
+            )
 
     def unavailable_rows(self) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = []
         for (model, backend), reason in sorted(self.unavailable.items()):
-            rows.append({
-                "alias": self.model_registry.alias_for(model),
-                "model": model,
-                "backend": backend,
-                "reason": reason,
-            })
+            rows.append(
+                {
+                    "alias": self.model_registry.alias_for(model),
+                    "model": model,
+                    "backend": backend,
+                    "reason": reason,
+                }
+            )
         return rows
 
     def backend_for(self, model: str, preference: list[str]) -> str | None:
@@ -609,16 +738,22 @@ class ModelResolver:
         self.policy = policy
         self.capabilities = capabilities
 
-    def resolve(self, decision: dict[str, Any], action: dict[str, Any], attempt: int) -> dict[str, Any]:
+    def resolve(
+        self, decision: dict[str, Any], action: dict[str, Any], attempt: int
+    ) -> dict[str, Any]:
         profile = self.policy["profiles"][decision["profile"]]
-        preference = list(self.policy.get("backends", {}).get("preference") or ["codex_exec"])
+        preference = list(
+            self.policy.get("backends", {}).get("preference") or ["codex_exec"]
+        )
         recursive = bool((self.policy.get("delegation") or {}).get("recursive", False))
         context = self.policy.get("context") or {}
         selected_ref = backend = None
         for model_ref in profile.get("candidates", []):
             if not self.capabilities.supports_effort(model_ref, decision["effort"]):
                 continue
-            if not self.capabilities.supports_recursive_delegation(model_ref, recursive):
+            if not self.capabilities.supports_recursive_delegation(
+                model_ref, recursive
+            ):
                 continue
             candidate_backend = self.capabilities.backend_for(model_ref, preference)
             if candidate_backend:
@@ -671,7 +806,9 @@ class RouteEngine:
         if command in {"bootstrap", "plan"}:
             return "architect"
         if command == "run":
-            diagnose_at = int(self.policy["escalation"]["retries"].get("diagnose_at", 2))
+            diagnose_at = int(
+                self.policy["escalation"]["retries"].get("diagnose_at", 2)
+            )
             return "diagnostician" if attempt == diagnose_at else "worker"
         if command == "audit":
             if scope == "work":
@@ -686,12 +823,18 @@ class RouteEngine:
     @staticmethod
     def _effective_risk(action: dict[str, Any], state: dict[str, Any]) -> str:
         order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-        candidates = [state.get("risk_profile"), action.get("risk"), action.get("item_risk")]
+        candidates = [
+            state.get("risk_profile"),
+            action.get("risk"),
+            action.get("item_risk"),
+        ]
         valid = [str(value) for value in candidates if str(value) in order]
         return max(valid, key=order.__getitem__) if valid else "medium"
 
     @staticmethod
-    def _apply_role_override(cfg: dict[str, Any], override: dict[str, Any], role: str) -> None:
+    def _apply_role_override(
+        cfg: dict[str, Any], override: dict[str, Any], role: str
+    ) -> None:
         profile = override.get(f"{role}_profile")
         effort = override.get(f"{role}_effort")
         if profile:
@@ -703,7 +846,9 @@ class RouteEngine:
         if not candidate:
             return current
         candidate = str(candidate)
-        order = list(self.policy.get("profile_order") or self.policy.get("profiles", {}).keys())
+        order = list(
+            self.policy.get("profile_order") or self.policy.get("profiles", {}).keys()
+        )
         ranks = {name: index for index, name in enumerate(order)}
         if current not in ranks or candidate not in ranks:
             return candidate
@@ -716,10 +861,16 @@ class RouteEngine:
         candidate = str(candidate)
         if current not in cls.EFFORT_ORDER or candidate not in cls.EFFORT_ORDER:
             return candidate
-        return candidate if cls.EFFORT_ORDER[candidate] > cls.EFFORT_ORDER[current] else current
+        return (
+            candidate
+            if cls.EFFORT_ORDER[candidate] > cls.EFFORT_ORDER[current]
+            else current
+        )
 
     @staticmethod
-    def _worker_retry_stage(retries: dict[str, Any], attempt: int) -> dict[str, Any] | None:
+    def _worker_retry_stage(
+        retries: dict[str, Any], attempt: int
+    ) -> dict[str, Any] | None:
         stages = retries.get("worker_stages")
         if not isinstance(stages, list):
             raise ValueError("escalation.retries.worker_stages must be a list")
@@ -733,22 +884,26 @@ class RouteEngine:
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError("worker retry stages require integer attempt") from exc
             if threshold <= previous:
-                raise ValueError("worker retry stage attempts must be strictly increasing positive integers")
+                raise ValueError(
+                    "worker retry stage attempts must be strictly increasing positive integers"
+                )
             previous = threshold
             if attempt >= threshold:
                 selected = (threshold, raw)
         return copy.deepcopy(selected[1]) if selected else None
 
-    def decide(self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0) -> dict[str, Any]:
+    def decide(
+        self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0
+    ) -> dict[str, Any]:
         role = self._role(action, attempt)
         cfg = copy.deepcopy(self.policy["roles"][role])
         escalation = self.policy.get("escalation", {})
         item_kind = str(action.get("item_kind") or "")
-        kind_over = (escalation.get("kind", {}).get(item_kind) or {})
+        kind_over = escalation.get("kind", {}).get(item_kind) or {}
         self._apply_role_override(cfg, kind_over, role)
 
         risk = self._effective_risk(action, state)
-        risk_over = (escalation.get("risk", {}).get(risk) or {})
+        risk_over = escalation.get("risk", {}).get(risk) or {}
         self._apply_role_override(cfg, risk_over, role)
 
         if role == "worker":
@@ -760,17 +915,32 @@ class RouteEngine:
                         cfg["profile"] = str(stage.get("profile") or cfg["profile"])
                         cfg["effort"] = str(stage.get("effort") or cfg["effort"])
                     else:
-                        cfg["profile"] = self._stronger_profile(cfg["profile"], stage.get("profile"))
-                        cfg["effort"] = self._stronger_effort(cfg["effort"], stage.get("effort"))
+                        cfg["profile"] = self._stronger_profile(
+                            cfg["profile"], stage.get("profile")
+                        )
+                        cfg["effort"] = self._stronger_effort(
+                            cfg["effort"], stage.get("effort")
+                        )
             else:
                 diagnose_at = int(retries.get("diagnose_at", 2))
-                promote_at = int(retries.get("worker_promote_at", retries.get("worker_xhigh_at", 1)))
+                promote_at = int(
+                    retries.get("worker_promote_at", retries.get("worker_xhigh_at", 1))
+                )
                 if attempt > diagnose_at:
-                    cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_post_diagnosis_profile"))
-                    cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_post_diagnosis_effort", "xhigh"))
+                    cfg["profile"] = self._stronger_profile(
+                        cfg["profile"], retries.get("worker_post_diagnosis_profile")
+                    )
+                    cfg["effort"] = self._stronger_effort(
+                        cfg["effort"],
+                        retries.get("worker_post_diagnosis_effort", "xhigh"),
+                    )
                 elif attempt >= promote_at:
-                    cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_retry_profile"))
-                    cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_retry_effort", "xhigh"))
+                    cfg["profile"] = self._stronger_profile(
+                        cfg["profile"], retries.get("worker_retry_profile")
+                    )
+                    cfg["effort"] = self._stronger_effort(
+                        cfg["effort"], retries.get("worker_retry_effort", "xhigh")
+                    )
 
         return {
             "role": role,
@@ -780,8 +950,12 @@ class RouteEngine:
             "effective_risk": risk,
         }
 
-    def resolve(self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0) -> dict[str, Any]:
-        return self.model_resolver.resolve(self.decide(action, state, attempt), action, attempt)
+    def resolve(
+        self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0
+    ) -> dict[str, Any]:
+        return self.model_resolver.resolve(
+            self.decide(action, state, attempt), action, attempt
+        )
 
 
 ROLE_CONTRACTS = {
@@ -797,9 +971,16 @@ ROLE_CONTRACTS = {
 
 
 class ContextAssembler:
-    COMPACT_PACKET_ROLES = frozenset({
-        "architect", "verifier", "auditor", "integration_auditor", "diagnostician", "finalizer",
-    })
+    COMPACT_PACKET_ROLES = frozenset(
+        {
+            "architect",
+            "verifier",
+            "auditor",
+            "integration_auditor",
+            "diagnostician",
+            "finalizer",
+        }
+    )
 
     def __init__(self, plugin_root: Path):
         self.plugin_root = plugin_root
@@ -815,7 +996,11 @@ class ContextAssembler:
         if not source:
             return ""
         kind, name = source
-        path = self.plugin_root / "skills" / name / "SKILL.md" if kind == "skill" else self.plugin_root / "core" / "prompts" / name
+        path = (
+            self.plugin_root / "skills" / name / "SKILL.md"
+            if kind == "skill"
+            else self.plugin_root / "core" / "prompts" / name
+        )
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
     @staticmethod
@@ -823,14 +1008,16 @@ class ContextAssembler:
         match = re.search(r"(?m)^- domain: (.+?)\s*$", rendered_packet)
         return match.group(1).strip() if match else None
 
-    def _packet_section(self, spec: dict[str, Any], rendered_packet: str, scout_digest: str | None) -> str:
+    def _packet_section(
+        self, spec: dict[str, Any], rendered_packet: str, scout_digest: str | None
+    ) -> str:
         role = str(spec.get("role") or "")
         if not scout_digest or role not in self.COMPACT_PACKET_ROLES:
             return "## Runtime packet\n" + rendered_packet
         domain = self._runtime_domain(rendered_packet)
         if domain:
             recovery = (
-                f" If material evidence is missing or contradictory, run `python3 \"{self.plugin_root / 'scripts' / 'devflow.py'}\" "
+                f' If material evidence is missing or contradictory, run `python3 "{self.plugin_root / "scripts" / "devflow.py"}" '
                 f"status {domain}` and re-render the exact current action before deciding."
             )
         else:
@@ -847,8 +1034,13 @@ class ContextAssembler:
             + recovery
         )
 
-    def build(self, spec: dict[str, Any], rendered_packet: str, diagnosis: str | None = None,
-              scout_digest: str | None = None) -> str:
+    def build(
+        self,
+        spec: dict[str, Any],
+        rendered_packet: str,
+        diagnosis: str | None = None,
+        scout_digest: str | None = None,
+    ) -> str:
         command = str((spec.get("action") or {}).get("command") or "")
         contract = self._role_contract_for(spec["role"], command)
         execution = spec.get("execution") or {}
@@ -860,14 +1052,19 @@ class ContextAssembler:
             "model": spec.get("model"),
             "autopilot": True,
             "context_mode": execution.get("context_mode", "capsule"),
-            "recursive_delegation": bool(execution.get("allow_recursive_delegation", False)),
+            "recursive_delegation": bool(
+                execution.get("allow_recursive_delegation", False)
+            ),
         }
         parts = [
-            "# DevFlow Autopilot Dispatch\n" + yaml.safe_dump(header, sort_keys=False, allow_unicode=True),
-            "## Runtime invocation\n"
-            f"DEVFLOW_PLUGIN_ROOT={self.plugin_root}\n"
-            f"Use this exact lifecycle CLI from the repository root: `python3 \"{runtime_cli}\" <args>`. "
-            "This concrete path overrides placeholder plugin-root examples in the role contract.",
+            "# DevFlow Autopilot Dispatch\n"
+            + yaml.safe_dump(header, sort_keys=False, allow_unicode=True),
+            (
+                "## Runtime invocation\n"
+                f"DEVFLOW_PLUGIN_ROOT={self.plugin_root}\n"
+                f'Use this exact lifecycle CLI from the repository root: `python3 "{runtime_cli}" <args>`. '
+                "This concrete path overrides placeholder plugin-root examples in the role contract."
+            ),
             "## Role contract\n" + contract,
             self._packet_section(spec, rendered_packet, scout_digest),
         ]
@@ -904,6 +1101,7 @@ class ContextAssembler:
             )
         return "\n\n".join(parts)
 
+
 class RuntimeLedger:
     def __init__(self, directory: Path):
         self.directory = directory
@@ -912,7 +1110,9 @@ class RuntimeLedger:
     def record(self, stream: str, payload: dict[str, Any]) -> None:
         row = dict(payload)
         row.setdefault("recorded_at", time.time())
-        with (self.directory / f"{stream}.jsonl").open("a", encoding="utf-8") as stream_file:
+        with (self.directory / f"{stream}.jsonl").open(
+            "a", encoding="utf-8"
+        ) as stream_file:
             stream_file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def load_controller(self) -> dict[str, Any]:
@@ -928,7 +1128,9 @@ class RuntimeLedger:
     def write_controller(self, payload: dict[str, Any]) -> None:
         target = self.directory / "controller.json"
         temporary = self.directory / f".controller.{uuid.uuid4().hex}.tmp"
-        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         os.replace(temporary, target)
 
 
@@ -941,15 +1143,35 @@ class CodexExecBackend:
         effort = spec["model"]["reasoning_effort"]
         sandbox = spec.get("execution", {}).get("sandbox", "workspace-write")
         return [
-            self.executable, "exec", "--ephemeral", "--json", "--cd", str(repo_root), "--sandbox", sandbox,
-            "--model", model, "--config", f'model_reasoning_effort="{effort}"', "-",
+            self.executable,
+            "exec",
+            "--ephemeral",
+            "--json",
+            "--cd",
+            str(repo_root),
+            "--sandbox",
+            sandbox,
+            "--model",
+            model,
+            "--config",
+            f'model_reasoning_effort="{effort}"',
+            "-",
         ]
 
-    def execute(self, repo_root: Path, spec: dict[str, Any], prompt: str, timeout: int | None = None) -> dict[str, Any]:
+    def execute(
+        self,
+        repo_root: Path,
+        spec: dict[str, Any],
+        prompt: str,
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
         started = time.time()
         proc = subprocess.run(
-            self.build_command(repo_root, spec), input=prompt, text=True, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, timeout=timeout,
+            self.build_command(repo_root, spec),
+            input=prompt,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
         )
         usage, last_message = {}, ""
         for line in proc.stdout.splitlines():
@@ -979,12 +1201,27 @@ class NativeAgentBackend:
     def __init__(self, command: str | None = None):
         self.command = command or os.environ.get("DEVFLOW_NATIVE_AGENT_RUNNER")
 
-    def execute(self, repo_root: Path, spec: dict[str, Any], prompt: str, timeout: int | None = None) -> dict[str, Any]:
+    def execute(
+        self,
+        repo_root: Path,
+        spec: dict[str, Any],
+        prompt: str,
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
         if not self.command:
-            raise RuntimeError("Native agent backend selected without DEVFLOW_NATIVE_AGENT_RUNNER")
-        payload = json.dumps({"repo_root": str(repo_root), "spec": spec, "prompt": prompt}, ensure_ascii=False)
+            raise RuntimeError(
+                "Native agent backend selected without DEVFLOW_NATIVE_AGENT_RUNNER"
+            )
+        payload = json.dumps(
+            {"repo_root": str(repo_root), "spec": spec, "prompt": prompt},
+            ensure_ascii=False,
+        )
         proc = subprocess.run(
-            [self.command], input=payload, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
+            [self.command],
+            input=payload,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
         )
         try:
             body = json.loads(proc.stdout) if proc.stdout.strip() else {}
@@ -997,7 +1234,9 @@ class NativeAgentBackend:
 
 
 def _failure_text(receipt: dict[str, Any]) -> str:
-    return "\n".join(str(receipt.get(key) or "") for key in ("message", "stderr", "stdout"))
+    return "\n".join(
+        str(receipt.get(key) or "") for key in ("message", "stderr", "stdout")
+    )
 
 
 def classify_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -1008,24 +1247,43 @@ def classify_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
     if out.get("failure_kind"):
         return out
     text = _failure_text(out)
-    out["failure_kind"] = "capability_unavailable" if CAPABILITY_FAILURE.search(text) else "execution_failed"
+    out["failure_kind"] = (
+        "capability_unavailable"
+        if CAPABILITY_FAILURE.search(text)
+        else "execution_failed"
+    )
     return out
 
 
 def exception_receipt(exc: BaseException) -> dict[str, Any]:
     if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)):
         return {
-            "status": "failed", "exit_code": 124, "failure_kind": "timeout",
-            "message": str(exc), "stderr": str(exc), "stdout": "", "usage": {},
+            "status": "failed",
+            "exit_code": 124,
+            "failure_kind": "timeout",
+            "message": str(exc),
+            "stderr": str(exc),
+            "stdout": "",
+            "usage": {},
         }
     if isinstance(exc, OSError):
         return {
-            "status": "failed", "exit_code": 127, "failure_kind": "capability_unavailable",
-            "message": str(exc), "stderr": str(exc), "stdout": "", "usage": {},
+            "status": "failed",
+            "exit_code": 127,
+            "failure_kind": "capability_unavailable",
+            "message": str(exc),
+            "stderr": str(exc),
+            "stdout": "",
+            "usage": {},
         }
     return {
-        "status": "failed", "exit_code": 1, "failure_kind": "execution_exception",
-        "message": str(exc), "stderr": str(exc), "stdout": "", "usage": {},
+        "status": "failed",
+        "exit_code": 1,
+        "failure_kind": "execution_exception",
+        "message": str(exc),
+        "stderr": str(exc),
+        "stdout": "",
+        "usage": {},
     }
 
 
@@ -1037,7 +1295,9 @@ class DispatchBroker:
             "native_agent": NativeAgentBackend(),
         }
 
-    def execute(self, spec: dict[str, Any], prompt: str, timeout: int | None = None) -> dict[str, Any]:
+    def execute(
+        self, spec: dict[str, Any], prompt: str, timeout: int | None = None
+    ) -> dict[str, Any]:
         backend = self.backends[spec["execution"]["backend"]]
         try:
             receipt = backend.execute(self.repo_root, spec, prompt, timeout)
@@ -1067,7 +1327,9 @@ class ExecutionBoundary:
         if action.get("command") == "plan" or action.get("scope") == "plan":
             return True
         work_item = action.get("work_item")
-        return work_item is not None and str(work_item) in cls._plan_remediation_ids(state)
+        return work_item is not None and str(work_item) in cls._plan_remediation_ids(
+            state
+        )
 
     def reached(self, state: dict[str, Any], action: dict[str, Any]) -> bool:
         if self.value == "complete":
@@ -1077,18 +1339,32 @@ class ExecutionBoundary:
         if self.value == "implementation":
             if self._is_planning_action(state, action):
                 return False
-            return action.get("command") == "finalize" or action.get("scope") == "integration"
+            return (
+                action.get("command") == "finalize"
+                or action.get("scope") == "integration"
+            )
         raise AssertionError(f"Unhandled execution boundary: {self.value}")
 
 
 class AutopilotController:
-    def __init__(self, status_fn: Callable[[], dict[str, Any]], render_fn: Callable[[dict[str, Any]], str],
-                 route_fn: Callable[[dict[str, Any], dict[str, Any], int], dict[str, Any]],
-                 dispatch_fn: Callable[[dict[str, Any], str], dict[str, Any]], ledger: RuntimeLedger | None,
-                 max_steps: int = 100, max_no_progress: int = 3, *, run_id: str | None = None,
-                 resume_state: dict[str, Any] | None = None, capabilities: CapabilityRegistry | None = None,
-                 budget: TokenBudget | None = None, scout_before: set[str] | None = None,
-                 scout_max_chars: int = 12000, until: str = "complete"):
+    def __init__(
+        self,
+        status_fn: Callable[[], dict[str, Any]],
+        render_fn: Callable[[dict[str, Any]], str],
+        route_fn: Callable[[dict[str, Any], dict[str, Any], int], dict[str, Any]],
+        dispatch_fn: Callable[[dict[str, Any], str], dict[str, Any]],
+        ledger: RuntimeLedger | None,
+        max_steps: int = 100,
+        max_no_progress: int = 3,
+        *,
+        run_id: str | None = None,
+        resume_state: dict[str, Any] | None = None,
+        capabilities: CapabilityRegistry | None = None,
+        budget: TokenBudget | None = None,
+        scout_before: set[str] | None = None,
+        scout_max_chars: int = 12000,
+        until: str = "complete",
+    ):
         self.status_fn = status_fn
         self.render_fn = render_fn
         self.route_fn = route_fn
@@ -1104,9 +1380,15 @@ class AutopilotController:
             raise ValueError("orchestration.scout_max_chars must be positive")
         self.boundary = ExecutionBoundary(until)
         resume = resume_state or {}
-        self.run_id = run_id or str(resume.get("run_id") or f"run_{uuid.uuid4().hex[:12]}")
-        self.attempts = {str(k): int(v) for k, v in (resume.get("attempts") or {}).items()}
-        self.diagnoses = {str(k): str(v) for k, v in (resume.get("diagnoses") or {}).items()}
+        self.run_id = run_id or str(
+            resume.get("run_id") or f"run_{uuid.uuid4().hex[:12]}"
+        )
+        self.attempts = {
+            str(k): int(v) for k, v in (resume.get("attempts") or {}).items()
+        }
+        self.diagnoses = {
+            str(k): str(v) for k, v in (resume.get("diagnoses") or {}).items()
+        }
         self.scouts = {
             str(k): self._bounded_scout_digest(str(v))
             for k, v in (resume.get("scouts") or {}).items()
@@ -1127,7 +1409,9 @@ class AutopilotController:
 
     @staticmethod
     def _same_model(left: dict[str, Any], right: dict[str, Any]) -> bool:
-        return str((left.get("model") or {}).get("selected") or "") == str((right.get("model") or {}).get("selected") or "")
+        return str((left.get("model") or {}).get("selected") or "") == str(
+            (right.get("model") or {}).get("selected") or ""
+        )
 
     def _bounded_scout_digest(self, value: str) -> str:
         digest = value.strip()
@@ -1137,8 +1421,14 @@ class AutopilotController:
         keep = max(0, self.scout_max_chars - len(marker))
         return digest[:keep].rstrip() + marker
 
-    def _checkpoint(self, status: str, *, action: dict[str, Any] | None = None,
-                    reason: str | None = None, steps: int | None = None) -> dict[str, Any]:
+    def _checkpoint(
+        self,
+        status: str,
+        *,
+        action: dict[str, Any] | None = None,
+        reason: str | None = None,
+        steps: int | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "status": status,
             "run_id": self.run_id,
@@ -1148,7 +1438,9 @@ class AutopilotController:
             "diagnoses": dict(self.diagnoses),
             "scouts": dict(self.scouts),
             "action": copy.deepcopy(action) if action is not None else None,
-            "unavailable_candidates": self.capabilities.unavailable_rows() if self.capabilities else [],
+            "unavailable_candidates": self.capabilities.unavailable_rows()
+            if self.capabilities
+            else [],
             "budget": self.budget.state_dict() if self.budget else None,
             "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         }
@@ -1158,8 +1450,14 @@ class AutopilotController:
             self.ledger.write_controller(payload)
         return payload
 
-    def _dispatch(self, spec: dict[str, Any], packet: str, *, step: int,
-                  budget_bucket: str | None = None) -> dict[str, Any]:
+    def _dispatch(
+        self,
+        spec: dict[str, Any],
+        packet: str,
+        *,
+        step: int,
+        budget_bucket: str | None = None,
+    ) -> dict[str, Any]:
         try:
             receipt = classify_receipt(self.dispatch_fn(spec, packet))
         except BaseException as exc:
@@ -1173,20 +1471,32 @@ class AutopilotController:
             spec["budget"].update(self.budget.snapshot(bucket))
             spec["budget"]["dispatch_tokens"] = used
         if self.ledger:
-            self.ledger.record("dispatch", {"run_id": self.run_id, "step": step, "spec": spec, "receipt": receipt})
+            self.ledger.record(
+                "dispatch",
+                {"run_id": self.run_id, "step": step, "spec": spec, "receipt": receipt},
+            )
         return receipt
 
-    def _mark_capability_failure(self, spec: dict[str, Any], receipt: dict[str, Any]) -> bool:
-        if receipt.get("failure_kind") != "capability_unavailable" or not self.capabilities:
+    def _mark_capability_failure(
+        self, spec: dict[str, Any], receipt: dict[str, Any]
+    ) -> bool:
+        if (
+            receipt.get("failure_kind") != "capability_unavailable"
+            or not self.capabilities
+        ):
             return False
         model = str((spec.get("model") or {}).get("selected") or "")
         backend = str((spec.get("execution") or {}).get("backend") or "")
         if model and backend:
-            self.capabilities.mark_unavailable(model, backend, _failure_text(receipt) or "capability unavailable")
+            self.capabilities.mark_unavailable(
+                model, backend, _failure_text(receipt) or "capability unavailable"
+            )
             return True
         return False
 
-    def _route(self, action: dict[str, Any], state: dict[str, Any], attempt: int) -> dict[str, Any] | None:
+    def _route(
+        self, action: dict[str, Any], state: dict[str, Any], attempt: int
+    ) -> dict[str, Any] | None:
         try:
             return self.route_fn(action, state, attempt)
         except Exception:
@@ -1199,7 +1509,9 @@ class AutopilotController:
             try:
                 state = self.status_fn()
             except Exception as exc:
-                result = self._checkpoint("blocked", reason=f"status_failed: {exc}", steps=step)
+                result = self._checkpoint(
+                    "blocked", reason=f"status_failed: {exc}", steps=step
+                )
                 result["steps"] = step
                 return result
             action = state.get("next_action") or {}
@@ -1217,7 +1529,10 @@ class AutopilotController:
             if self.boundary.reached(state, action):
                 self.steps_completed = step
                 result = self._checkpoint(
-                    "checkpoint", action=action, reason="execution_boundary_reached", steps=step,
+                    "checkpoint",
+                    action=action,
+                    reason="execution_boundary_reached",
+                    steps=step,
                 )
                 result["steps"] = step
                 return result
@@ -1227,14 +1542,27 @@ class AutopilotController:
             spec = self._route(action, state, attempt)
             if spec is None:
                 self.steps_completed = step
-                result = self._checkpoint("blocked", action=action, reason="route_unavailable", steps=step)
+                result = self._checkpoint(
+                    "blocked", action=action, reason="route_unavailable", steps=step
+                )
                 result["steps"] = step
                 return result
             bucket = self._bucket(spec)
-            required_tokens = self.budget.reservation_for_role(spec.get("role", "worker")) if self.budget else 1
-            if self.budget and not self.budget.can_dispatch(bucket, required_tokens=required_tokens):
+            required_tokens = (
+                self.budget.reservation_for_role(spec.get("role", "worker"))
+                if self.budget
+                else 1
+            )
+            if self.budget and not self.budget.can_dispatch(
+                bucket, required_tokens=required_tokens
+            ):
                 self.steps_completed = step
-                result = self._checkpoint("blocked", action=action, reason="token_budget_dispatch_reserve_exhausted", steps=step)
+                result = self._checkpoint(
+                    "blocked",
+                    action=action,
+                    reason="token_budget_dispatch_reserve_exhausted",
+                    steps=step,
+                )
                 result["steps"] = step
                 result["budget"] = self.budget.snapshot(bucket)
                 return result
@@ -1246,38 +1574,57 @@ class AutopilotController:
                 packet = self.render_fn(action)
             except Exception as exc:
                 self.steps_completed = step
-                result = self._checkpoint("blocked", action=action, reason=f"render_failed: {exc}", steps=step)
+                result = self._checkpoint(
+                    "blocked", action=action, reason=f"render_failed: {exc}", steps=step
+                )
                 result["steps"] = step
                 return result
 
             if (
                 spec.get("role") in self.scout_before
                 and fp not in self.scouts
-                and (self.budget is None or self.budget.allow_scout(bucket, spec.get("role")))
+                and (
+                    self.budget is None
+                    or self.budget.allow_scout(bucket, spec.get("role"))
+                )
             ):
                 scout_action = copy.deepcopy(action)
                 scout_action["_role_override"] = "scout"
                 scout_spec = self._route(scout_action, state, attempt)
                 scout_receipt: dict[str, Any] | None = None
                 if scout_spec is not None and not self._same_model(scout_spec, spec):
-                    scout_receipt = self._dispatch(scout_spec, packet, step=step, budget_bucket=bucket)
+                    scout_receipt = self._dispatch(
+                        scout_spec, packet, step=step, budget_bucket=bucket
+                    )
                     if self._mark_capability_failure(scout_spec, scout_receipt):
                         scout_spec = self._route(scout_action, state, attempt)
-                        if scout_spec is not None and not self._same_model(scout_spec, spec):
-                            scout_receipt = self._dispatch(scout_spec, packet, step=step, budget_bucket=bucket)
+                        if scout_spec is not None and not self._same_model(
+                            scout_spec, spec
+                        ):
+                            scout_receipt = self._dispatch(
+                                scout_spec, packet, step=step, budget_bucket=bucket
+                            )
                             self._mark_capability_failure(scout_spec, scout_receipt)
                         else:
                             scout_receipt = None
-                if scout_receipt is not None and scout_receipt.get("status") == "success":
+                if (
+                    scout_receipt is not None
+                    and scout_receipt.get("status") == "success"
+                ):
                     digest = scout_receipt.get("message") or scout_receipt.get("stdout")
                     if isinstance(digest, str) and digest.strip():
                         self.scouts[fp] = self._bounded_scout_digest(digest)
                         spec["scout_digest"] = self.scouts[fp]
 
-            if self.budget and not self.budget.can_dispatch(bucket, required_tokens=required_tokens):
+            if self.budget and not self.budget.can_dispatch(
+                bucket, required_tokens=required_tokens
+            ):
                 self.steps_completed = step
                 result = self._checkpoint(
-                    "blocked", action=action, reason="token_budget_dispatch_reserve_exhausted", steps=step,
+                    "blocked",
+                    action=action,
+                    reason="token_budget_dispatch_reserve_exhausted",
+                    steps=step,
                 )
                 result["steps"] = step
                 result["budget"] = self.budget.snapshot(bucket)
@@ -1288,14 +1635,26 @@ class AutopilotController:
                 self.steps_completed = step + 1
                 self._checkpoint("running", action=action, steps=self.steps_completed)
                 continue
-            if spec.get("role") == "diagnostician" and receipt.get("status") == "success":
-                self.diagnoses[fp] = str(receipt.get("message") or receipt.get("stdout") or "diagnosis completed")
+            if (
+                spec.get("role") == "diagnostician"
+                and receipt.get("status") == "success"
+            ):
+                self.diagnoses[fp] = str(
+                    receipt.get("message")
+                    or receipt.get("stdout")
+                    or "diagnosis completed"
+                )
 
             try:
                 after = self.status_fn()
             except Exception as exc:
                 self.steps_completed = step + 1
-                result = self._checkpoint("blocked", action=action, reason=f"status_failed_after_dispatch: {exc}", steps=self.steps_completed)
+                result = self._checkpoint(
+                    "blocked",
+                    action=action,
+                    reason=f"status_failed_after_dispatch: {exc}",
+                    steps=self.steps_completed,
+                )
                 result["steps"] = self.steps_completed
                 return result
             after_fp = self.fingerprint(after.get("next_action") or {})
@@ -1304,7 +1663,10 @@ class AutopilotController:
                 if self.attempts[fp] > self.max_no_progress:
                     self.steps_completed = step + 1
                     result = self._checkpoint(
-                        "blocked", action=action, reason="no_progress_retry_budget_exhausted", steps=self.steps_completed,
+                        "blocked",
+                        action=action,
+                        reason="no_progress_retry_budget_exhausted",
+                        steps=self.steps_completed,
                     )
                     result["attempts_exhausted"] = self.attempts[fp]
                     result["steps"] = self.steps_completed
@@ -1314,8 +1676,14 @@ class AutopilotController:
                 self.diagnoses.pop(fp, None)
                 self.scouts.pop(fp, None)
             self.steps_completed = step + 1
-            self._checkpoint("running", action=after.get("next_action") or {}, steps=self.steps_completed)
+            self._checkpoint(
+                "running",
+                action=after.get("next_action") or {},
+                steps=self.steps_completed,
+            )
 
-        result = self._checkpoint("blocked", reason="max_steps_exhausted", steps=self.steps_completed)
+        result = self._checkpoint(
+            "blocked", reason="max_steps_exhausted", steps=self.steps_completed
+        )
         result["steps"] = self.steps_completed
         return result

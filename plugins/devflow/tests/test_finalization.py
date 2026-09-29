@@ -2,6 +2,7 @@
 """Foreground finalization tests using real Git provenance and isolated runner fixtures."""
 
 from __future__ import annotations
+
 import json
 import sys
 import time

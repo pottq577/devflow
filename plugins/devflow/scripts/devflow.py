@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import contextlib
+import copy
 import io
 import json
 import os
@@ -17,21 +17,26 @@ from typing import Any
 try:
     import yaml
 except ImportError:
-    print("DevFlow requires PyYAML. Install with: python3 -m pip install PyYAML", file=sys.stderr)
+    print(
+        "DevFlow requires PyYAML. Install with: python3 -m pip install PyYAML",
+        file=sys.stderr,
+    )
     raise SystemExit(2)
 
 # Import siblings by this installed plugin location, including importlib-based test harnesses.
 SCRIPT_DIRECTORY = str(Path(__file__).resolve().parent)
 if SCRIPT_DIRECTORY not in sys.path:
     sys.path.insert(0, SCRIPT_DIRECTORY)
+import devflow_autopilot as autopilot
 import devflow_delivery as delivery
 import devflow_finalization as finalization
 import devflow_newman as newman
-import devflow_autopilot as autopilot
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
-REQ_PATTERN = re.compile(r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.I)
+REQ_PATTERN = re.compile(
+    r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.IGNORECASE
+)
 PROTOCOL_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 MARKDOWN_SECTION_ANCHORS = {
     "PRD.md": ("4. Requirements",),
@@ -64,10 +69,37 @@ MARKDOWN_SECTION_ANCHORS = {
 }
 
 PROMPT_PROTOCOLS = {
-    "finalize": ["authority", "work-item-contract", "risk-policy", "delivery-artifacts", "finalization"],
-    "plan": ["authority", "lifecycle", "work-item-contract", "decision-policy", "delivery-artifacts", "finalization"],
-    "run": ["authority", "work-item-contract", "risk-policy", "delivery-artifacts", "finalization"],
-    "audit": ["authority", "audit-core", "work-item-contract", "risk-policy", "decision-policy", "delivery-artifacts", "finalization"],
+    "finalize": [
+        "authority",
+        "work-item-contract",
+        "risk-policy",
+        "delivery-artifacts",
+        "finalization",
+    ],
+    "plan": [
+        "authority",
+        "lifecycle",
+        "work-item-contract",
+        "decision-policy",
+        "delivery-artifacts",
+        "finalization",
+    ],
+    "run": [
+        "authority",
+        "work-item-contract",
+        "risk-policy",
+        "delivery-artifacts",
+        "finalization",
+    ],
+    "audit": [
+        "authority",
+        "audit-core",
+        "work-item-contract",
+        "risk-policy",
+        "decision-policy",
+        "delivery-artifacts",
+        "finalization",
+    ],
 }
 
 
@@ -76,14 +108,22 @@ def plugin_root() -> Path:
 
 
 def run_git(args: list[str], cwd: Path, check: bool = False) -> str:
-    proc = subprocess.run(["git", *args], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True)
     if check and proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or f"git {' '.join(args)} failed")
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
 def git_ok(args: list[str], cwd: Path) -> bool:
-    return subprocess.run(["git", *args], cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    return (
+        subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
 
 
 def repo_root() -> Path:
@@ -113,7 +153,9 @@ class UniqueKeyLoader(yaml.SafeLoader):
     discard the first without warning. Every DevFlow YAML read goes through here."""
 
 
-def construct_unique_mapping(loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+def construct_unique_mapping(
+    loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[Any, Any]:
     mapping: dict[Any, Any] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
@@ -138,7 +180,14 @@ def parse_audit_text(text: str, source: str) -> dict[str, Any]:
     lines = text.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
         raise ValueError(f"Audit file must start with YAML front matter: {source}")
-    end = next((index for index, line in enumerate(lines[1:], start=1) if line.rstrip("\r\n") == "---"), None)
+    end = next(
+        (
+            index
+            for index, line in enumerate(lines[1:], start=1)
+            if line.rstrip("\r\n") == "---"
+        ),
+        None,
+    )
     if end is None:
         raise ValueError(f"Audit YAML front matter is not closed: {source}")
     try:
@@ -183,7 +232,11 @@ def schema_node_errors(
         if not isinstance(reference, str) or not reference.strip():
             return [f"{path}.$ref must be a nonblank string"]
         discovered_references.add(reference)
-        return [] if reference in references else [f"{path} references unavailable schema {reference}"]
+        return (
+            []
+            if reference in references
+            else [f"{path} references unavailable schema {reference}"]
+        )
 
     errors: list[str] = []
     schema_type = node.get("type")
@@ -191,29 +244,58 @@ def schema_node_errors(
         errors.append(f"{path}.type is invalid")
     if "allowed" in node:
         allowed = node["allowed"]
-        if not isinstance(allowed, list) or not allowed or any(not isinstance(value, str) or not value.strip() for value in allowed):
-            errors.append(f"{path}.allowed must be a non-empty list of nonblank strings")
+        if (
+            not isinstance(allowed, list)
+            or not allowed
+            or any(not isinstance(value, str) or not value.strip() for value in allowed)
+        ):
+            errors.append(
+                f"{path}.allowed must be a non-empty list of nonblank strings"
+            )
         elif len(set(allowed)) != len(allowed):
             errors.append(f"{path}.allowed contains duplicate values")
     if schema_type == "mapping":
         required = node.get("required")
         properties = node.get("properties")
-        if not isinstance(required, list) or not required or any(not isinstance(value, str) or not value.strip() for value in required):
-            errors.append(f"{path}.required must be a non-empty list of nonblank strings")
+        if (
+            not isinstance(required, list)
+            or not required
+            or any(
+                not isinstance(value, str) or not value.strip() for value in required
+            )
+        ):
+            errors.append(
+                f"{path}.required must be a non-empty list of nonblank strings"
+            )
         if not isinstance(properties, dict) or not properties:
             errors.append(f"{path}.properties must be a non-empty mapping")
             return errors
         if isinstance(required, list):
-            missing = sorted(str(field) for field in required if field not in properties)
+            missing = sorted(
+                str(field) for field in required if field not in properties
+            )
             if missing:
-                errors.append(f"{path}.required fields lack properties: {', '.join(missing)}")
+                errors.append(
+                    f"{path}.required fields lack properties: {', '.join(missing)}"
+                )
         for field, child in properties.items():
-            errors.extend(schema_node_errors(child, f"{path}.properties.{field}", references, discovered_references))
+            errors.extend(
+                schema_node_errors(
+                    child,
+                    f"{path}.properties.{field}",
+                    references,
+                    discovered_references,
+                )
+            )
     elif schema_type == "list":
         if not isinstance(node.get("items"), dict):
             errors.append(f"{path}.items must be a mapping")
         else:
-            errors.extend(schema_node_errors(node["items"], f"{path}.items", references, discovered_references))
+            errors.extend(
+                schema_node_errors(
+                    node["items"], f"{path}.items", references, discovered_references
+                )
+            )
     return errors
 
 
@@ -225,7 +307,14 @@ def audit_schema_contract_errors(
 ) -> list[str]:
     anchors = {
         "audit": {
-            "root_keys": {"schema", "type", "contract", "required", "properties", "verdict"},
+            "root_keys": {
+                "schema",
+                "type",
+                "contract",
+                "required",
+                "properties",
+                "verdict",
+            },
             "contract_keys": {"required_allowed", "references", "rubric"},
             "required_allowed": {
                 "properties.scope",
@@ -237,7 +326,14 @@ def audit_schema_contract_errors(
             "rubric": "verdict",
         },
         "finding": {
-            "root_keys": {"schema", "type", "contract", "required", "properties", "classification"},
+            "root_keys": {
+                "schema",
+                "type",
+                "contract",
+                "required",
+                "properties",
+                "classification",
+            },
             "contract_keys": {"required_allowed", "required_fields", "references"},
             "required_allowed": {
                 "properties.classification",
@@ -266,17 +362,26 @@ def audit_schema_contract_errors(
         return errors + ["contract must be a mapping"]
     missing_contract_keys = sorted(anchor["contract_keys"] - set(contract))
     if missing_contract_keys:
-        errors.append(f"contract missing bootstrap keys: {', '.join(missing_contract_keys)}")
+        errors.append(
+            f"contract missing bootstrap keys: {', '.join(missing_contract_keys)}"
+        )
     required_allowed = contract.get("required_allowed")
     if (
         not isinstance(required_allowed, list)
         or not required_allowed
-        or any(not isinstance(value, str) or not value.strip() for value in required_allowed)
+        or any(
+            not isinstance(value, str) or not value.strip()
+            for value in required_allowed
+        )
     ):
-        errors.append("contract.required_allowed must be a non-empty list of nonblank strings")
+        errors.append(
+            "contract.required_allowed must be a non-empty list of nonblank strings"
+        )
         required_allowed = []
     elif set(required_allowed) != anchor["required_allowed"]:
-        errors.append("contract.required_allowed does not match the required enum paths")
+        errors.append(
+            "contract.required_allowed does not match the required enum paths"
+        )
     for dotted_path in required_allowed:
         node = nested_schema_value(schema, str(dotted_path))
         allowed = node.get("allowed") if isinstance(node, dict) else None
@@ -286,7 +391,10 @@ def audit_schema_contract_errors(
     expected_required_fields = anchor.get("required_fields", set())
     if expected_required_fields:
         required_fields = contract.get("required_fields")
-        if not isinstance(required_fields, list) or set(required_fields) != expected_required_fields:
+        if (
+            not isinstance(required_fields, list)
+            or set(required_fields) != expected_required_fields
+        ):
             errors.append("contract.required_fields must protect severity_reason")
         root_required = schema.get("required")
         properties = schema.get("properties")
@@ -295,15 +403,22 @@ def audit_schema_contract_errors(
                 errors.append(f"required must include {field}")
             if not isinstance(properties, dict) or field not in properties:
                 errors.append(f"properties must include {field}")
-            elif not isinstance(properties[field], dict) or properties[field].get("type") != "string":
+            elif (
+                not isinstance(properties[field], dict)
+                or properties[field].get("type") != "string"
+            ):
                 errors.append(f"properties.{field} must remain a nonblank string")
 
     declared_references = contract.get("references")
-    if not isinstance(declared_references, list) or any(not isinstance(value, str) or not value.strip() for value in declared_references):
+    if not isinstance(declared_references, list) or any(
+        not isinstance(value, str) or not value.strip() for value in declared_references
+    ):
         errors.append("contract.references must be a list of nonblank strings")
         declared_references = []
     elif set(declared_references) != anchor["references"]:
-        errors.append("contract.references does not match the required schema references")
+        errors.append(
+            "contract.references does not match the required schema references"
+        )
     discovered_references: set[str] = set()
     errors.extend(schema_node_errors(schema, name, references, discovered_references))
     if set(declared_references) != discovered_references:
@@ -315,23 +430,43 @@ def audit_schema_contract_errors(
     if rubric_name is not None:
         rubric = schema.get(str(rubric_name))
         allowed = nested_schema_value(schema, f"properties.{rubric_name}.allowed")
-        if not isinstance(rubric, dict) or not isinstance(allowed, list) or set(rubric) != set(allowed):
-            errors.append(f"{rubric_name} rubric must cover every allowed value exactly")
+        if (
+            not isinstance(rubric, dict)
+            or not isinstance(allowed, list)
+            or set(rubric) != set(allowed)
+        ):
+            errors.append(
+                f"{rubric_name} rubric must cover every allowed value exactly"
+            )
         elif any(
             not isinstance(rules, dict)
             or not rules
-            or any(not isinstance(values, list) or not values for values in rules.values())
+            or any(
+                not isinstance(values, list) or not values for values in rules.values()
+            )
             for rules in rubric.values()
         ):
             errors.append(f"{rubric_name} rubric rules must be non-empty collections")
     if name == "finding":
-        classifications = nested_schema_value(schema, "properties.classification.allowed")
+        classifications = nested_schema_value(
+            schema, "properties.classification.allowed"
+        )
         dispositions = nested_schema_value(schema, "classification.disposition")
-        allowed_actions = nested_schema_value(schema, "properties.disposition.properties.action.allowed")
-        if not isinstance(classifications, list) or not isinstance(dispositions, dict) or set(dispositions) != set(classifications):
-            errors.append("classification.disposition must cover every allowed classification exactly")
+        allowed_actions = nested_schema_value(
+            schema, "properties.disposition.properties.action.allowed"
+        )
+        if (
+            not isinstance(classifications, list)
+            or not isinstance(dispositions, dict)
+            or set(dispositions) != set(classifications)
+        ):
+            errors.append(
+                "classification.disposition must cover every allowed classification exactly"
+            )
         elif not isinstance(allowed_actions, list):
-            errors.append("properties.disposition.properties.action.allowed is required")
+            errors.append(
+                "properties.disposition.properties.action.allowed is required"
+            )
         elif any(
             not isinstance(rule, dict)
             or rule.get("action") not in allowed_actions
@@ -339,11 +474,16 @@ def audit_schema_contract_errors(
             or rule.get("decision_ids") not in {"required", "empty"}
             or (
                 rule.get("work_ids") == "required"
-                and (not isinstance(rule.get("work_kind"), str) or rule.get("work_kind") not in work_kinds)
+                and (
+                    not isinstance(rule.get("work_kind"), str)
+                    or rule.get("work_kind") not in work_kinds
+                )
             )
             for rule in dispositions.values()
         ):
-            errors.append("classification.disposition rules are invalid, including required work_kind values")
+            errors.append(
+                "classification.disposition rules are invalid, including required work_kind values"
+            )
     return errors
 
 
@@ -355,9 +495,14 @@ def load_audit_schemas() -> tuple[dict[str, Any], dict[str, Any]]:
     if (
         not isinstance(allowed_work_kinds, list)
         or not allowed_work_kinds
-        or any(not isinstance(value, str) or not value.strip() for value in allowed_work_kinds)
+        or any(
+            not isinstance(value, str) or not value.strip()
+            for value in allowed_work_kinds
+        )
     ):
-        raise ValueError("Required work schema is invalid: kind.allowed must be a non-empty list of nonblank strings")
+        raise ValueError(
+            "Required work schema is invalid: kind.allowed must be a non-empty list of nonblank strings"
+        )
     work_kinds = set(allowed_work_kinds)
     references = {"finding": finding_schema}
     for name, schema in [("audit", audit_schema), ("finding", finding_schema)]:
@@ -400,7 +545,9 @@ def canonical_audit_has_mode(
         return False
 
 
-def audit_scope_recovery_command(domain: str, scope: str, phase: str | None, work_item: str | None) -> str:
+def audit_scope_recovery_command(
+    domain: str, scope: str, phase: str | None, work_item: str | None
+) -> str:
     """The command that returns a scope to a fresh initial audit, named in a closure refusal."""
     if scope == "plan":
         return f"devflow plan-review set {domain} pending"
@@ -411,7 +558,9 @@ def audit_scope_recovery_command(domain: str, scope: str, phase: str | None, wor
     return f"devflow integration set {domain} audit"
 
 
-def closure_without_provenance_error(domain: str, scope: str, phase: str | None, work_item: str | None) -> str:
+def closure_without_provenance_error(
+    domain: str, scope: str, phase: str | None, work_item: str | None
+) -> str:
     """One message, used by both the apply and validate paths, spelling out the whole recovery: a
     project that predates machine-owned provenance, or whose STATE was reset, records no prior
     finding set for this scope, so the closure cannot be checked and the initial audit must be
@@ -448,7 +597,11 @@ def recorded_audit_provenance(
         record = entry.get("audit_provenance") if isinstance(entry, dict) else None
     elif scope == "integration":
         integration = state.get("integration")
-        record = integration.get("audit_provenance") if isinstance(integration, dict) else None
+        record = (
+            integration.get("audit_provenance")
+            if isinstance(integration, dict)
+            else None
+        )
     elif scope == "work":
         if work_docs is None:
             work_docs, _, _ = load_work_index(domain_dir(root, domain))
@@ -456,7 +609,11 @@ def recorded_audit_provenance(
             for item in doc.get("items", []) or []:
                 if str(item.get("id")) == str(work_item):
                     review = item.get("review")
-                    record = review.get("audit_provenance") if isinstance(review, dict) else None
+                    record = (
+                        review.get("audit_provenance")
+                        if isinstance(review, dict)
+                        else None
+                    )
     if not isinstance(record, dict):
         return None
     field = (
@@ -465,12 +622,19 @@ def recorded_audit_provenance(
         else "findings"
     )
     findings = record.get(field)
-    return {str(key): str(value) for key, value in findings.items()} if isinstance(findings, dict) else {}
+    return (
+        {str(key): str(value) for key, value in findings.items()}
+        if isinstance(findings, dict)
+        else {}
+    )
 
 
 def audit_provenance_findings(metadata: dict[str, Any]) -> dict[str, str]:
     """The provenance record `audit apply` writes onto the audited scope's machine-owned metadata."""
-    return {str(finding["id"]): str(finding["severity"]) for finding in metadata.get("findings", []) or []}
+    return {
+        str(finding["id"]): str(finding["severity"])
+        for finding in metadata.get("findings", []) or []
+    }
 
 
 def audit_provenance_errors(label: str, record: Any) -> list[str]:
@@ -491,7 +655,9 @@ def audit_provenance_errors(label: str, record: Any) -> list[str]:
             continue
         for key, value in findings.items():
             if not isinstance(key, str) or not key.strip():
-                errors.append(f"{label}.audit_provenance.{field} has a blank finding id")
+                errors.append(
+                    f"{label}.audit_provenance.{field} has a blank finding id"
+                )
             if value not in SEVERITY_RANK:
                 errors.append(
                     f"{label}.audit_provenance.{field}[{key}] has an invalid severity: {value!r}"
@@ -507,7 +673,11 @@ def validate_schema_value(
 ) -> list[str]:
     if "$ref" in spec:
         target = references.get(str(spec["$ref"]))
-        return [f"{path}: unknown schema reference {spec['$ref']}"] if target is None else validate_schema_value(value, target, path, references)
+        return (
+            [f"{path}: unknown schema reference {spec['$ref']}"]
+            if target is None
+            else validate_schema_value(value, target, path, references)
+        )
 
     errors: list[str] = []
     expected_type = spec.get("type")
@@ -519,7 +689,9 @@ def validate_schema_value(
     if "const" in spec and value != spec["const"]:
         errors.append(f"{path} must be {spec['const']!r}")
     if "allowed" in spec and value not in spec["allowed"]:
-        errors.append(f"{path} must be one of: {', '.join(str(item) for item in spec['allowed'])}")
+        errors.append(
+            f"{path} must be one of: {', '.join(str(item) for item in spec['allowed'])}"
+        )
 
     if isinstance(value, dict):
         for field in spec.get("required", []) or []:
@@ -527,14 +699,22 @@ def validate_schema_value(
                 errors.append(f"{path} missing required field: {field}")
         for field, child in (spec.get("properties", {}) or {}).items():
             if field in value:
-                errors.extend(validate_schema_value(value[field], child, f"{path}.{field}", references))
+                errors.extend(
+                    validate_schema_value(
+                        value[field], child, f"{path}.{field}", references
+                    )
+                )
     elif isinstance(value, list):
         if len(value) < int(spec.get("min_items", 0)):
             errors.append(f"{path} must contain at least {spec['min_items']} item(s)")
         item_spec = spec.get("items")
         if isinstance(item_spec, dict):
             for index, item in enumerate(value):
-                errors.extend(validate_schema_value(item, item_spec, f"{path}[{index}]", references))
+                errors.extend(
+                    validate_schema_value(
+                        item, item_spec, f"{path}[{index}]", references
+                    )
+                )
     return errors
 
 
@@ -555,12 +735,17 @@ def work_schema_contract_errors(schema: dict[str, Any]) -> list[str]:
             or len(supported) != 2
             or set(supported) != {1, 2}
         ):
-            errors.append("version.supported must contain exactly integer versions 1 and 2")
+            errors.append(
+                "version.supported must contain exactly integer versions 1 and 2"
+            )
     version_2 = schema.get("version_2")
     if not isinstance(version_2, dict) or not all(
-        isinstance(version_2.get(field), dict) for field in ["acceptance", "verification_command"]
+        isinstance(version_2.get(field), dict)
+        for field in ["acceptance", "verification_command"]
     ):
-        errors.append("version_2 must define acceptance and verification_command mappings")
+        errors.append(
+            "version_2 must define acceptance and verification_command mappings"
+        )
     return errors
 
 
@@ -580,9 +765,19 @@ def configure_work_schema() -> None:
         TERMINAL_STATUSES = set(schema["terminal"])
         KINDS = set(schema["kind"]["allowed"])
         RISK_LEVELS = set(schema["risk_level"]["allowed"])
-        REVIEW_STATUSES = set(schema.get("review_status", {}).get("allowed", ["skipped", "pending", "remediation", "blocked", "verified"]))
-        FINDING_TRACEABILITY_KINDS = set(schema["finding_traceability"]["required_for_kinds"])
-        AGGREGATION_REASON_THRESHOLD = int(schema["finding_traceability"]["aggregation_reason_required_when_findings_at_least"])
+        REVIEW_STATUSES = set(
+            schema.get("review_status", {}).get(
+                "allowed", ["skipped", "pending", "remediation", "blocked", "verified"]
+            )
+        )
+        FINDING_TRACEABILITY_KINDS = set(
+            schema["finding_traceability"]["required_for_kinds"]
+        )
+        AGGREGATION_REASON_THRESHOLD = int(
+            schema["finding_traceability"][
+                "aggregation_reason_required_when_findings_at_least"
+            ]
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"Required WORK schema is invalid: {exc}") from exc
     WORK_SCHEMA = schema
@@ -593,7 +788,9 @@ STATE_REQUIRED_FIELDS = STATE_SCHEMA["required"]
 FINDING_SCHEMA = load_schema("finding")
 # Severity order is highest-first, taken from the finding schema so it stays the trust anchor.
 SEVERITY_ORDER: list[str] = list(FINDING_SCHEMA["severity"]["allowed"])
-SEVERITY_RANK: dict[str, int] = {name: index for index, name in enumerate(SEVERITY_ORDER)}
+SEVERITY_RANK: dict[str, int] = {
+    name: index for index, name in enumerate(SEVERITY_ORDER)
+}
 WORKFLOW_TYPES = set(STATE_SCHEMA["workflow_type"]["allowed"])
 PHASE_ENTRY_REQUIRED_FIELDS = STATE_SCHEMA["phase_entry"]["required"]
 PROJECT_STATUSES = set(STATE_SCHEMA["project_status"]["allowed"])
@@ -616,7 +813,9 @@ def atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as temp:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, delete=False
+        ) as temp:
             temp.write(content)
             temp_path = Path(temp.name)
         os.replace(temp_path, path)
@@ -627,7 +826,9 @@ def atomic_write_text(path: Path, content: str) -> None:
 
 
 def dump_yaml(path: Path, data: Any) -> None:
-    atomic_write_text(path, yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000))
+    atomic_write_text(
+        path, yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000)
+    )
 
 
 def dump_yaml_if_changed(path: Path, data: Any) -> bool:
@@ -651,7 +852,9 @@ def commit_yaml_transaction(documents: dict[Path, Any]) -> None:
             if not path.exists():
                 backups[path] = None
                 continue
-            with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as backup:
+            with tempfile.NamedTemporaryFile(
+                "wb", dir=path.parent, delete=False
+            ) as backup:
                 backup.write(path.read_bytes())
                 backups[path] = Path(backup.name)
     except Exception:
@@ -677,8 +880,10 @@ def commit_yaml_transaction(documents: dict[Path, Any]) -> None:
             if backup_path is not None:
                 backup_path.unlink(missing_ok=True)
         if rollback_errors:
-            raise RuntimeError("Audit apply rollback failed: " + "; ".join(rollback_errors)) from commit_error
-        raise commit_error
+            raise RuntimeError(
+                "Audit apply rollback failed: " + "; ".join(rollback_errors)
+            ) from commit_error
+        raise
     for backup_path in backups.values():
         if backup_path is not None:
             backup_path.unlink(missing_ok=True)
@@ -721,7 +926,9 @@ def normalized_acceptance(item: dict[str, Any], version: int) -> list[dict[str, 
     return [value for value in values if isinstance(value, dict)]
 
 
-def normalized_verification_commands(item: dict[str, Any], version: int) -> list[dict[str, Any]]:
+def normalized_verification_commands(
+    item: dict[str, Any], version: int
+) -> list[dict[str, Any]]:
     verification = item.get("verification")
     values = verification.get("commands") if isinstance(verification, dict) else None
     if not isinstance(values, list):
@@ -756,14 +963,28 @@ def config_protocol_diagnostics(root: Path) -> tuple[list[str], list[str], bool]
     if version is None:
         return [f"Invalid config protocol_version: {value or '<empty>'}"], [], False
     if version[0] != runtime_version[0]:
-        return [f"Unsupported config protocol_version {value}: this runtime implements {PROTOCOL_VERSION}"], [], False
+        return (
+            [
+                f"Unsupported config protocol_version {value}: this runtime implements {PROTOCOL_VERSION}"
+            ],
+            [],
+            False,
+        )
     newer = version[1:] > runtime_version[1:]
-    warnings = [f"Config protocol_version {value} is newer than this runtime's {PROTOCOL_VERSION}"] if newer else []
+    warnings = (
+        [
+            f"Config protocol_version {value} is newer than this runtime's {PROTOCOL_VERSION}"
+        ]
+        if newer
+        else []
+    )
     return [], warnings, newer
 
 
 def reported_protocol_versions(root: Path, state: dict[str, Any]) -> dict[str, str]:
-    config_version = str(runtime_config(root).get("protocol_version") or PROTOCOL_VERSION)
+    config_version = str(
+        runtime_config(root).get("protocol_version") or PROTOCOL_VERSION
+    )
     state_version = str(state.get("protocol_version") or config_version)
     return {
         "runtime": PROTOCOL_VERSION,
@@ -782,7 +1003,9 @@ def domain_dir(root: Path, domain: str) -> Path:
     try:
         (base / domain).resolve().relative_to(base.resolve())
     except ValueError as exc:
-        raise ValueError(f"Domain escapes domains_root: {domain!r} resolves outside {domains_root_rel}") from exc
+        raise ValueError(
+            f"Domain escapes domains_root: {domain!r} resolves outside {domains_root_rel}"
+        ) from exc
     return base / domain
 
 
@@ -804,7 +1027,9 @@ def read_template(name: str) -> str:
 
 
 def read_protocol(name: str) -> str:
-    return (plugin_root() / "core" / "protocol" / f"{name}.md").read_text(encoding="utf-8")
+    return (plugin_root() / "core" / "protocol" / f"{name}.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def resolve_extension(root: Path, state: dict[str, Any]) -> Path:
@@ -825,7 +1050,14 @@ def ensure_runtime(root: Path) -> None:
     runtime.mkdir(parents=True, exist_ok=True)
     cfg = runtime / "config.yaml"
     if not cfg.exists():
-        dump_yaml(cfg, {"protocol_version": PROTOCOL_VERSION, "domains_root": "docs/domains", "extension": "default"})
+        dump_yaml(
+            cfg,
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "domains_root": "docs/domains",
+                "extension": "default",
+            },
+        )
 
 
 def phase_key(value: Any) -> str:
@@ -860,14 +1092,17 @@ def requires_audit_apply(state: dict[str, Any], root: Path | None = None) -> boo
     project config's, so a STATE downgrade cannot disable the gate that init recorded."""
     candidates = [
         version
-        for version in (parsed_protocol_version(state.get("protocol_version")), config_protocol_floor(root) if root is not None else None)
+        for version in (
+            parsed_protocol_version(state.get("protocol_version")),
+            config_protocol_floor(root) if root is not None else None,
+        )
         if version is not None
     ]
     return bool(candidates and max(candidates) >= (1, 3, 0))
 
 
 def raw_phase_key(state: dict[str, Any], key: str) -> str | None:
-    for raw in (state.get("phases", {}) or {}):
+    for raw in state.get("phases", {}) or {}:
         if phase_key(raw) == key:
             return raw
     return None
@@ -891,11 +1126,17 @@ def init_domain(args: argparse.Namespace) -> int:
         if not prd.exists() or args.force:
             prd.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     elif not prd.exists():
-        template = "PRD.audit-remediation.md" if workflow_type == "audit_remediation" else "PRD.md"
+        template = (
+            "PRD.audit-remediation.md"
+            if workflow_type == "audit_remediation"
+            else "PRD.md"
+        )
         prd.write_text(read_template(template), encoding="utf-8")
 
     templates = {
-        "PLAN.md": "PLAN.audit-remediation.md" if workflow_type == "audit_remediation" else "PLAN.md",
+        "PLAN.md": "PLAN.audit-remediation.md"
+        if workflow_type == "audit_remediation"
+        else "PLAN.md",
         "DECISIONS.md": "DECISIONS.md",
         "PITFALLS.md": "PITFALLS.md",
     }
@@ -914,16 +1155,51 @@ def init_domain(args: argparse.Namespace) -> int:
     state["domain"] = args.domain
     state.setdefault("risk_profile", args.risk)
     state.setdefault("extension", args.extension)
-    state.setdefault("project_status", "integration_audit" if workflow_type == "audit_remediation" else "planning")
+    state.setdefault(
+        "project_status",
+        "integration_audit" if workflow_type == "audit_remediation" else "planning",
+    )
     state.setdefault("baseline_sha", current_sha(root))
     state.setdefault("target_sha", current_sha(root))
     state.setdefault("active_phase", None)
     plan_review_required = workflow_type == "delivery" and args.risk in HIGH_RISK
-    state.setdefault("plan_review", {"required": plan_review_required, "status": "pending" if plan_review_required else "skipped", "audit_file": "audits/plan.md"})
+    state.setdefault(
+        "plan_review",
+        {
+            "required": plan_review_required,
+            "status": "pending" if plan_review_required else "skipped",
+            "audit_file": "audits/plan.md",
+        },
+    )
     state.setdefault("phases", {})
-    state.setdefault("integration", {"status": "audit" if workflow_type == "audit_remediation" else "pending", "work_file": "work/integration.yaml", "audit_file": "audits/integration.md"})
+    state.setdefault(
+        "integration",
+        {
+            "status": "audit" if workflow_type == "audit_remediation" else "pending",
+            "work_file": "work/integration.yaml",
+            "audit_file": "audits/integration.md",
+        },
+    )
     state.setdefault("unresolved_decisions", [])
-    state.setdefault("next_action", {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None} if workflow_type == "audit_remediation" else {"role": "architect", "command": "plan", "scope": "project", "phase": None, "work_item": None})
+    state.setdefault(
+        "next_action",
+        {
+            "role": "auditor",
+            "command": "audit",
+            "scope": "integration",
+            "mode": "initial",
+            "phase": None,
+            "work_item": None,
+        }
+        if workflow_type == "audit_remediation"
+        else {
+            "role": "architect",
+            "command": "plan",
+            "scope": "project",
+            "phase": None,
+            "work_item": None,
+        },
+    )
     dump_yaml(state_path(root, args.domain), state)
     print(f"Initialized DevFlow domain: {d.relative_to(root)}")
     print(f"workflow_type: {effective_workflow_type(state)}")
@@ -937,7 +1213,9 @@ def init_domain(args: argparse.Namespace) -> int:
 
 def work_files(d: Path) -> list[Path]:
     work = d / "work"
-    return sorted(p for p in work.glob("*.yaml") if p.is_file()) if work.exists() else []
+    return (
+        sorted(p for p in work.glob("*.yaml") if p.is_file()) if work.exists() else []
+    )
 
 
 def index_work_docs(docs: dict[Path, dict[str, Any]]):
@@ -963,7 +1241,7 @@ def item_phase(path: Path, doc: dict[str, Any]) -> str:
     phase = doc.get("phase")
     if phase is not None:
         return phase_key(phase)
-    m = re.search(r"phase[-_]?([0-9]+)", path.stem, re.I)
+    m = re.search(r"phase[-_]?([0-9]+)", path.stem, re.IGNORECASE)
     return phase_key(m.group(1)) if m else "integration"
 
 
@@ -978,7 +1256,11 @@ def effective_review(item: dict[str, Any]) -> dict[str, Any]:
     elif high_risk and implemented and raw.get("required") is True:
         required = True
     status = raw.get("status")
-    if status not in REVIEW_STATUSES or (high_risk and implemented and raw and raw.get("required") is not True) or (required and status == "skipped"):
+    if (
+        status not in REVIEW_STATUSES
+        or (high_risk and implemented and raw and raw.get("required") is not True)
+        or (required and status == "skipped")
+    ):
         status = "pending" if required else "skipped"
     review = {
         "required": required,
@@ -997,7 +1279,8 @@ def effective_plan_review(state: dict[str, Any]) -> dict[str, Any]:
     raw = state.get("plan_review") if isinstance(state.get("plan_review"), dict) else {}
     review = {
         "required": bool(raw.get("required")),
-        "status": raw.get("status") or ("pending" if raw.get("required") else "skipped"),
+        "status": raw.get("status")
+        or ("pending" if raw.get("required") else "skipped"),
         "audit_file": raw.get("audit_file") or "audits/plan.md",
     }
     if "remediation_work_ids" in raw:
@@ -1012,7 +1295,9 @@ def review_satisfied(item: dict[str, Any]) -> bool:
     return not review["required"] or review["status"] == "verified"
 
 
-def dependency_reaches(item_id: str, target_id: str, index: dict[str, tuple[Path, dict[str, Any]]]) -> bool:
+def dependency_reaches(
+    item_id: str, target_id: str, index: dict[str, tuple[Path, dict[str, Any]]]
+) -> bool:
     """True when target_id is reachable from item_id by following `dependencies` edges only."""
     target = str(target_id)
     seen: set[str] = set()
@@ -1033,7 +1318,9 @@ def dependency_reaches(item_id: str, target_id: str, index: dict[str, tuple[Path
     return False
 
 
-def remediation_completion_blockers(review: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
+def remediation_completion_blockers(
+    review: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]
+) -> list[str]:
     """Reasons a registered remediation set is not yet closed, so `verified` may not proceed."""
     blockers: list[str] = []
     for remediation_id in review.get("remediation_work_ids", []) or []:
@@ -1049,7 +1336,9 @@ def remediation_completion_blockers(review: dict[str, Any], index: dict[str, tup
     return blockers
 
 
-def deps_satisfied(item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> bool:
+def deps_satisfied(
+    item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]
+) -> bool:
     return not dependency_blockers(item, index)
 
 
@@ -1057,7 +1346,9 @@ def decision_satisfied(item: dict[str, Any], unresolved: set[str]) -> bool:
     return not decision_blockers(item, unresolved)
 
 
-def dependency_blockers(item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]) -> list[str]:
+def dependency_blockers(
+    item: dict[str, Any], index: dict[str, tuple[Path, dict[str, Any]]]
+) -> list[str]:
     blockers = []
     for dep in item.get("dependencies", []) or []:
         dependency_id = str(dep)
@@ -1069,12 +1360,18 @@ def dependency_blockers(item: dict[str, Any], index: dict[str, tuple[Path, dict[
         if dependency.get("status") not in TERMINAL_STATUSES:
             blockers.append(f"dependency {dependency_id} is not terminal")
         elif dependency.get("status") == "done" and not review_satisfied(dependency):
-            blockers.append(f"dependency {dependency_id} requires review before dependent WORK may proceed")
+            blockers.append(
+                f"dependency {dependency_id} requires review before dependent WORK may proceed"
+            )
     return blockers
 
 
 def decision_blockers(item: dict[str, Any], unresolved: set[str]) -> list[str]:
-    return [f"unresolved decision {decision}" for decision in item.get("decision_dependencies", []) or [] if str(decision) in unresolved]
+    return [
+        f"unresolved decision {decision}"
+        for decision in item.get("decision_dependencies", []) or []
+        if str(decision) in unresolved
+    ]
 
 
 def work_start_errors(
@@ -1091,13 +1388,17 @@ def work_start_errors(
     errors.extend(dependency_blockers(item, index))
     decision_errors, open_decisions = decision_state_errors(state, d)
     errors.extend(decision_errors)
-    unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []} | open_decisions
+    unresolved = {
+        str(value) for value in state.get("unresolved_decisions", []) or []
+    } | open_decisions
     errors.extend(decision_blockers(item, unresolved))
 
     phase = item_phase(path, doc)
     phases = normalized_phases(state)
     if phase == "integration":
-        unverified = sorted(key for key, entry in phases.items() if entry.get("status") != "verified")
+        unverified = sorted(
+            key for key, entry in phases.items() if entry.get("status") != "verified"
+        )
         if unverified:
             errors.append(f"project phases are not verified: {', '.join(unverified)}")
     elif phases.get(phase, {}).get("status") == "verified":
@@ -1109,18 +1410,30 @@ def work_start_errors(
         and isinstance(plan_review.get("remediation_work_ids"), list)
         and str(item.get("id")) in plan_review.get("remediation_work_ids", [])
     )
-    if plan_review.get("required") and plan_review.get("status") != "verified" and not plan_remediation:
+    if (
+        plan_review.get("required")
+        and plan_review.get("status") != "verified"
+        and not plan_remediation
+    ):
         errors.append("required plan review is pending")
     return errors
 
 
-def phase_items(d: Path, docs: dict[Path, dict[str, Any]], key: str, phase: dict[str, Any]) -> list[dict[str, Any]]:
+def phase_items(
+    d: Path, docs: dict[Path, dict[str, Any]], key: str, phase: dict[str, Any]
+) -> list[dict[str, Any]]:
     work_path = d / phase.get("work_file", f"work/phase-{key}.yaml")
     doc = docs.get(work_path) or load_yaml(work_path, {}) or {}
     return list(doc.get("items", []) or [])
 
 
-def phase_verify_errors(root: Path, domain: str, state: dict[str, Any], phase_key_value: str, docs: dict[Path, dict[str, Any]]) -> list[str]:
+def phase_verify_errors(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    phase_key_value: str,
+    docs: dict[Path, dict[str, Any]],
+) -> list[str]:
     phases = normalized_phases(state)
     phase = phases.get(phase_key_value)
     if phase is None:
@@ -1131,17 +1444,36 @@ def phase_verify_errors(root: Path, domain: str, state: dict[str, Any], phase_ke
     errors = []
     if not items:
         errors.append(f"phase {phase_key_value} has no WORK items")
-    open_items = [str(item.get("id")) for item in items if item.get("status") not in TERMINAL_STATUSES]
+    open_items = [
+        str(item.get("id"))
+        for item in items
+        if item.get("status") not in TERMINAL_STATUSES
+    ]
     if open_items:
         errors.append(f"open WORK remains: {', '.join(open_items)}")
-    blocked_items = [str(item.get("id")) for item in items if item.get("status") == "blocked"]
+    blocked_items = [
+        str(item.get("id")) for item in items if item.get("status") == "blocked"
+    ]
     if blocked_items:
         errors.append(f"blocked WORK remains: {', '.join(blocked_items)}")
-    pending_reviews = [str(item.get("id")) for item in items if item.get("status") == "done" and (item.get("risk") or {}).get("level") in HIGH_RISK and not review_satisfied(item)]
+    pending_reviews = [
+        str(item.get("id"))
+        for item in items
+        if item.get("status") == "done"
+        and (item.get("risk") or {}).get("level") in HIGH_RISK
+        and not review_satisfied(item)
+    ]
     if pending_reviews:
         errors.append(f"high-risk WORK requires review: {', '.join(pending_reviews)}")
     unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []}
-    decisions = sorted({str(decision) for item in items for decision in (item.get("decision_dependencies", []) or []) if str(decision) in unresolved})
+    decisions = sorted(
+        {
+            str(decision)
+            for item in items
+            for decision in (item.get("decision_dependencies", []) or [])
+            if str(decision) in unresolved
+        }
+    )
     if decisions:
         errors.append(f"unresolved decisions: {', '.join(decisions)}")
     if not phase.get("diff_range"):
@@ -1152,26 +1484,53 @@ def phase_verify_errors(root: Path, domain: str, state: dict[str, Any], phase_ke
     return errors
 
 
-def integration_verify_errors(root: Path, domain: str, state: dict[str, Any], docs: dict[Path, dict[str, Any]]) -> list[str]:
+def integration_verify_errors(
+    root: Path, domain: str, state: dict[str, Any], docs: dict[Path, dict[str, Any]]
+) -> list[str]:
     phases = normalized_phases(state)
     errors = []
     if not phases and effective_workflow_type(state) != "audit_remediation":
         errors.append("project has no phases to verify")
-    unverified = sorted(key for key, phase in phases.items() if phase.get("status") != "verified")
+    unverified = sorted(
+        key for key, phase in phases.items() if phase.get("status") != "verified"
+    )
     if unverified:
         errors.append(f"phases are not verified: {', '.join(unverified)}")
 
-    integration_items = [item for path, doc in docs.items() if item_phase(path, doc) == "integration" for item in (doc.get("items", []) or [])]
-    open_items = [str(item.get("id")) for item in integration_items if item.get("status") not in TERMINAL_STATUSES]
+    integration_items = [
+        item
+        for path, doc in docs.items()
+        if item_phase(path, doc) == "integration"
+        for item in (doc.get("items", []) or [])
+    ]
+    open_items = [
+        str(item.get("id"))
+        for item in integration_items
+        if item.get("status") not in TERMINAL_STATUSES
+    ]
     if open_items:
         errors.append(f"open integration WORK remains: {', '.join(open_items)}")
-    blocked_items = [str(item.get("id")) for item in integration_items if item.get("status") == "blocked"]
+    blocked_items = [
+        str(item.get("id"))
+        for item in integration_items
+        if item.get("status") == "blocked"
+    ]
     if blocked_items:
         errors.append(f"blocked integration WORK remains: {', '.join(blocked_items)}")
-    pending_reviews = [str(item.get("id")) for item in integration_items if item.get("status") == "done" and (item.get("risk") or {}).get("level") in HIGH_RISK and not review_satisfied(item)]
+    pending_reviews = [
+        str(item.get("id"))
+        for item in integration_items
+        if item.get("status") == "done"
+        and (item.get("risk") or {}).get("level") in HIGH_RISK
+        and not review_satisfied(item)
+    ]
     if pending_reviews:
-        errors.append(f"high-risk integration WORK requires review: {', '.join(pending_reviews)}")
-    unresolved = sorted(str(value) for value in state.get("unresolved_decisions", []) or [])
+        errors.append(
+            f"high-risk integration WORK requires review: {', '.join(pending_reviews)}"
+        )
+    unresolved = sorted(
+        str(value) for value in state.get("unresolved_decisions", []) or []
+    )
     if unresolved:
         errors.append(f"unresolved project decisions: {', '.join(unresolved)}")
     d = domain_dir(root, domain)
@@ -1198,9 +1557,10 @@ def choose_next(
     d = domain_dir(root, domain)
     docs, index, _ = load_work_index(d, work_overrides)
     phases = normalized_phases(state)
-    unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
+    unresolved = {str(x) for x in state.get("unresolved_decisions", []) or []}
     all_phases_verified = effective_workflow_type(state) == "audit_remediation" or (
-        bool(phases) and all(entry.get("status") == "verified" for entry in phases.values())
+        bool(phases)
+        and all(entry.get("status") == "verified" for entry in phases.values())
     )
 
     candidates = []
@@ -1213,10 +1573,27 @@ def choose_next(
             continue
         for item in doc.get("items", []) or []:
             status = item.get("status")
-            if status in {"in_progress", "ready"} and (statuses is None or status in statuses) and deps_satisfied(item, index) and decision_satisfied(item, unresolved):
+            if (
+                status in {"in_progress", "ready"}
+                and (statuses is None or status in statuses)
+                and deps_satisfied(item, index)
+                and decision_satisfied(item, unresolved)
+            ):
                 priority = 0 if status == "in_progress" else 1
-                risk = {"critical": 0, "high": 1, "medium": 2, "low": 3}.get((item.get("risk") or {}).get("level"), 2)
-                candidates.append((priority, phase == "integration", phase, risk, str(item.get("id")), path, item))
+                risk = {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(
+                    (item.get("risk") or {}).get("level"), 2
+                )
+                candidates.append(
+                    (
+                        priority,
+                        phase == "integration",
+                        phase,
+                        risk,
+                        str(item.get("id")),
+                        path,
+                        item,
+                    )
+                )
     if not candidates:
         return None
     candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3], x[4]))
@@ -1241,32 +1618,101 @@ def work_review_action(
     """Return the unresolved high-risk review action before normal ready WORK."""
     d = domain_dir(root, domain)
     docs, index, _ = load_work_index(d, work_overrides)
-    unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or [])
+    unresolved = {str(x) for x in state.get("unresolved_decisions", []) or []}
     reviews = []
     for path, doc in docs.items():
         for item in doc.get("items", []) or []:
             review = effective_review(item)
-            if item.get("status") == "done" and review["required"] and review["status"] != "verified":
-                reviews.append((str(item.get("id")), item_phase(path, doc), item, review))
+            if (
+                item.get("status") == "done"
+                and review["required"]
+                and review["status"] != "verified"
+            ):
+                reviews.append(
+                    (str(item.get("id")), item_phase(path, doc), item, review)
+                )
     # Phase before id, the same ordering choose_next uses, so both halves of the runtime agree.
-    for item_id, phase, item, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
+    for item_id, phase, item, review in sorted(
+        reviews, key=lambda entry: (entry[1], entry[0])
+    ):
         if review["status"] == "pending":
-            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item_id, **work_routing_fields(item)}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "work",
+                "mode": "initial",
+                "phase": None if phase == "integration" else phase,
+                "work_item": item_id,
+                **work_routing_fields(item),
+            }
         if review["status"] == "blocked":
-            return {"role": "human", "command": "decision", "scope": "work", "phase": None if phase == "integration" else phase, "work_item": item_id}
-    for item_id, phase, item, review in sorted(reviews, key=lambda entry: (entry[1], entry[0])):
+            return {
+                "role": "human",
+                "command": "decision",
+                "scope": "work",
+                "phase": None if phase == "integration" else phase,
+                "work_item": item_id,
+            }
+    for item_id, phase, item, review in sorted(
+        reviews, key=lambda entry: (entry[1], entry[0])
+    ):
         if review["status"] != "remediation":
             continue
-        remediation = [index.get(str(remediation_id)) for remediation_id in review["remediation_work_ids"]]
-        executable = [target for target in remediation if target and target[1].get("status") in {"in_progress", "ready"} and deps_satisfied(target[1], index) and decision_satisfied(target[1], unresolved)]
+        remediation = [
+            index.get(str(remediation_id))
+            for remediation_id in review["remediation_work_ids"]
+        ]
+        executable = [
+            target
+            for target in remediation
+            if target
+            and target[1].get("status") in {"in_progress", "ready"}
+            and deps_satisfied(target[1], index)
+            and decision_satisfied(target[1], unresolved)
+        ]
         if executable:
-            executable.sort(key=lambda target: (0 if target[1].get("status") == "in_progress" else 1, str(target[1].get("id"))))
+            executable.sort(
+                key=lambda target: (
+                    0 if target[1].get("status") == "in_progress" else 1,
+                    str(target[1].get("id")),
+                )
+            )
             remediation_item = executable[0][1]
             remediation_phase = item_phase(executable[0][0], docs[executable[0][0]])
-            return {"role": "executor", "command": "run", "scope": "integration" if remediation_phase == "integration" else "phase", "phase": None if remediation_phase == "integration" else remediation_phase, "work_item": remediation_item.get("id"), **work_routing_fields(remediation_item)}
-        if remediation and all(target and target[1].get("status") in TERMINAL_STATUSES and review_satisfied(target[1]) for target in remediation):
-            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "closure", "phase": None if phase == "integration" else phase, "work_item": item_id, **work_routing_fields(item)}
-        return {"role": "human", "command": "decision", "scope": "work", "phase": None if phase == "integration" else phase, "work_item": item_id}
+            return {
+                "role": "executor",
+                "command": "run",
+                "scope": "integration"
+                if remediation_phase == "integration"
+                else "phase",
+                "phase": None
+                if remediation_phase == "integration"
+                else remediation_phase,
+                "work_item": remediation_item.get("id"),
+                **work_routing_fields(remediation_item),
+            }
+        if remediation and all(
+            target
+            and target[1].get("status") in TERMINAL_STATUSES
+            and review_satisfied(target[1])
+            for target in remediation
+        ):
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "work",
+                "mode": "closure",
+                "phase": None if phase == "integration" else phase,
+                "work_item": item_id,
+                **work_routing_fields(item),
+            }
+        return {
+            "role": "human",
+            "command": "decision",
+            "scope": "work",
+            "phase": None if phase == "integration" else phase,
+            "work_item": item_id,
+        }
     return None
 
 
@@ -1278,10 +1724,18 @@ def plan_remediation_action(
     work_overrides: dict[Path, dict[str, Any]] | None,
 ) -> dict[str, Any]:
     if state.get("unresolved_decisions"):
-        return {"role": "human", "command": "decision", "scope": "plan", "phase": None, "work_item": None}
+        return {
+            "role": "human",
+            "command": "decision",
+            "scope": "plan",
+            "phase": None,
+            "work_item": None,
+        }
     d = domain_dir(root, domain)
     docs, index, _ = load_work_index(d, work_overrides)
-    targets = [index.get(str(item_id)) for item_id in review.get("remediation_work_ids", [])]
+    targets = [
+        index.get(str(item_id)) for item_id in review.get("remediation_work_ids", [])
+    ]
     for status in ["in_progress", "ready"]:
         for target in targets:
             if not target or target[1].get("status") != status:
@@ -1304,15 +1758,47 @@ def plan_remediation_action(
         item_review = effective_review(item)
         phase = item_phase(path, docs[path])
         if item_review["required"] and item_review["status"] == "pending":
-            return {"role": "auditor", "command": "audit", "scope": "work", "mode": "initial", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), **work_routing_fields(item)}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "work",
+                "mode": "initial",
+                "phase": None if phase == "integration" else phase,
+                "work_item": item.get("id"),
+                **work_routing_fields(item),
+            }
         if item_review["required"] and item_review["status"] != "verified":
             action = work_review_action(root, domain, state, work_overrides)
             if action and action.get("work_item") == item.get("id"):
                 return action
-            return {"role": "human", "command": "decision", "scope": "work", "phase": None if phase == "integration" else phase, "work_item": item.get("id")}
-    if targets and all(target and target[1].get("status") in TERMINAL_STATUSES and review_satisfied(target[1]) for target in targets):
-        return {"role": "auditor", "command": "audit", "scope": "plan", "mode": "closure", "phase": None, "work_item": None}
-    return {"role": "human", "command": "decision", "scope": "plan", "phase": None, "work_item": None}
+            return {
+                "role": "human",
+                "command": "decision",
+                "scope": "work",
+                "phase": None if phase == "integration" else phase,
+                "work_item": item.get("id"),
+            }
+    if targets and all(
+        target
+        and target[1].get("status") in TERMINAL_STATUSES
+        and review_satisfied(target[1])
+        for target in targets
+    ):
+        return {
+            "role": "auditor",
+            "command": "audit",
+            "scope": "plan",
+            "mode": "closure",
+            "phase": None,
+            "work_item": None,
+        }
+    return {
+        "role": "human",
+        "command": "decision",
+        "scope": "plan",
+        "phase": None,
+        "work_item": None,
+    }
 
 
 def base_next_action(
@@ -1326,40 +1812,122 @@ def base_next_action(
     workflow_type = effective_workflow_type(state)
     integration = state.get("integration", {}) or {}
     phases = normalized_phases(state)
-    all_verified = bool(phases) and all(phase.get("status") == "verified" for phase in phases.values())
+    all_verified = bool(phases) and all(
+        phase.get("status") == "verified" for phase in phases.values()
+    )
     plan_review = effective_plan_review(state)
     remediation_work_ids = plan_review.get("remediation_work_ids", [])
     if not isinstance(remediation_work_ids, list):
         raise ValueError("plan_review.remediation_work_ids must be a list")
-    if state.get("unresolved_decisions") and (workflow_type == "audit_remediation" or all_verified):
-        return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
-    if integration.get("status") == "blocked" and (workflow_type == "audit_remediation" or all_verified):
-        return {"role": "human", "command": "decision", "scope": "integration", "phase": None, "work_item": None}
+    if state.get("unresolved_decisions") and (
+        workflow_type == "audit_remediation" or all_verified
+    ):
+        return {
+            "role": "human",
+            "command": "decision",
+            "scope": "project",
+            "phase": None,
+            "work_item": None,
+        }
+    if integration.get("status") == "blocked" and (
+        workflow_type == "audit_remediation" or all_verified
+    ):
+        return {
+            "role": "human",
+            "command": "decision",
+            "scope": "integration",
+            "phase": None,
+            "work_item": None,
+        }
     if workflow_type == "audit_remediation":
         integration_status = integration.get("status", "audit")
         if integration_status in {"pending", "audit"}:
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "initial",
+                "phase": None,
+                "work_item": None,
+            }
         if integration_status == "closure":
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "closure",
+                "phase": None,
+                "work_item": None,
+            }
         if integration_status == "verified":
-            return {"role": "none", "command": "complete", "scope": "project", "phase": None, "work_item": None}
+            return {
+                "role": "none",
+                "command": "complete",
+                "scope": "project",
+                "phase": None,
+                "work_item": None,
+            }
         if not work:
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "closure",
+                "phase": None,
+                "work_item": None,
+            }
     elif not work:
-        return {"role": "architect", "command": "plan", "scope": "project", "phase": None, "work_item": None}
+        return {
+            "role": "architect",
+            "command": "plan",
+            "scope": "project",
+            "phase": None,
+            "work_item": None,
+        }
 
     if plan_review.get("required") and plan_review.get("status") != "verified":
         if plan_review.get("status") == "blocked":
-            return {"role": "human", "command": "decision", "scope": "plan", "phase": None, "work_item": None}
-        if plan_review.get("status") in {"pending", "remediation"} and remediation_work_ids:
-            return plan_remediation_action(root, domain, state, plan_review, work_overrides)
-        return {"role": "auditor", "command": "audit", "scope": "plan", "mode": "initial", "phase": None, "work_item": None}
+            return {
+                "role": "human",
+                "command": "decision",
+                "scope": "plan",
+                "phase": None,
+                "work_item": None,
+            }
+        if (
+            plan_review.get("status") in {"pending", "remediation"}
+            and remediation_work_ids
+        ):
+            return plan_remediation_action(
+                root, domain, state, plan_review, work_overrides
+            )
+        return {
+            "role": "auditor",
+            "command": "audit",
+            "scope": "plan",
+            "mode": "initial",
+            "phase": None,
+            "work_item": None,
+        }
 
-    pending_phase_audits = [key for key, phase in sorted(phases.items()) if phase.get("status") == "audit"]
+    pending_phase_audits = [
+        key for key, phase in sorted(phases.items()) if phase.get("status") == "audit"
+    ]
     if pending_phase_audits:
-        return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "initial", "phase": pending_phase_audits[0], "work_item": None}
+        return {
+            "role": "auditor",
+            "command": "audit",
+            "scope": "phase",
+            "mode": "initial",
+            "phase": pending_phase_audits[0],
+            "work_item": None,
+        }
     recorded_action = state.get("next_action") or {}
-    recorded_phase = phase_key(recorded_action.get("phase")) if recorded_action.get("phase") is not None else None
+    recorded_phase = (
+        phase_key(recorded_action.get("phase"))
+        if recorded_action.get("phase") is not None
+        else None
+    )
     if (
         recorded_action.get("command") == "audit"
         and recorded_action.get("scope") == "phase"
@@ -1367,26 +1935,66 @@ def base_next_action(
         and recorded_phase in phases
         and phases[recorded_phase].get("status") == "remediation"
     ):
-        return {"role": "auditor", "command": "audit", "scope": "phase", "mode": "closure", "phase": recorded_phase, "work_item": None}
+        return {
+            "role": "auditor",
+            "command": "audit",
+            "scope": "phase",
+            "mode": "closure",
+            "phase": recorded_phase,
+            "work_item": None,
+        }
     if (
         recorded_action.get("command") == "audit"
         and recorded_action.get("scope") == "integration"
         and recorded_action.get("mode") == "closure"
         and integration.get("status") == "remediation"
-        and canonical_audit_has_mode(root, domain, state, "integration", "closure", None, None)
+        and canonical_audit_has_mode(
+            root, domain, state, "integration", "closure", None, None
+        )
     ):
-        return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
-    integration_audit_is_active = all_verified and integration.get("status") in {"audit", "closure"}
+        return {
+            "role": "auditor",
+            "command": "audit",
+            "scope": "integration",
+            "mode": "closure",
+            "phase": None,
+            "work_item": None,
+        }
+    integration_audit_is_active = all_verified and integration.get("status") in {
+        "audit",
+        "closure",
+    }
     if integration_audit_is_active:
         if integration.get("status") in {"pending", "audit"}:
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "initial",
+                "phase": None,
+                "work_item": None,
+            }
         if integration.get("status") == "closure":
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "closure",
+                "phase": None,
+                "work_item": None,
+            }
 
     nxt = choose_next(root, domain, state, {"in_progress"}, work_overrides)
     if nxt:
         phase, _, item = nxt
-        return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), **work_routing_fields(item)}
+        return {
+            "role": "executor",
+            "command": "run",
+            "scope": "integration" if phase == "integration" else "phase",
+            "phase": None if phase == "integration" else phase,
+            "work_item": item.get("id"),
+            **work_routing_fields(item),
+        }
 
     review_action = work_review_action(root, domain, state, work_overrides)
     if review_action:
@@ -1395,7 +2003,14 @@ def base_next_action(
     nxt = choose_next(root, domain, state, {"ready"}, work_overrides)
     if nxt:
         phase, _, item = nxt
-        return {"role": "executor", "command": "run", "scope": "integration" if phase == "integration" else "phase", "phase": None if phase == "integration" else phase, "work_item": item.get("id"), **work_routing_fields(item)}
+        return {
+            "role": "executor",
+            "command": "run",
+            "scope": "integration" if phase == "integration" else "phase",
+            "phase": None if phase == "integration" else phase,
+            "work_item": item.get("id"),
+            **work_routing_fields(item),
+        }
 
     docs, _, _ = load_work_index(d, work_overrides)
     for key in sorted(phases):
@@ -1405,11 +2020,26 @@ def base_next_action(
         work_file = d / ps.get("work_file", f"work/phase-{key}.yaml")
         doc = docs.get(work_file) or load_yaml(work_file, {}) or {}
         items = doc.get("items", []) or []
-        if ps.get("status") == "blocked" or any(i.get("status") == "blocked" for i in items):
-            return {"role": "human", "command": "decision", "scope": "phase", "phase": key, "work_item": None}
+        if ps.get("status") == "blocked" or any(
+            i.get("status") == "blocked" for i in items
+        ):
+            return {
+                "role": "human",
+                "command": "decision",
+                "scope": "phase",
+                "phase": key,
+                "work_item": None,
+            }
         if items and all(i.get("status") in TERMINAL_STATUSES for i in items):
             mode = "closure" if ps.get("status") == "remediation" else "initial"
-            return {"role": "auditor", "command": "audit", "scope": "phase", "mode": mode, "phase": key, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "phase",
+                "mode": mode,
+                "phase": key,
+                "work_item": None,
+            }
 
     if workflow_type == "audit_remediation":
         integration_items = [
@@ -1418,48 +2048,126 @@ def base_next_action(
             if item_phase(path, doc) == "integration"
             for item in (doc.get("items", []) or [])
         ]
-        blocked = [str(item.get("id")) for item in integration_items if item.get("status") == "blocked"]
+        blocked = [
+            str(item.get("id"))
+            for item in integration_items
+            if item.get("status") == "blocked"
+        ]
         if blocked:
-            return {"role": "human", "command": "decision", "scope": "integration", "phase": None, "work_item": blocked[0] if len(blocked) == 1 else None}
+            return {
+                "role": "human",
+                "command": "decision",
+                "scope": "integration",
+                "phase": None,
+                "work_item": blocked[0] if len(blocked) == 1 else None,
+            }
         if integration.get("status") == "remediation" and all(
             item.get("status") in TERMINAL_STATUSES and review_satisfied(item)
             for item in integration_items
         ):
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
-        return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None, "reason": "lifecycle is incomplete"}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "closure",
+                "phase": None,
+                "work_item": None,
+            }
+        return {
+            "role": "human",
+            "command": "decision",
+            "scope": "project",
+            "phase": None,
+            "work_item": None,
+            "reason": "lifecycle is incomplete",
+        }
 
-    all_verified = bool(phases) and all(p.get("status") == "verified" for p in phases.values())
+    all_verified = bool(phases) and all(
+        p.get("status") == "verified" for p in phases.values()
+    )
     istatus = integration.get("status", "pending")
     if all_verified:
         # An unresolved project decision must clear before any integration audit/closure.
         if state.get("unresolved_decisions"):
-            return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
+            return {
+                "role": "human",
+                "command": "decision",
+                "scope": "project",
+                "phase": None,
+                "work_item": None,
+            }
         # Blocked integration WORK needs a human decision, never an audit projection.
         integration_items = [
             item
-            for path, doc in docs.items() if item_phase(path, doc) == "integration"
+            for path, doc in docs.items()
+            if item_phase(path, doc) == "integration"
             for item in (doc.get("items", []) or [])
         ]
-        blocked = [str(item.get("id")) for item in integration_items if item.get("status") == "blocked"]
+        blocked = [
+            str(item.get("id"))
+            for item in integration_items
+            if item.get("status") == "blocked"
+        ]
         if blocked:
-            action = {"role": "human", "command": "decision", "scope": "integration", "phase": None, "work_item": None}
+            action = {
+                "role": "human",
+                "command": "decision",
+                "scope": "integration",
+                "phase": None,
+                "work_item": None,
+            }
             if len(blocked) == 1:
                 action["work_item"] = blocked[0]
             return action
         if istatus in {"pending", "audit"}:
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "initial", "phase": None, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "initial",
+                "phase": None,
+                "work_item": None,
+            }
         if istatus == "closure":
-            return {"role": "auditor", "command": "audit", "scope": "integration", "mode": "closure", "phase": None, "work_item": None}
+            return {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "integration",
+                "mode": "closure",
+                "phase": None,
+                "work_item": None,
+            }
         if istatus == "verified":
-            return {"role": "none", "command": "complete", "scope": "project", "phase": None, "work_item": None}
+            return {
+                "role": "none",
+                "command": "complete",
+                "scope": "project",
+                "phase": None,
+                "work_item": None,
+            }
 
     if state.get("unresolved_decisions"):
-        return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None}
-    return {"role": "human", "command": "decision", "scope": "project", "phase": None, "work_item": None, "reason": "lifecycle is incomplete"}
+        return {
+            "role": "human",
+            "command": "decision",
+            "scope": "project",
+            "phase": None,
+            "work_item": None,
+        }
+    return {
+        "role": "human",
+        "command": "decision",
+        "scope": "project",
+        "phase": None,
+        "work_item": None,
+        "reason": "lifecycle is incomplete",
+    }
 
 
 def compute_next_action(
-    root: Path, domain: str, state: dict[str, Any],
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
     work_overrides: dict[Path, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Wrap the existing lifecycle with an explicit Executor-owned whole-delivery gate."""
@@ -1479,7 +2187,13 @@ def compute_next_action(
     eligible = all(entry.get("status") == "verified" for entry in phases.values())
     # Registered repairs keep ordinary WORK dependency/review gates, even while integration
     # was waiting for its initial audit. No separate repair controller or hidden commits exist.
-    if repairs and eligible and not state.get("unresolved_decisions") and (state.get("integration") or {}).get("status") not in {"blocked", "verified"}:
+    if (
+        repairs
+        and eligible
+        and not state.get("unresolved_decisions")
+        and (state.get("integration") or {}).get("status")
+        not in {"blocked", "verified"}
+    ):
         review = work_review_action(root, domain, state, work_overrides)
         if review:
             return review
@@ -1487,21 +2201,47 @@ def compute_next_action(
             target = index.get(item_id)
             if not target:
                 continue
-            path, item = target
-            if item.get("status") in {"ready", "in_progress"} and deps_satisfied(item, index) and decision_satisfied(item, set()):
-                return {"role": "executor", "command": "run", "scope": "integration", "phase": None,
-                        "work_item": item_id, **work_routing_fields(item)}
+            _path, item = target
+            if (
+                item.get("status") in {"ready", "in_progress"}
+                and deps_satisfied(item, index)
+                and decision_satisfied(item, set())
+            ):
+                return {
+                    "role": "executor",
+                    "command": "run",
+                    "scope": "integration",
+                    "phase": None,
+                    "work_item": item_id,
+                    **work_routing_fields(item),
+                }
             if item.get("status") == "blocked":
-                return {"role": "human", "command": "decision", "scope": "integration", "phase": None,
-                        "work_item": item_id, "reason": "Newman repair WORK is blocked"}
-    at_integration = action.get("command") == "complete" or (action.get("command") == "audit" and action.get("scope") == "integration")
+                return {
+                    "role": "human",
+                    "command": "decision",
+                    "scope": "integration",
+                    "phase": None,
+                    "work_item": item_id,
+                    "reason": "Newman repair WORK is blocked",
+                }
+    at_integration = action.get("command") == "complete" or (
+        action.get("command") == "audit" and action.get("scope") == "integration"
+    )
     # A phase-free initial audit with no implemented WORK must still be allowed to discover work.
     has_delivery = any(item.get("status") == "done" for _, item in index.values())
     if at_integration and (has_delivery or action.get("command") == "complete"):
-        errors = finalization.final_errors(root, domain, state, docs, d, require_receipt=True)
+        errors = finalization.final_errors(
+            root, domain, state, docs, d, require_receipt=True
+        )
         if errors:
-            return {"role": "executor", "command": "finalize", "scope": "project", "phase": None,
-                    "work_item": None, "reason": errors[0]}
+            return {
+                "role": "executor",
+                "command": "finalize",
+                "scope": "project",
+                "phase": None,
+                "work_item": None,
+                "reason": errors[0],
+            }
     return action
 
 
@@ -1533,11 +2273,17 @@ def project_status_for_action(action: dict[str, Any]) -> str:
         if scope == "phase":
             return "remediation" if action.get("mode") == "closure" else "phase_audit"
         if scope == "integration":
-            return "integration_closure" if action.get("mode") == "closure" else "integration_audit"
+            return (
+                "integration_closure"
+                if action.get("mode") == "closure"
+                else "integration_audit"
+            )
     return "blocked"
 
 
-def active_phase_for_action(root: Path, domain: str, state: dict[str, Any], action: dict[str, Any]) -> str | None:
+def active_phase_for_action(
+    root: Path, domain: str, state: dict[str, Any], action: dict[str, Any]
+) -> str | None:
     """Project the single phase that owns the computed action, without guessing ambiguously."""
     scope = action.get("scope")
     if scope in {"project", "integration"}:
@@ -1551,7 +2297,11 @@ def active_phase_for_action(root: Path, domain: str, state: dict[str, Any], acti
         return None if phase == "integration" else phase
     if action.get("phase") is not None:
         return phase_key(action["phase"])
-    active = [key for key, phase in normalized_phases(state).items() if phase.get("status") in {"executing", "audit", "remediation", "blocked"}]
+    active = [
+        key
+        for key, phase in normalized_phases(state).items()
+        if phase.get("status") in {"executing", "audit", "remediation", "blocked"}
+    ]
     return active[0] if len(active) == 1 else None
 
 
@@ -1564,13 +2314,19 @@ def project_state(
     state["target_sha"] = current_sha(root)
     state["next_action"] = compute_next_action(root, domain, state, work_overrides)
     state["project_status"] = project_status_for_action(state["next_action"])
-    state["active_phase"] = active_phase_for_action(root, domain, state, state["next_action"])
+    state["active_phase"] = active_phase_for_action(
+        root, domain, state, state["next_action"]
+    )
     return state
 
 
-def refresh_state(root: Path, domain: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
+def refresh_state(
+    root: Path, domain: str, state: dict[str, Any] | None = None
+) -> dict[str, Any]:
     path = state_path(root, domain)
-    state = project_state(root, domain, state if state is not None else load_yaml(path, {}) or {})
+    state = project_state(
+        root, domain, state if state is not None else load_yaml(path, {}) or {}
+    )
     dump_yaml_if_changed(path, state)
     return state
 
@@ -1600,7 +2356,11 @@ def action_inputs(root: Path, domain: str, state: dict[str, Any]) -> list[str]:
         except KeyError:
             return inputs
         origin = item.get("origin") or {}
-        ids = [str(x) for key in ["requirements", "findings", "plan_items"] for x in (origin.get(key) or [])]
+        ids = [
+            str(x)
+            for key in ["requirements", "findings", "plan_items"]
+            for x in (origin.get(key) or [])
+        ]
         if ids:
             inputs.append(f"PRD/PLAN sections: {', '.join(ids)}")
         if action.get("command") == "audit" and action.get("scope") == "work":
@@ -1622,7 +2382,11 @@ def print_status(args: argparse.Namespace) -> int:
     for warning in config_warnings:
         print(f"WARN: {warning}", file=sys.stderr)
     raw_state = load_yaml(path, {}) or {}
-    state = project_state(root, args.domain, copy.deepcopy(raw_state)) if newer_config else refresh_state(root, args.domain, raw_state)
+    state = (
+        project_state(root, args.domain, copy.deepcopy(raw_state))
+        if newer_config
+        else refresh_state(root, args.domain, raw_state)
+    )
     cfg = runtime_config(root)
     d = domain_dir(root, args.domain)
     protocol_versions = reported_protocol_versions(root, state)
@@ -1647,8 +2411,14 @@ def print_status(args: argparse.Namespace) -> int:
     print(f"risk_profile: {state.get('risk_profile')}")
     print(f"baseline_sha: {short_sha(state.get('baseline_sha'))}")
     print(f"target_sha: {short_sha(state.get('target_sha'))}")
-    print(f"unresolved_decisions: {', '.join(state.get('unresolved_decisions', []) or []) or '<none>'}")
-    blocked = [i for _, (_, i) in load_work_index(domain_dir(root, args.domain))[1].items() if i.get("status") == "blocked"]
+    print(
+        f"unresolved_decisions: {', '.join(state.get('unresolved_decisions', []) or []) or '<none>'}"
+    )
+    blocked = [
+        i
+        for _, (_, i) in load_work_index(domain_dir(root, args.domain))[1].items()
+        if i.get("status") == "blocked"
+    ]
     if blocked:
         print(f"blocked_work: {', '.join(str(i.get('id')) for i in blocked)}")
     print(f"next.role: {action.get('role')}")
@@ -1683,7 +2453,11 @@ def next_item(args: argparse.Namespace) -> int:
     state = refresh_state(root, args.domain)
     action = state.get("next_action", {}) or {}
     if action.get("command") != "run" or not action.get("work_item"):
-        print(json.dumps(action, ensure_ascii=False, indent=2) if args.json else f"No executable WORK item. Next action: {action}")
+        print(
+            json.dumps(action, ensure_ascii=False, indent=2)
+            if args.json
+            else f"No executable WORK item. Next action: {action}"
+        )
         return 1
     _, _, item = find_item(root, args.domain, action["work_item"])
     if args.json:
@@ -1704,7 +2478,9 @@ def work_update(args: argparse.Namespace) -> int:
     state = load_yaml(state_path(root, args.domain), {}) or {}
     _, index, _ = load_work_index(d)
     _, open_decisions = decision_state_errors(state, d)
-    unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []} | open_decisions
+    unresolved = {
+        str(value) for value in state.get("unresolved_decisions", []) or []
+    } | open_decisions
     document_errors, _ = validate_work_file(path, doc, index, unresolved)
     if args.work_command == "start":
         errors = document_errors + work_start_errors(state, d, path, doc, item, index)
@@ -1715,14 +2491,18 @@ def work_update(args: argparse.Namespace) -> int:
         if delivery.active(state):
             evidence = item.setdefault("evidence", {})
             evidence["start_sha"] = current_sha(root)
-            branch, checkout_mode, branch_start = delivery.delivery_context(root, getattr(args, "branch", None))
+            branch, checkout_mode, branch_start = delivery.delivery_context(
+                root, getattr(args, "branch", None)
+            )
             delivery_evidence = evidence.setdefault("delivery", {})
             recorded_branch = delivery_evidence.get("branch")
             if recorded_branch and recorded_branch != branch:
                 return reject_transition(
                     args.item,
                     "start",
-                    [f"evidence.delivery.branch={recorded_branch} disagrees with checkout branch {branch}"],
+                    [
+                        f"evidence.delivery.branch={recorded_branch} disagrees with checkout branch {branch}"
+                    ],
                 )
             delivery_evidence["branch"] = branch
             if checkout_mode == "detached":
@@ -1731,16 +2511,35 @@ def work_update(args: argparse.Namespace) -> int:
         if document_errors:
             return reject_transition(args.item, "done", document_errors)
         if item.get("status") != "in_progress":
-            return reject_transition(args.item, "done", [f"status=in_progress is required, not {item.get('status')}"])
+            return reject_transition(
+                args.item,
+                "done",
+                [f"status=in_progress is required, not {item.get('status')}"],
+            )
         current_commands = list((item.get("evidence") or {}).get("commands") or [])
         cli_commands = list(getattr(args, "command", None) or [])
-        if item.get("kind") != "documentation" and not has_nonblank_string(current_commands + cli_commands):
-            return reject_transition(args.item, "done", ["verification evidence is required. Pass --command '<cmd> -> <result>'."])
+        if item.get("kind") != "documentation" and not has_nonblank_string(
+            current_commands + cli_commands
+        ):
+            return reject_transition(
+                args.item,
+                "done",
+                [
+                    "verification evidence is required. Pass --command '<cmd> -> <result>'."
+                ],
+            )
         evidence = item.setdefault("evidence", {})
-        for attr, key in [("changed_file", "changed_files"), ("command", "commands"), ("deviation", "deviations"), ("discovery", "discoveries")]:
+        for attr, key in [
+            ("changed_file", "changed_files"),
+            ("command", "commands"),
+            ("deviation", "deviations"),
+            ("discovery", "discoveries"),
+        ]:
             vals = getattr(args, attr, None) or []
             if key == "commands":
-                vals = [value for value in vals if isinstance(value, str) and value.strip()]
+                vals = [
+                    value for value in vals if isinstance(value, str) and value.strip()
+                ]
             evidence.setdefault(key, [])
             evidence[key].extend(vals)
         if args.commit:
@@ -1766,10 +2565,14 @@ def work_update(args: argparse.Namespace) -> int:
         if document_errors:
             return reject_transition(args.item, "block", document_errors)
         if item.get("status") not in {"ready", "in_progress"}:
-            return reject_transition(args.item, "block", [f"cannot block status {item.get('status')}"])
+            return reject_transition(
+                args.item, "block", [f"cannot block status {item.get('status')}"]
+            )
         reason = (args.reason or "").strip()
         if not reason:
-            return reject_transition(args.item, "block", ["a non-empty reason is required"])
+            return reject_transition(
+                args.item, "block", ["a non-empty reason is required"]
+            )
         item["status"] = "blocked"
         item["block_reason"] = reason
     commit_lifecycle_mutation(root, args.domain, copy.deepcopy(state), {path: doc})
@@ -1782,7 +2585,9 @@ def work_review(args: argparse.Namespace) -> int:
     d = domain_dir(root, args.domain)
     state = load_yaml(state_path(root, args.domain), {}) or {}
     if args.review_status == "verified" and requires_audit_apply(state, root):
-        return reject_transition(args.item, "be verified", ["protocol 1.3+ requires devflow audit apply"])
+        return reject_transition(
+            args.item, "be verified", ["protocol 1.3+ requires devflow audit apply"]
+        )
     try:
         path, doc, item = find_item(root, args.domain, args.item)
     except KeyError as e:
@@ -1790,7 +2595,9 @@ def work_review(args: argparse.Namespace) -> int:
         return 2
     _, index, _ = load_work_index(d)
     _, open_decisions = decision_state_errors(state, d)
-    unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []} | open_decisions
+    unresolved = {
+        str(value) for value in state.get("unresolved_decisions", []) or []
+    } | open_decisions
     document_errors, _ = validate_work_file(path, doc, index, unresolved)
     if document_errors:
         return reject_transition(args.item, "be reviewed", document_errors)
@@ -1810,24 +2617,39 @@ def work_review(args: argparse.Namespace) -> int:
                 return 2
         audit_path = d / review["audit_file"]
         if not audit_path.exists():
-            print(f"{args.item}: work audit artifact not found: {audit_path}", file=sys.stderr)
+            print(
+                f"{args.item}: work audit artifact not found: {audit_path}",
+                file=sys.stderr,
+            )
             return 2
         review["status"] = "verified"
     elif args.review_status == "remediation":
         if not args.remediation_work:
-            print(f"{args.item}: remediation review requires --remediation-work", file=sys.stderr)
+            print(
+                f"{args.item}: remediation review requires --remediation-work",
+                file=sys.stderr,
+            )
             return 2
         for remediation_id in args.remediation_work:
             target = index.get(remediation_id)
             if not target:
-                print(f"{args.item}: unknown remediation WORK {remediation_id}", file=sys.stderr)
+                print(
+                    f"{args.item}: unknown remediation WORK {remediation_id}",
+                    file=sys.stderr,
+                )
                 return 2
             remediation = target[1]
             if remediation.get("kind") not in {"remediation", "evidence"}:
-                print(f"{args.item}: {remediation_id} must be kind remediation or evidence", file=sys.stderr)
+                print(
+                    f"{args.item}: {remediation_id} must be kind remediation or evidence",
+                    file=sys.stderr,
+                )
                 return 2
             if not ((remediation.get("origin") or {}).get("findings") or []):
-                print(f"{args.item}: {remediation_id} must carry origin.findings traceability", file=sys.stderr)
+                print(
+                    f"{args.item}: {remediation_id} must carry origin.findings traceability",
+                    file=sys.stderr,
+                )
                 return 2
             if dependency_reaches(str(remediation_id), args.item, index):
                 print(
@@ -1841,7 +2663,9 @@ def work_review(args: argparse.Namespace) -> int:
         # The stop-blocked recovery: return a `blocked` work review to `pending` so the scope
         # can be audited again, mirroring `plan-review set pending`, `phase set <n> audit` and
         # `integration set <d> audit`. Legacy remediation without provenance uses the same path.
-        legacy_mid_closure = review["status"] == "remediation" and "audit_provenance" not in review
+        legacy_mid_closure = (
+            review["status"] == "remediation" and "audit_provenance" not in review
+        )
         if review["status"] != "blocked" and not legacy_mid_closure:
             print(
                 f"{args.item}: review pending requires a blocked review or legacy remediation "
@@ -1863,12 +2687,18 @@ def phase_entry(state: dict[str, Any], key: str) -> dict[str, Any]:
     phases = state.setdefault("phases", {})
     raw = raw_phase_key(state, key)
     if raw is None:
-        phases[key] = {"status": "planned", "work_file": f"work/phase-{key}.yaml", "audit_file": f"audits/phase-{key}.md"}
+        phases[key] = {
+            "status": "planned",
+            "work_file": f"work/phase-{key}.yaml",
+            "audit_file": f"audits/phase-{key}.md",
+        }
         return phases[key]
     return phases[raw]
 
 
-def phase_creation_errors(root: Path, domain: str, state: dict[str, Any], key: str) -> list[str]:
+def phase_creation_errors(
+    root: Path, domain: str, state: dict[str, Any], key: str
+) -> list[str]:
     """A mistyped phase number used to appear in STATE and block integration forever."""
     if raw_phase_key(state, key) is not None:
         return []
@@ -1876,8 +2706,10 @@ def phase_creation_errors(root: Path, domain: str, state: dict[str, Any], key: s
     if work_file.exists():
         return []
     return [
-        f"phase {key} is not in STATE and {work_file.relative_to(root)} does not exist. "
-        "Add the phase in PLAN and STATE, or create its WORK file first."
+        (
+            f"phase {key} is not in STATE and {work_file.relative_to(root)} does not exist. "
+            "Add the phase in PLAN and STATE, or create its WORK file first."
+        )
     ]
 
 
@@ -1892,13 +2724,21 @@ def set_phase(args: argparse.Namespace) -> int:
     if creation_errors:
         return reject_transition(f"phase {key}", "be created", creation_errors)
     if existing and existing.get("status") == "verified" and args.status != "verified":
-        return reject_transition(f"phase {key}", "change", ["a verified phase cannot be reopened"])
+        return reject_transition(
+            f"phase {key}", "change", ["a verified phase cannot be reopened"]
+        )
     if args.status == "verified" and requires_audit_apply(state, root):
-        return reject_transition(f"phase {key}", "be verified", ["protocol 1.3+ requires devflow audit apply"])
+        return reject_transition(
+            f"phase {key}",
+            "be verified",
+            ["protocol 1.3+ requires devflow audit apply"],
+        )
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
         errors = phase_verify_errors(root, args.domain, state, key, docs)
-        errors.extend(f"validation: {error}" for error in collect_validation(root, args.domain)[0])
+        errors.extend(
+            f"validation: {error}" for error in collect_validation(root, args.domain)[0]
+        )
         if errors:
             return reject_transition(f"phase {key}", "be verified", errors)
     phase = phase_entry(state, key)
@@ -1930,13 +2770,24 @@ def set_phase_ref(args: argparse.Namespace) -> int:
     base_sha = run_git(["rev-parse", "--verify", f"{args.base}^{{commit}}"], root)
     head_sha = run_git(["rev-parse", "--verify", f"{args.head}^{{commit}}"], root)
     if not base_sha or not head_sha:
-        print(f"Cannot resolve refs: base={args.base} head={args.head}", file=sys.stderr)
+        print(
+            f"Cannot resolve refs: base={args.base} head={args.head}", file=sys.stderr
+        )
         return 2
     if not git_ok(["merge-base", "--is-ancestor", base_sha, head_sha], root):
-        print(f"{args.base} is not an ancestor of {args.head}. A 3-dot diff would pick a stale merge base.", file=sys.stderr)
+        print(
+            f"{args.base} is not an ancestor of {args.head}. A 3-dot diff would pick a stale merge base.",
+            file=sys.stderr,
+        )
         print("Inspect the graph, then re-run with an explicit range:", file=sys.stderr)
-        print(f"  git log --graph --oneline {args.base} {args.head} | head -20", file=sys.stderr)
-        print(f"  devflow phase ref {args.domain} {args.phase} --base {args.base} --head {args.head} --range '<first>^..<last>'", file=sys.stderr)
+        print(
+            f"  git log --graph --oneline {args.base} {args.head} | head -20",
+            file=sys.stderr,
+        )
+        print(
+            f"  devflow phase ref {args.domain} {args.phase} --base {args.base} --head {args.head} --range '<first>^..<last>'",
+            file=sys.stderr,
+        )
         return 2
 
     phase["base_ref"] = args.base
@@ -1959,7 +2810,9 @@ def set_plan_review(args: argparse.Namespace) -> int:
     if args.status == "skipped" and required:
         return reject_transition("plan review", "be skipped", ["review is required"])
     if args.status == "verified" and requires_audit_apply(state, root):
-        return reject_transition("plan review", "be verified", ["protocol 1.3+ requires devflow audit apply"])
+        return reject_transition(
+            "plan review", "be verified", ["protocol 1.3+ requires devflow audit apply"]
+        )
     if args.status == "verified":
         d = domain_dir(root, args.domain)
         errors = []
@@ -1987,13 +2840,19 @@ def set_integration(args: argparse.Namespace) -> int:
     state = load_yaml(path, {}) or {}
     integ = dict(state.get("integration", {}) or {})
     if integ.get("status") == "verified" and args.status != "verified":
-        return reject_transition("integration", "change", ["a verified integration cannot be reopened"])
+        return reject_transition(
+            "integration", "change", ["a verified integration cannot be reopened"]
+        )
     if args.status == "verified" and requires_audit_apply(state, root):
-        return reject_transition("integration", "be verified", ["protocol 1.3+ requires devflow audit apply"])
+        return reject_transition(
+            "integration", "be verified", ["protocol 1.3+ requires devflow audit apply"]
+        )
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
         errors = integration_verify_errors(root, args.domain, state, docs)
-        errors.extend(f"validation: {error}" for error in collect_validation(root, args.domain)[0])
+        errors.extend(
+            f"validation: {error}" for error in collect_validation(root, args.domain)[0]
+        )
         if errors:
             return reject_transition("integration", "be verified", errors)
     integ["status"] = args.status
@@ -2019,7 +2878,9 @@ def decision_update(args: argparse.Namespace) -> int:
                 f"DECISIONS.md decision {args.decision} is still open; record a valid entry under ## Resolved first"
             ]
         elif args.decision not in resolved_ids:
-            errors = [f"DECISIONS.md has no valid resolved decision record for {args.decision}"]
+            errors = [
+                f"DECISIONS.md has no valid resolved decision record for {args.decision}"
+            ]
         else:
             errors = []
         prospective = dict(state)
@@ -2056,11 +2917,20 @@ def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]
             current = None
             level, heading = len(markdown_heading.group(1)), markdown_heading.group(2)
             if level == 2:
-                section = heading.lower() if heading.lower() in {"open", "resolved"} else ""
+                section = (
+                    heading.lower() if heading.lower() in {"open", "resolved"} else ""
+                )
             elif level == 3 and section in {"open", "resolved"}:
-                decision_heading = re.match(r"^(DEC-[A-Z0-9][A-Z0-9-]*)(?:\s+(.*))?$", heading, re.I)
+                decision_heading = re.match(
+                    r"^(DEC-[A-Z0-9][A-Z0-9-]*)(?:\s+(.*))?$", heading, re.IGNORECASE
+                )
                 if decision_heading:
-                    current = (section, decision_heading.group(1), (decision_heading.group(2) or "").strip(), [])
+                    current = (
+                        section,
+                        decision_heading.group(1),
+                        (decision_heading.group(2) or "").strip(),
+                        [],
+                    )
                     records.append(current)
             continue
         if current is not None:
@@ -2071,7 +2941,11 @@ def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]
     errors: list[str] = []
     seen: set[str] = set()
     for record_section, decision_id, title, lines in records:
-        if decision_id.upper() == "DEC-XXX" or "[Question]" in title or "[Decision]" in title:
+        if (
+            decision_id.upper() == "DEC-XXX"
+            or "[Question]" in title
+            or "[Decision]" in title
+        ):
             continue
         if decision_id in seen:
             errors.append(f"DECISIONS.md contains duplicate decision id: {decision_id}")
@@ -2080,25 +2954,33 @@ def decision_document_records(path: Path) -> tuple[set[str], set[str], list[str]
         if record_section == "open":
             options = []
             for line in lines:
-                option_match = re.match(r"^\s*-\s*Option(?:\s+[^:]+)?:\s*(.*?)\s*$", line, re.I)
+                option_match = re.match(
+                    r"^\s*-\s*Option(?:\s+[^:]+)?:\s*(.*?)\s*$", line, re.IGNORECASE
+                )
                 if option_match:
                     value = option_match.group(1).strip()
                     if not is_placeholder_text(value):
                         options.append(value)
             if len(options) < 2:
-                errors.append(f"DECISIONS.md open decision {decision_id} requires at least two nonblank options")
+                errors.append(
+                    f"DECISIONS.md open decision {decision_id} requires at least two nonblank options"
+                )
             else:
                 open_ids.add(decision_id)
         else:
             choices = []
             for line in lines:
-                decision_match = re.match(r"^\s*-\s*Decision:\s*(.*?)\s*$", line, re.I)
+                decision_match = re.match(
+                    r"^\s*-\s*Decision:\s*(.*?)\s*$", line, re.IGNORECASE
+                )
                 if decision_match:
                     value = decision_match.group(1).strip()
                     if not is_placeholder_text(value):
                         choices.append(value)
             if not choices:
-                errors.append(f"DECISIONS.md resolved decision {decision_id} requires a nonblank Decision field")
+                errors.append(
+                    f"DECISIONS.md resolved decision {decision_id} requires a nonblank Decision field"
+                )
             else:
                 resolved_ids.add(decision_id)
     return open_ids, resolved_ids, errors
@@ -2108,7 +2990,11 @@ def decision_state_errors(state: dict[str, Any], d: Path) -> tuple[list[str], se
     raw_unresolved = state.get("unresolved_decisions", []) or []
     if not isinstance(raw_unresolved, list):
         return ["STATE.unresolved_decisions must be a list"], set()
-    unresolved = {str(value) for value in raw_unresolved if isinstance(value, str) and value.strip()}
+    unresolved = {
+        str(value)
+        for value in raw_unresolved
+        if isinstance(value, str) and value.strip()
+    }
     errors = []
     if len(unresolved) != len(raw_unresolved):
         errors.append("STATE.unresolved_decisions must contain unique nonblank strings")
@@ -2117,15 +3003,23 @@ def decision_state_errors(state: dict[str, Any], d: Path) -> tuple[list[str], se
     open_ids, _resolved_ids, document_errors = decision_document_records(decisions_path)
     errors.extend(document_errors)
     if unresolved and not decisions_path.exists():
-        errors.append("DECISIONS.md is required when STATE.unresolved_decisions is nonempty")
+        errors.append(
+            "DECISIONS.md is required when STATE.unresolved_decisions is nonempty"
+        )
     for decision_id in sorted(unresolved - open_ids):
-        errors.append(f"STATE.unresolved_decisions references no valid open DECISIONS.md record: {decision_id}")
+        errors.append(
+            f"STATE.unresolved_decisions references no valid open DECISIONS.md record: {decision_id}"
+        )
     for decision_id in sorted(open_ids - unresolved):
-        errors.append(f"DECISIONS.md open decision is missing from STATE.unresolved_decisions: {decision_id}")
+        errors.append(
+            f"DECISIONS.md open decision is missing from STATE.unresolved_decisions: {decision_id}"
+        )
     return errors, open_ids
 
 
-def validate_protocol_version(state: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
+def validate_protocol_version(
+    state: dict[str, Any], errors: list[str], warnings: list[str]
+) -> None:
     """The version was recorded but never read, so an artifact from any protocol validated."""
     if "protocol_version" not in state:
         return
@@ -2135,14 +3029,22 @@ def validate_protocol_version(state: dict[str, Any], errors: list[str], warnings
         errors.append(f"Invalid protocol_version: {value or '<empty>'}")
         return
     major, minor, _patch = version
-    runtime_major, runtime_minor, _runtime_patch = parsed_protocol_version(PROTOCOL_VERSION)
+    runtime_major, runtime_minor, _runtime_patch = parsed_protocol_version(
+        PROTOCOL_VERSION
+    )
     if major != runtime_major:
-        errors.append(f"Unsupported protocol_version {value}: this runtime implements {PROTOCOL_VERSION}")
+        errors.append(
+            f"Unsupported protocol_version {value}: this runtime implements {PROTOCOL_VERSION}"
+        )
     elif minor > runtime_minor:
-        warnings.append(f"STATE protocol_version {value} is newer than this runtime's {PROTOCOL_VERSION}")
+        warnings.append(
+            f"STATE protocol_version {value} is newer than this runtime's {PROTOCOL_VERSION}"
+        )
 
 
-def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: list[str]) -> None:
+def validate_state(
+    state: dict[str, Any], d: Path, errors: list[str], warnings: list[str]
+) -> None:
     for field in STATE_REQUIRED_FIELDS:
         if field not in state:
             errors.append(f"STATE missing field: {field}")
@@ -2162,29 +3064,47 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
             if not isinstance(plan_review.get("required"), bool):
                 errors.append("plan_review.required must be boolean")
             if plan_review.get("status") not in PLAN_REVIEW_STATUSES:
-                errors.append(f"Invalid plan_review.status: {plan_review.get('status')}")
+                errors.append(
+                    f"Invalid plan_review.status: {plan_review.get('status')}"
+                )
             if "audit_file" in plan_review and (
-                not isinstance(plan_review["audit_file"], str) or not plan_review["audit_file"].strip()
+                not isinstance(plan_review["audit_file"], str)
+                or not plan_review["audit_file"].strip()
             ):
                 errors.append("plan_review.audit_file must be a nonblank string")
             remediation_ids = plan_review.get("remediation_work_ids", [])
             if not isinstance(remediation_ids, list):
                 errors.append("plan_review.remediation_work_ids must be a list")
-            elif any(not isinstance(value, str) or not value.strip() for value in remediation_ids):
-                errors.append("plan_review.remediation_work_ids must contain nonblank strings")
+            elif any(
+                not isinstance(value, str) or not value.strip()
+                for value in remediation_ids
+            ):
+                errors.append(
+                    "plan_review.remediation_work_ids must contain nonblank strings"
+                )
             elif plan_review.get("status") == "remediation" and not remediation_ids:
-                errors.append("plan_review.status=remediation requires remediation_work_ids")
-            errors.extend(audit_provenance_errors("plan_review", plan_review.get("audit_provenance")))
+                errors.append(
+                    "plan_review.status=remediation requires remediation_work_ids"
+                )
+            errors.extend(
+                audit_provenance_errors(
+                    "plan_review", plan_review.get("audit_provenance")
+                )
+            )
 
     integration = state.get("integration")
     if isinstance(integration, dict):
-        errors.extend(audit_provenance_errors("integration", integration.get("audit_provenance")))
+        errors.extend(
+            audit_provenance_errors("integration", integration.get("audit_provenance"))
+        )
 
     seen: dict[str, str] = {}
-    for raw in (state.get("phases", {}) or {}):
+    for raw in state.get("phases", {}) or {}:
         key = phase_key(raw)
         if key in seen:
-            errors.append(f"Duplicate phase entry: {seen[key]!r} and {raw!r} both normalize to {key!r}")
+            errors.append(
+                f"Duplicate phase entry: {seen[key]!r} and {raw!r} both normalize to {key!r}"
+            )
         seen[key] = str(raw)
 
     for key, phase in normalized_phases(state).items():
@@ -2197,9 +3117,13 @@ def validate_state(state: dict[str, Any], d: Path, errors: list[str], warnings: 
         if wf and not (d / wf).exists():
             warnings.append(f"Phase {key} work file not created yet: {wf}")
         if phase.get("status") in {"audit", "verified"} and not phase.get("diff_range"):
-            warnings.append(f"Phase {key} has no diff_range. Run 'devflow phase ref' before auditing.")
+            warnings.append(
+                f"Phase {key} has no diff_range. Run 'devflow phase ref' before auditing."
+            )
         if isinstance(phase, dict):
-            errors.extend(audit_provenance_errors(f"phase {key}", phase.get("audit_provenance")))
+            errors.extend(
+                audit_provenance_errors(f"phase {key}", phase.get("audit_provenance"))
+            )
 
     istatus = (state.get("integration", {}) or {}).get("status")
     if istatus not in INTEGRATION_STATUSES:
@@ -2235,25 +3159,37 @@ def validate_item(
     if isinstance(findings, list) and len(findings) >= AGGREGATION_REASON_THRESHOLD:
         aggregation_reason = origin.get("aggregation_reason")
         if not isinstance(aggregation_reason, str) or not aggregation_reason.strip():
-            errors.append(f"{item_id}: multiple origin.findings require nonblank origin.aggregation_reason")
+            errors.append(
+                f"{item_id}: multiple origin.findings require nonblank origin.aggregation_reason"
+            )
     acceptance = normalized_acceptance(item, version)
     commands = normalized_verification_commands(item, version)
     if version == 1:
         if not acceptance:
             errors.append(f"{item_id}: acceptance must not be empty")
         if not has_nonblank_string([command["command"] for command in commands]):
-            errors.append(f"{item_id}: verification.commands must contain a non-empty command")
+            errors.append(
+                f"{item_id}: verification.commands must contain a non-empty command"
+            )
     else:
         raw_acceptance = item.get("acceptance")
-        raw_commands = (item.get("verification") or {}).get("commands") if isinstance(item.get("verification"), dict) else None
+        raw_commands = (
+            (item.get("verification") or {}).get("commands")
+            if isinstance(item.get("verification"), dict)
+            else None
+        )
         if not isinstance(raw_acceptance, list) or not raw_acceptance:
             errors.append(f"{item_id}: acceptance must not be empty")
         elif any(not isinstance(value, dict) for value in raw_acceptance):
-            errors.append(f"{item_id}: acceptance entries must be mappings in WORK version 2")
+            errors.append(
+                f"{item_id}: acceptance entries must be mappings in WORK version 2"
+            )
         if not isinstance(raw_commands, list) or not raw_commands:
             errors.append(f"{item_id}: verification.commands must not be empty")
         elif any(not isinstance(value, dict) for value in raw_commands):
-            errors.append(f"{item_id}: verification.commands entries must be mappings in WORK version 2")
+            errors.append(
+                f"{item_id}: verification.commands entries must be mappings in WORK version 2"
+            )
 
         acceptance_ids: set[str] = set()
         for acceptance_entry in acceptance:
@@ -2266,51 +3202,82 @@ def validate_item(
                 acceptance_ids.add(acceptance_id)
             criterion = acceptance_entry.get("criterion")
             if not isinstance(criterion, str) or not criterion.strip():
-                errors.append(f"{item_id}: acceptance criterion must be a nonblank string")
+                errors.append(
+                    f"{item_id}: acceptance criterion must be a nonblank string"
+                )
 
         command_ids: set[str] = set()
         covered_ids: set[str] = set()
         for command in commands:
             command_id = command.get("id")
             if not isinstance(command_id, str) or not command_id.strip():
-                errors.append(f"{item_id}: verification command id must be a nonblank string")
+                errors.append(
+                    f"{item_id}: verification command id must be a nonblank string"
+                )
             elif command_id in command_ids:
-                errors.append(f"{item_id}: duplicate verification command id {command_id}")
+                errors.append(
+                    f"{item_id}: duplicate verification command id {command_id}"
+                )
             else:
                 command_ids.add(command_id)
-            if not isinstance(command.get("command"), str) or not command["command"].strip():
-                errors.append(f"{item_id}: verification command must be a nonblank string")
+            if (
+                not isinstance(command.get("command"), str)
+                or not command["command"].strip()
+            ):
+                errors.append(
+                    f"{item_id}: verification command must be a nonblank string"
+                )
             covers = command.get("covers")
             if not isinstance(covers, list) or not covers:
-                errors.append(f"{item_id}: verification command covers must not be empty")
+                errors.append(
+                    f"{item_id}: verification command covers must not be empty"
+                )
                 continue
             for acceptance_id in covers:
                 if not isinstance(acceptance_id, str) or not acceptance_id.strip():
-                    errors.append(f"{item_id}: verification command covers must contain nonblank acceptance ids")
+                    errors.append(
+                        f"{item_id}: verification command covers must contain nonblank acceptance ids"
+                    )
                 elif acceptance_id not in acceptance_ids:
-                    errors.append(f"{item_id}: verification command {command_id} covers unknown acceptance id {acceptance_id}")
+                    errors.append(
+                        f"{item_id}: verification command {command_id} covers unknown acceptance id {acceptance_id}"
+                    )
                 else:
                     covered_ids.add(acceptance_id)
         uncovered_ids = sorted(acceptance_ids - covered_ids)
         if uncovered_ids:
-            errors.append(f"{item_id}: acceptance ids lack verification coverage: {', '.join(uncovered_ids)}")
+            errors.append(
+                f"{item_id}: acceptance ids lack verification coverage: {', '.join(uncovered_ids)}"
+            )
     for dep in item.get("dependencies", []) or []:
         if str(dep) not in all_ids:
             errors.append(f"{item_id}: unknown dependency {dep}")
-    if status == "ready" and any(str(dec) in unresolved for dec in item.get("decision_dependencies", []) or []):
+    if status == "ready" and any(
+        str(dec) in unresolved for dec in item.get("decision_dependencies", []) or []
+    ):
         errors.append(f"{item_id}: READY while blocked by unresolved decision")
 
     # Executable contract depth. High risk items must tell the executor what to re-verify.
     if level in HIGH_RISK and not (item.get("premise_checks") or []):
-        errors.append(f"{item_id}: risk={level} requires premise_checks (facts to re-verify at HEAD before editing)")
+        errors.append(
+            f"{item_id}: risk={level} requires premise_checks (facts to re-verify at HEAD before editing)"
+        )
     if level in HIGH_RISK and not (item.get("context") or []):
-        warnings.append(f"{item_id}: risk={level} has no context (architect-verified repository facts)")
+        warnings.append(
+            f"{item_id}: risk={level} has no context (architect-verified repository facts)"
+        )
     if not (item.get("pitfalls") or []):
-        warnings.append(f"{item_id}: no pitfalls recorded (known failure modes for this change)")
+        warnings.append(
+            f"{item_id}: no pitfalls recorded (known failure modes for this change)"
+        )
 
     # Evidence must back a completion claim.
     evidence = item.get("evidence") or {}
-    if status == "done" and kind != "documentation" and not has_nonblank_string(evidence.get("commands")):
+    if (
+        status == "done"
+        and kind != "documentation"
+        and not has_nonblank_string(evidence.get("commands"))
+    ):
         errors.append(f"{item_id}: done without evidence.commands")
 
     review = item.get("review")
@@ -2326,25 +3293,41 @@ def validate_item(
                 errors.append(f"{item_id}: review.required must be boolean")
             if not review.get("audit_file"):
                 errors.append(f"{item_id}: review.audit_file is required")
-            errors.extend(audit_provenance_errors(f"{item_id}: review", review.get("audit_provenance")))
+            errors.extend(
+                audit_provenance_errors(
+                    f"{item_id}: review", review.get("audit_provenance")
+                )
+            )
             remediation_ids = review.get("remediation_work_ids")
             if not isinstance(remediation_ids, list):
                 errors.append(f"{item_id}: review.remediation_work_ids must be a list")
                 remediation_ids = []
             if review_required is True and review_status == "skipped":
-                errors.append(f"{item_id}: review.required=true cannot use status=skipped")
+                errors.append(
+                    f"{item_id}: review.required=true cannot use status=skipped"
+                )
             if review_status == "remediation" and not remediation_ids:
-                errors.append(f"{item_id}: review.status=remediation requires remediation_work_ids")
+                errors.append(
+                    f"{item_id}: review.status=remediation requires remediation_work_ids"
+                )
             for remediation_id in remediation_ids:
                 if str(remediation_id) not in all_ids:
-                    errors.append(f"{item_id}: unknown remediation WORK id {remediation_id}")
-                elif review_status == "remediation" and dependency_reaches(str(remediation_id), item_id, index):
+                    errors.append(
+                        f"{item_id}: unknown remediation WORK id {remediation_id}"
+                    )
+                elif review_status == "remediation" and dependency_reaches(
+                    str(remediation_id), item_id, index
+                ):
                     errors.append(
                         f"{item_id}: remediation WORK {remediation_id} depends on {item_id}; remediation cannot precede the reviewed WORK's own closure"
                     )
             if review_status == "verified" and status != "done":
                 errors.append(f"{item_id}: review.status=verified requires status=done")
-            if level in HIGH_RISK and status in {"done", "in_progress", "ready"} and review_required is not True:
+            if (
+                level in HIGH_RISK
+                and status in {"done", "in_progress", "ready"}
+                and review_required is not True
+            ):
                 errors.append(f"{item_id}: risk={level} review.required must be true")
 
     # The transfer rule exists because a silently transferred requirement was missed for a whole cycle.
@@ -2356,12 +3339,19 @@ def validate_item(
         elif target_id not in index:
             errors.append(f"{item_id}: transfer.to points at unknown item {target_id}")
         else:
-            target_path, target_item = index[target_id]
-            source_reqs = {str(r) for r in ((item.get("origin") or {}).get("requirements") or [])}
-            target_reqs = {str(r) for r in ((target_item.get("origin") or {}).get("requirements") or [])}
+            _target_path, target_item = index[target_id]
+            source_reqs = {
+                str(r) for r in ((item.get("origin") or {}).get("requirements") or [])
+            }
+            target_reqs = {
+                str(r)
+                for r in ((target_item.get("origin") or {}).get("requirements") or [])
+            }
             missing = source_reqs - target_reqs
             if missing:
-                errors.append(f"{item_id}: transferred requirements not registered on {target_id}: {', '.join(sorted(missing))}")
+                errors.append(
+                    f"{item_id}: transferred requirements not registered on {target_id}: {', '.join(sorted(missing))}"
+                )
 
 
 def validate_work_file(
@@ -2374,7 +3364,9 @@ def validate_work_file(
     warnings: list[str] = []
     version = work_document_version(doc)
     if version not in WORK_VERSIONS:
-        return [f"{path.name}: unsupported WORK version {doc.get('version')!r}"], warnings
+        return [
+            f"{path.name}: unsupported WORK version {doc.get('version')!r}"
+        ], warnings
     items = doc.get("items", []) or []
     if not isinstance(items, list):
         return [f"{path.name}: items must be a list"], warnings
@@ -2393,7 +3385,9 @@ def markdown_sections(text: str) -> list[tuple[int, str, str]]:
     for raw_line in text.splitlines(keepends=True):
         line = raw_line.rstrip("\r\n")
         if fence_char is not None:
-            if re.fullmatch(rf" {{0,3}}{re.escape(fence_char)}{{{fence_length},}}[ \t]*", line):
+            if re.fullmatch(
+                rf" {{0,3}}{re.escape(fence_char)}{{{fence_length},}}[ \t]*", line
+            ):
                 fence_char = None
             offset += len(raw_line)
             continue
@@ -2416,7 +3410,7 @@ def markdown_sections(text: str) -> list[tuple[int, str, str]]:
     for index, heading in enumerate(headings):
         _start, end, level, title = heading
         body_end = len(text)
-        for following in headings[index + 1:]:
+        for following in headings[index + 1 :]:
             if following[2] <= level:
                 body_end = following[0]
                 break
@@ -2425,7 +3419,7 @@ def markdown_sections(text: str) -> list[tuple[int, str, str]]:
 
 
 def meaningful_markdown_body(body: str) -> bool:
-    body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped or re.fullmatch(r"(?:[-*+]|\d+[.)])", stripped):
@@ -2439,38 +3433,57 @@ def meaningful_markdown_body(body: str) -> bool:
 
 
 def markdown_field_has_meaningful_body(body: str, label: str) -> bool:
-    field_pattern = re.compile(r"^[ \t]*[-*+][ \t]+(Requirement|Acceptance criteria):[ \t]*(.*)$", re.M | re.I)
+    field_pattern = re.compile(
+        r"^[ \t]*[-*+][ \t]+(Requirement|Acceptance criteria):[ \t]*(.*)$",
+        re.MULTILINE | re.IGNORECASE,
+    )
     fields = list(field_pattern.finditer(body))
-    selected = [index for index, field in enumerate(fields) if field.group(1).casefold() == label.casefold()]
+    selected = [
+        index
+        for index, field in enumerate(fields)
+        if field.group(1).casefold() == label.casefold()
+    ]
     if not selected:
         return False
     for index in selected:
         field = fields[index]
         body_end = fields[index + 1].start() if index + 1 < len(fields) else len(body)
-        if not meaningful_markdown_body(field.group(2) + "\n" + body[field.end():body_end]):
+        if not meaningful_markdown_body(
+            field.group(2) + "\n" + body[field.end() : body_end]
+        ):
             return False
     return True
 
 
 def required_markdown_section_errors(path: Path, template_name: str) -> list[str]:
     template = read_template(template_name)
-    template_headings = {title for level, title, _body in markdown_sections(template) if level == 2}
+    template_headings = {
+        title for level, title, _body in markdown_sections(template) if level == 2
+    }
     required = MARKDOWN_SECTION_ANCHORS[template_name]
     text = read_text_if_exists(path)
     sections = markdown_sections(text)
     errors: list[str] = []
     for heading in required:
         if heading not in template_headings:
-            errors.append(f"template {template_name} is missing required section: {heading}")
-        bodies = [body for level, title, body in sections if level == 2 and title == heading]
+            errors.append(
+                f"template {template_name} is missing required section: {heading}"
+            )
+        bodies = [
+            body for level, title, body in sections if level == 2 and title == heading
+        ]
         if not bodies:
             errors.append(f"{path.name} required section is empty: {heading}")
         elif any(not meaningful_markdown_body(body) for body in bodies):
-            errors.append(f"{path.name} required section has an empty occurrence: {heading}")
+            errors.append(
+                f"{path.name} required section has an empty occurrence: {heading}"
+            )
     return errors
 
 
-def delivery_placeholder_errors(d: Path, state: dict[str, Any], docs: dict[Path, dict[str, Any]]) -> list[str]:
+def delivery_placeholder_errors(
+    d: Path, state: dict[str, Any], docs: dict[Path, dict[str, Any]]
+) -> list[str]:
     review = effective_plan_review(state)
     if not docs and not (review.get("required") and review.get("status") != "verified"):
         return []
@@ -2484,32 +3497,46 @@ def delivery_placeholder_errors(d: Path, state: dict[str, Any], docs: dict[Path,
             errors.append(f"{name} still contains placeholder scaffold markers")
         errors.extend(required_markdown_section_errors(path, name))
     prd_sections = markdown_sections(read_text_if_exists(d / "PRD.md"))
-    requirement_sections = [body for level, title, body in prd_sections if level == 2 and title.casefold() == "4. requirements"]
+    requirement_sections = [
+        body
+        for level, title, body in prd_sections
+        if level == 2 and title.casefold() == "4. requirements"
+    ]
     found_requirement = False
     for requirements_text in requirement_sections:
         requirements = [
             (title.split(maxsplit=1)[0], body)
             for level, title, body in markdown_sections(requirements_text)
-            if level >= 3 and re.match(r"REQ-[A-Z0-9-]+\b", title, re.I)
+            if level >= 3 and re.match(r"REQ-[A-Z0-9-]+\b", title, re.IGNORECASE)
         ]
         if not requirements:
-            errors.append("PRD.md 4. Requirements section has no concrete requirement heading")
+            errors.append(
+                "PRD.md 4. Requirements section has no concrete requirement heading"
+            )
         found_requirement = found_requirement or bool(requirements)
         for requirement_id, body in requirements:
             if not markdown_field_has_meaningful_body(body, "Requirement"):
-                errors.append(f"PRD.md {requirement_id} Requirement body must be nonblank")
+                errors.append(
+                    f"PRD.md {requirement_id} Requirement body must be nonblank"
+                )
             if not markdown_field_has_meaningful_body(body, "Acceptance criteria"):
-                errors.append(f"PRD.md {requirement_id} Acceptance criteria body must be nonblank")
+                errors.append(
+                    f"PRD.md {requirement_id} Acceptance criteria body must be nonblank"
+                )
     if not found_requirement:
         errors.append("PRD.md placeholder contract has no concrete requirement heading")
     plan_text = read_text_if_exists(d / "PLAN.md")
-    if re.search(r"^-\s*(?:Domain|Baseline SHA|Risk profile):\s*$", plan_text, re.M | re.I):
+    if re.search(
+        r"^-\s*(?:Domain|Baseline SHA|Risk profile):\s*$",
+        plan_text,
+        re.MULTILINE | re.IGNORECASE,
+    ):
         errors.append("PLAN.md placeholder contract has blank metadata")
     return errors
 
 
 def manifest_phase(path: Path) -> str | None:
-    match = re.fullmatch(r"phase[-_]?([0-9]+)", path.stem, re.I)
+    match = re.fullmatch(r"phase[-_]?([0-9]+)", path.stem, re.IGNORECASE)
     return phase_key(match.group(1)) if match else None
 
 
@@ -2528,22 +3555,32 @@ def phase_work_contract_errors(
             errors.append(f"Phase {key} work_file {relative} names phase {named_phase}")
         doc = docs.get(path)
         if doc is not None:
-            declared = phase_key(doc.get("phase")) if doc.get("phase") is not None else None
+            declared = (
+                phase_key(doc.get("phase")) if doc.get("phase") is not None else None
+            )
             if declared != key:
-                errors.append(f"{path.name} declares phase {declared or '<missing>'}, not STATE phase {key}")
+                errors.append(
+                    f"{path.name} declares phase {declared or '<missing>'}, not STATE phase {key}"
+                )
 
     for path, doc in docs.items():
         named_phase = manifest_phase(path)
         if named_phase is not None:
             if named_phase not in phases:
-                errors.append(f"orphan phase manifest {path.name}: STATE has no phase {named_phase}")
-            declared = phase_key(doc.get("phase")) if doc.get("phase") is not None else None
+                errors.append(
+                    f"orphan phase manifest {path.name}: STATE has no phase {named_phase}"
+                )
+            declared = (
+                phase_key(doc.get("phase")) if doc.get("phase") is not None else None
+            )
             if declared != named_phase:
                 errors.append(
                     f"{path.name} declares phase {declared or '<missing>'}, but filename and STATE phase {named_phase}"
                 )
         elif path.name == "integration.yaml" and item_phase(path, doc) != "integration":
-            errors.append(f"integration.yaml declares non-integration phase {item_phase(path, doc)}")
+            errors.append(
+                f"integration.yaml declares non-integration phase {item_phase(path, doc)}"
+            )
     return errors
 
 
@@ -2585,7 +3622,9 @@ def audit_artifact_contract_errors(
                     d / review["audit_file"],
                     (
                         "work",
-                        None if item_phase(work_path, doc) == "integration" else item_phase(work_path, doc),
+                        None
+                        if item_phase(work_path, doc) == "integration"
+                        else item_phase(work_path, doc),
                         str(item.get("id")),
                         review.get("status") == "verified",
                     ),
@@ -2613,7 +3652,9 @@ def audit_artifact_contract_errors(
     for path, (scope, phase, task, verified) in specs.items():
         if not path.exists():
             if verified and metadata_required:
-                errors.append(f"verified {scope} has no canonical audit artifact: {path.relative_to(d)}")
+                errors.append(
+                    f"verified {scope} has no canonical audit artifact: {path.relative_to(d)}"
+                )
             continue
         text = read_text_if_exists(path)
         if not text.startswith("---"):
@@ -2640,13 +3681,23 @@ def audit_artifact_contract_errors(
             continue
         errors.extend(audit_finding_id_errors(metadata.get("findings", []) or []))
         if metadata.get("scope") != scope:
-            errors.append(f"canonical audit {path.relative_to(d)} scope must be {scope}")
+            errors.append(
+                f"canonical audit {path.relative_to(d)} scope must be {scope}"
+            )
         if "phase" in metadata:
-            actual_phase = phase_key(metadata.get("phase")) if metadata.get("phase") is not None else None
+            actual_phase = (
+                phase_key(metadata.get("phase"))
+                if metadata.get("phase") is not None
+                else None
+            )
             if actual_phase != phase:
-                errors.append(f"canonical audit {path.relative_to(d)} phase must be {phase or '<none>'}")
+                errors.append(
+                    f"canonical audit {path.relative_to(d)} phase must be {phase or '<none>'}"
+                )
         if "task" in metadata and metadata.get("task") != task:
-            errors.append(f"canonical audit {path.relative_to(d)} task must be {task or '<none>'}")
+            errors.append(
+                f"canonical audit {path.relative_to(d)} task must be {task or '<none>'}"
+            )
         if (
             expected.get("command") == "audit"
             and expected.get("mode") == "initial"
@@ -2671,19 +3722,29 @@ def audit_artifact_contract_errors(
                 for_applied_audit=True,
             )
             if prior_severities is None:
-                errors.append(closure_without_provenance_error(domain, scope, phase, task))
-            closure_errors, _closure_by_id, active_ids = audit_closure_contract(metadata, prior_severities)
+                errors.append(
+                    closure_without_provenance_error(domain, scope, phase, task)
+                )
+            closure_errors, _closure_by_id, active_ids = audit_closure_contract(
+                metadata, prior_severities
+            )
             errors.extend(closure_errors)
         else:
-            active_ids = {str(finding["id"]) for finding in metadata.get("findings", [])}
+            active_ids = {
+                str(finding["id"]) for finding in metadata.get("findings", [])
+            }
         severities = [
             str(finding["severity"])
             for finding in metadata.get("findings", [])
             if str(finding["id"]) in active_ids
         ]
-        errors.extend(audit_verdict_errors(audit_schema, str(metadata.get("verdict")), severities))
+        errors.extend(
+            audit_verdict_errors(audit_schema, str(metadata.get("verdict")), severities)
+        )
         if verified and metadata_required and metadata.get("verdict") != "pass":
-            errors.append(f"verified {scope} requires a pass verdict in {path.relative_to(d)}")
+            errors.append(
+                f"verified {scope} requires a pass verdict in {path.relative_to(d)}"
+            )
     return errors
 
 
@@ -2701,7 +3762,11 @@ def collect_validation(
     config_errors, config_warnings, _newer_config = config_protocol_diagnostics(root)
     errors.extend(config_errors)
     warnings.extend(config_warnings)
-    state = state_override if state_override is not None else load_yaml(d / "STATE.yaml", {}) or {}
+    state = (
+        state_override
+        if state_override is not None
+        else load_yaml(d / "STATE.yaml", {}) or {}
+    )
     validate_state(state, d, errors, warnings)
     floor = config_protocol_floor(root)
     state_version = parsed_protocol_version(state.get("protocol_version"))
@@ -2726,7 +3791,9 @@ def collect_validation(
     for dup in duplicates:
         errors.append(f"Duplicate WORK id: {dup}")
     all_ids = set(index)
-    unresolved = set(str(x) for x in state.get("unresolved_decisions", []) or []) | open_decisions
+    unresolved = {
+        str(x) for x in state.get("unresolved_decisions", []) or []
+    } | open_decisions
     phases = normalized_phases(state)
     errors.extend(phase_work_contract_errors(d, state, docs))
     if effective_workflow_type(state) == "delivery":
@@ -2744,12 +3811,20 @@ def collect_validation(
             f"plan review is pending but integration status {integration_state.get('status')} indicates an applied audit lifecycle"
         )
 
-    plan_review = state.get("plan_review") if isinstance(state.get("plan_review"), dict) else {}
+    plan_review = (
+        state.get("plan_review") if isinstance(state.get("plan_review"), dict) else {}
+    )
     remediation_ids = plan_review.get("remediation_work_ids", [])
     if isinstance(remediation_ids, list):
         for remediation_id in remediation_ids:
-            if isinstance(remediation_id, str) and remediation_id.strip() and remediation_id not in all_ids:
-                errors.append(f"plan_review: unknown remediation WORK id {remediation_id}")
+            if (
+                isinstance(remediation_id, str)
+                and remediation_id.strip()
+                and remediation_id not in all_ids
+            ):
+                errors.append(
+                    f"plan_review: unknown remediation WORK id {remediation_id}"
+                )
 
     for path, doc in docs.items():
         file_errors, file_warnings = validate_work_file(path, doc, index, unresolved)
@@ -2762,25 +3837,43 @@ def collect_validation(
             continue
         work_file = d / phase_state.get("work_file", f"work/phase-{key}.yaml")
         doc = docs.get(work_file) or load_yaml(work_file, {}) or {}
-        open_items = [str(i.get("id")) for i in (doc.get("items", []) or []) if i.get("status") not in TERMINAL_STATUSES]
+        open_items = [
+            str(i.get("id"))
+            for i in (doc.get("items", []) or [])
+            if i.get("status") not in TERMINAL_STATUSES
+        ]
         if open_items:
-            errors.append(f"Phase {key} is verified but has open work: {', '.join(open_items)}")
+            errors.append(
+                f"Phase {key} is verified but has open work: {', '.join(open_items)}"
+            )
     if integration_state.get("status") == "verified":
         if effective_workflow_type(state) == "delivery" and not phases:
             errors.append("integration is verified but delivery has no phases")
         unfinished = [k for k, p in phases.items() if p.get("status") != "verified"]
         if unfinished:
-            errors.append(f"integration is verified but phases are not: {', '.join(sorted(unfinished))}")
+            errors.append(
+                f"integration is verified but phases are not: {', '.join(sorted(unfinished))}"
+            )
 
     errors.extend(audit_artifact_contract_errors(root, d, state, docs))
-    errors.extend(delivery.validation_errors(
-        root, domain, state, docs, markdown_sections,
-        final=integration_state.get("status") == "verified",
-    ))
+    errors.extend(
+        delivery.validation_errors(
+            root,
+            domain,
+            state,
+            docs,
+            markdown_sections,
+            final=integration_state.get("status") == "verified",
+        )
+    )
 
     errors.extend(finalization.structural_errors(state))
     if integration_state.get("status") == "verified":
-        errors.extend(finalization.final_errors(root, domain, state, docs, d, require_receipt=True))
+        errors.extend(
+            finalization.final_errors(
+                root, domain, state, docs, d, require_receipt=True
+            )
+        )
 
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -2803,12 +3896,18 @@ def collect_validation(
         dfs(node, [])
 
     prd_path = d / "PRD.md"
-    prd_ids = set(REQ_PATTERN.findall(prd_path.read_text(encoding="utf-8"))) if prd_path.exists() else set()
+    prd_ids = (
+        set(REQ_PATTERN.findall(prd_path.read_text(encoding="utf-8")))
+        if prd_path.exists()
+        else set()
+    )
     if prd_ids:
         for item_id, (_, item) in index.items():
             for req in (item.get("origin") or {}).get("requirements", []) or []:
                 if str(req) not in prd_ids:
-                    warnings.append(f"{item_id}: requirement id not found verbatim in PRD: {req}")
+                    warnings.append(
+                        f"{item_id}: requirement id not found verbatim in PRD: {req}"
+                    )
 
     return errors, warnings
 
@@ -2856,12 +3955,16 @@ def canonical_audit_path(
             raise ValueError(f"Phase audit phase does not exist: {key}")
         relative = phase_state.get("audit_file", f"audits/phase-{key}.md")
     else:
-        relative = (state.get("integration") or {}).get("audit_file", "audits/integration.md")
+        relative = (state.get("integration") or {}).get(
+            "audit_file", "audits/integration.md"
+        )
     path = (d / str(relative)).resolve()
     try:
         path.relative_to(d.resolve())
     except ValueError as exc:
-        raise ValueError(f"Canonical audit file escapes the domain directory: {relative}") from exc
+        raise ValueError(
+            f"Canonical audit file escapes the domain directory: {relative}"
+        ) from exc
     return path
 
 
@@ -2874,15 +3977,16 @@ def known_canonical_finding_ids(
 ) -> set[str]:
     relative_paths = {
         str(effective_plan_review(state)["audit_file"]),
-        str((state.get("integration") or {}).get("audit_file", "audits/integration.md")),
+        str(
+            (state.get("integration") or {}).get("audit_file", "audits/integration.md")
+        ),
     }
     relative_paths.update(
         str(phase_state.get("audit_file", f"audits/phase-{phase_key_value}.md"))
         for phase_key_value, phase_state in normalized_phases(state).items()
     )
     relative_paths.update(
-        str(effective_review(item)["audit_file"])
-        for _, item in work_index.values()
+        str(effective_review(item)["audit_file"]) for _, item in work_index.values()
     )
 
     finding_ids: set[str] = set()
@@ -2903,7 +4007,9 @@ def known_canonical_finding_ids(
         finding_ids.update(
             str(finding["id"])
             for finding in findings
-            if isinstance(finding, dict) and isinstance(finding.get("id"), str) and finding["id"].strip()
+            if isinstance(finding, dict)
+            and isinstance(finding.get("id"), str)
+            and finding["id"].strip()
         )
     return finding_ids
 
@@ -2914,13 +4020,19 @@ def audit_verdict_errors(
     severities: list[str],
 ) -> list[str]:
     rubric = (audit_schema.get("verdict") or {}).get(verdict, {})
-    forbidden = sorted(set(severities) & set(rubric.get("forbidden_severities", []) or []))
+    forbidden = sorted(
+        set(severities) & set(rubric.get("forbidden_severities", []) or [])
+    )
     required = set(rubric.get("required_severities", []) or [])
     errors = []
     if forbidden:
-        errors.append(f"verdict {verdict} forbids finding severity: {', '.join(forbidden)}")
+        errors.append(
+            f"verdict {verdict} forbids finding severity: {', '.join(forbidden)}"
+        )
     if required and not required.intersection(severities):
-        errors.append(f"verdict {verdict} requires finding severity: {', '.join(sorted(required))}")
+        errors.append(
+            f"verdict {verdict} requires finding severity: {', '.join(sorted(required))}"
+        )
     return errors
 
 
@@ -2932,7 +4044,9 @@ def audit_finding_id_errors(findings: list[dict[str, Any]]) -> list[str]:
         if finding_id in seen:
             duplicates.add(finding_id)
         seen.add(finding_id)
-    return [f"duplicate audit finding id: {finding_id}" for finding_id in sorted(duplicates)]
+    return [
+        f"duplicate audit finding id: {finding_id}" for finding_id in sorted(duplicates)
+    ]
 
 
 def audit_closure_contract(
@@ -2941,7 +4055,9 @@ def audit_closure_contract(
 ) -> tuple[list[str], dict[str, dict[str, Any]], set[str]]:
     findings = metadata.get("findings", []) or []
     current_ids = {str(finding["id"]) for finding in findings}
-    severity_by_id = {str(finding["id"]): str(finding["severity"]) for finding in findings}
+    severity_by_id = {
+        str(finding["id"]): str(finding["severity"]) for finding in findings
+    }
     closure = metadata.get("closure", []) or []
     closure_by_id = {str(entry["finding_id"]): entry for entry in closure}
     errors: list[str] = []
@@ -2956,11 +4072,15 @@ def audit_closure_contract(
     missing = sorted(prior_ids - set(closure_by_id))
     unknown = sorted(set(closure_by_id) - prior_ids)
     if missing_findings:
-        errors.append(f"closure omits prior findings from current metadata: {', '.join(missing_findings)}")
+        errors.append(
+            f"closure omits prior findings from current metadata: {', '.join(missing_findings)}"
+        )
     if missing:
         errors.append(f"closure does not cover prior findings: {', '.join(missing)}")
     if unknown:
-        errors.append(f"closure covers findings that were not in the initial audit: {', '.join(unknown)}")
+        errors.append(
+            f"closure covers findings that were not in the initial audit: {', '.join(unknown)}"
+        )
 
     reopened_ids: set[str] = set()
     for finding_id, entry in closure_by_id.items():
@@ -2971,12 +4091,18 @@ def audit_closure_contract(
             reopened_ids.update(reopened_as)
             for reopened_id in reopened_as:
                 if reopened_id not in current_ids:
-                    errors.append(f"closure {finding_id}: reopened finding does not exist: {reopened_id}")
+                    errors.append(
+                        f"closure {finding_id}: reopened finding does not exist: {reopened_id}"
+                    )
         elif reopened_as:
-            errors.append(f"closure {finding_id}: reopened_as is only valid for outcome reopened")
+            errors.append(
+                f"closure {finding_id}: reopened_as is only valid for outcome reopened"
+            )
     invalid_reopened = sorted(reopened_ids - current_only_ids)
     if invalid_reopened:
-        errors.append(f"closure reopened_as must reference current-only findings: {', '.join(invalid_reopened)}")
+        errors.append(
+            f"closure reopened_as must reference current-only findings: {', '.join(invalid_reopened)}"
+        )
 
     # A finding that is still open, or reopened into a new finding, cannot pass the verdict rubric
     # below the severity recorded when the audit that raised it was applied. Rank comes from the
@@ -2992,13 +4118,17 @@ def audit_closure_contract(
 
     for finding_id, entry in closure_by_id.items():
         recorded = prior_severities.get(finding_id)
-        if entry.get("outcome") == "still_open" and below_recorded(severity_by_id.get(finding_id), recorded):
+        if entry.get("outcome") == "still_open" and below_recorded(
+            severity_by_id.get(finding_id), recorded
+        ):
             errors.append(
                 f"closure {finding_id}: still_open severity {severity_by_id.get(finding_id)} "
                 f"is lower than the recorded severity {recorded}"
             )
         if entry.get("outcome") == "reopened":
-            for reopened_id in (str(value) for value in entry.get("reopened_as", []) or []):
+            for reopened_id in (
+                str(value) for value in entry.get("reopened_as", []) or []
+            ):
                 if below_recorded(severity_by_id.get(reopened_id), recorded):
                     errors.append(
                         f"closure {finding_id}: reopened finding {reopened_id} severity "
@@ -3034,7 +4164,9 @@ def validate_audit_metadata(
         errors.append(f"audit.scope must match requested scope {scope!r}")
     if metadata["mode"] != mode:
         errors.append(f"audit.mode must match requested mode {mode!r}")
-    if state.get("baseline_sha") and metadata["baseline_sha"] != state.get("baseline_sha"):
+    if state.get("baseline_sha") and metadata["baseline_sha"] != state.get(
+        "baseline_sha"
+    ):
         errors.append("audit.baseline_sha does not match STATE baseline_sha")
     head = current_sha(root)
     if head and metadata["target_sha"] != head:
@@ -3051,28 +4183,46 @@ def validate_audit_metadata(
     closure_by_id: dict[str, dict[str, Any]] = {}
     active_ids = set(finding_ids)
     if mode == "closure":
-        prior_severities = recorded_audit_provenance(root, domain, state, scope, phase, work_item, work_docs=work_docs)
+        prior_severities = recorded_audit_provenance(
+            root, domain, state, scope, phase, work_item, work_docs=work_docs
+        )
         if prior_severities is None:
-            errors.append(closure_without_provenance_error(domain, scope, phase, work_item))
-        closure_errors, closure_by_id, active_ids = audit_closure_contract(metadata, prior_severities)
+            errors.append(
+                closure_without_provenance_error(domain, scope, phase, work_item)
+            )
+        closure_errors, closure_by_id, active_ids = audit_closure_contract(
+            metadata, prior_severities
+        )
         errors.extend(closure_errors)
     elif closure:
         errors.append("initial audit closure must be empty")
 
-    severities = [str(finding["severity"]) for finding in findings if str(finding["id"]) in active_ids]
+    severities = [
+        str(finding["severity"])
+        for finding in findings
+        if str(finding["id"]) in active_ids
+    ]
     verdict = str(metadata["verdict"])
     errors.extend(audit_verdict_errors(audit_schema, verdict, severities))
 
-    open_decisions, resolved_decisions, decision_errors = decision_document_records(d / "DECISIONS.md")
+    open_decisions, resolved_decisions, decision_errors = decision_document_records(
+        d / "DECISIONS.md"
+    )
     errors.extend(decision_errors)
-    unresolved_decisions = {str(value) for value in state.get("unresolved_decisions", []) or []}
+    unresolved_decisions = {
+        str(value) for value in state.get("unresolved_decisions", []) or []
+    }
     finding_by_id = {str(finding["id"]): finding for finding in findings}
     disposition_contracts = finding_schema["classification"]["disposition"]
     for finding in findings:
         disposition = finding["disposition"]
         classification = str(finding["classification"])
         closure_outcome = (closure_by_id.get(str(finding["id"])) or {}).get("outcome")
-        decision_is_closed = mode == "closure" and closure_outcome in {"resolved", "reopened", "accepted_risk"}
+        decision_is_closed = mode == "closure" and closure_outcome in {
+            "resolved",
+            "reopened",
+            "accepted_risk",
+        }
         contract = disposition_contracts[classification]
         if disposition["action"] != contract["action"]:
             errors.append(
@@ -3081,20 +4231,27 @@ def validate_audit_metadata(
         for field in ["work_ids", "decision_ids"]:
             values = disposition[field]
             if contract[field] == "required" and not values:
-                errors.append(f"{finding['id']}: {classification} requires at least one {field}")
+                errors.append(
+                    f"{finding['id']}: {classification} requires at least one {field}"
+                )
             elif contract[field] == "empty" and values:
-                errors.append(f"{finding['id']}: {classification} requires empty {field}")
+                errors.append(
+                    f"{finding['id']}: {classification} requires empty {field}"
+                )
         for linked_work in disposition["work_ids"]:
             target = work_index.get(str(linked_work))
             if target is None:
-                errors.append(f"{finding['id']}: linked WORK does not exist: {linked_work}")
+                errors.append(
+                    f"{finding['id']}: linked WORK does not exist: {linked_work}"
+                )
                 continue
             work_item_doc = target[1]
             work_origin = work_item_doc.get("origin") or {}
-            work_findings = [
-                str(value)
-                for value in (work_origin.get("findings", []) or [])
-            ] if isinstance(work_origin, dict) else []
+            work_findings = (
+                [str(value) for value in (work_origin.get("findings", []) or [])]
+                if isinstance(work_origin, dict)
+                else []
+            )
             if str(finding["id"]) not in work_findings:
                 errors.append(
                     f"{finding['id']}: linked WORK {linked_work} origin.findings does not include {finding['id']}"
@@ -3106,7 +4263,10 @@ def validate_audit_metadata(
                 )
         for decision_id in disposition["decision_ids"]:
             decision_id = str(decision_id)
-            if decision_is_closed and (decision_id not in resolved_decisions or decision_id in unresolved_decisions):
+            if decision_is_closed and (
+                decision_id not in resolved_decisions
+                or decision_id in unresolved_decisions
+            ):
                 errors.append(
                     f"{finding['id']}: linked decision {decision_id} must be a resolved DECISIONS.md record"
                 )
@@ -3121,10 +4281,15 @@ def validate_audit_metadata(
         for work_id in finding["disposition"]["work_ids"]
     }
     if scope == "integration":
-        relevant_work_paths = {d / (state.get("integration") or {}).get("work_file", "work/integration.yaml")}
+        relevant_work_paths = {
+            d
+            / (state.get("integration") or {}).get("work_file", "work/integration.yaml")
+        }
     elif scope == "phase" and phase is not None:
         phase_state = normalized_phases(state).get(phase_key(phase), {})
-        relevant_work_paths = {d / phase_state.get("work_file", f"work/phase-{phase_key(phase)}.yaml")}
+        relevant_work_paths = {
+            d / phase_state.get("work_file", f"work/phase-{phase_key(phase)}.yaml")
+        }
     elif scope == "work" and work_item is not None and work_item in work_index:
         relevant_work_paths = {work_index[work_item][0]}
     else:
@@ -3141,14 +4306,17 @@ def validate_audit_metadata(
         if work_path not in relevant_work_paths and work_id not in linked_work_ids:
             continue
         work_origin = work_item_doc.get("origin") or {}
-        work_findings = {
-            str(value)
-            for value in (work_origin.get("findings", []) or [])
-        } if isinstance(work_origin, dict) else set()
+        work_findings = (
+            {str(value) for value in (work_origin.get("findings", []) or [])}
+            if isinstance(work_origin, dict)
+            else set()
+        )
         # Registered Newman failures are external execution findings with exact WORK ownership.
         # Ordinary audit ids still require canonical AUDIT provenance and bidirectional links.
         execution_findings = finalization.registered_findings(state, work_item_doc)
-        unknown_findings = sorted(work_findings - known_finding_ids - execution_findings)
+        unknown_findings = sorted(
+            work_findings - known_finding_ids - execution_findings
+        )
         if unknown_findings:
             errors.append(
                 f"{work_id}: origin.findings references finding absent from audit: {', '.join(unknown_findings)}"
@@ -3157,9 +4325,16 @@ def validate_audit_metadata(
             finding = finding_by_id[finding_id]
             disposition = finding["disposition"]
             if work_id not in {str(value) for value in disposition["work_ids"]}:
-                errors.append(f"{work_id}: origin.findings includes {finding_id}, but its audit disposition does not link this WORK")
-            if finding["classification"] == "DECISION_REQUIRED" and work_item_doc.get("status") == "ready":
-                errors.append(f"{finding_id}: DECISION_REQUIRED finding cannot generate ready WORK {work_id}")
+                errors.append(
+                    f"{work_id}: origin.findings includes {finding_id}, but its audit disposition does not link this WORK"
+                )
+            if (
+                finding["classification"] == "DECISION_REQUIRED"
+                and work_item_doc.get("status") == "ready"
+            ):
+                errors.append(
+                    f"{finding_id}: DECISION_REQUIRED finding cannot generate ready WORK {work_id}"
+                )
 
     if mode == "closure":
         for finding_id, entry in closure_by_id.items():
@@ -3168,16 +4343,32 @@ def validate_audit_metadata(
                 continue
             outcome = entry["outcome"]
             if outcome == "accepted_risk":
-                decision_ids = [str(value) for value in finding["disposition"]["decision_ids"]]
-                resolved = [value for value in decision_ids if value in resolved_decisions and value not in unresolved_decisions]
+                decision_ids = [
+                    str(value) for value in finding["disposition"]["decision_ids"]
+                ]
+                resolved = [
+                    value
+                    for value in decision_ids
+                    if value in resolved_decisions and value not in unresolved_decisions
+                ]
                 if not resolved:
-                    errors.append(f"closure {finding_id}: accepted_risk requires a resolved decision")
+                    errors.append(
+                        f"closure {finding_id}: accepted_risk requires a resolved decision"
+                    )
             for linked_work in finding["disposition"]["work_ids"]:
                 target = work_index.get(str(linked_work))
                 if target and target[1].get("status") not in TERMINAL_STATUSES:
-                    errors.append(f"closure {finding_id}: remediation WORK {linked_work} is not terminal")
-                elif target and target[1].get("status") == "done" and not review_satisfied(target[1]):
-                    errors.append(f"closure {finding_id}: remediation WORK {linked_work} still requires review")
+                    errors.append(
+                        f"closure {finding_id}: remediation WORK {linked_work} is not terminal"
+                    )
+                elif (
+                    target
+                    and target[1].get("status") == "done"
+                    and not review_satisfied(target[1])
+                ):
+                    errors.append(
+                        f"closure {finding_id}: remediation WORK {linked_work} still requires review"
+                    )
     return errors
 
 
@@ -3191,17 +4382,25 @@ def audit_apply(args: argparse.Namespace) -> int:
     if request_error or requested != expected_request:
         return reject_render(args.domain, requested, expected_request, request_error)
 
-    audit_path = canonical_audit_path(root, args.domain, state, args.scope, args.phase, args.task)
+    audit_path = canonical_audit_path(
+        root, args.domain, state, args.scope, args.phase, args.task
+    )
     if not audit_path.exists():
-        return reject_transition("audit", "be applied", [f"canonical audit file not found: {audit_path}"])
+        return reject_transition(
+            "audit", "be applied", [f"canonical audit file not found: {audit_path}"]
+        )
     try:
         metadata = parse_audit_metadata(audit_path)
     except ValueError as exc:
         return reject_transition("audit", "be applied", [str(exc)])
     if effective_workflow_type(state) == "audit_remediation" and args.mode == "initial":
         d = domain_dir(root, args.domain)
-        contract_errors = required_markdown_section_errors(d / "PRD.md", "PRD.audit-remediation.md")
-        contract_errors.extend(required_markdown_section_errors(d / "PLAN.md", "PLAN.audit-remediation.md"))
+        contract_errors = required_markdown_section_errors(
+            d / "PRD.md", "PRD.audit-remediation.md"
+        )
+        contract_errors.extend(
+            required_markdown_section_errors(d / "PLAN.md", "PLAN.audit-remediation.md")
+        )
         if contract_errors:
             return reject_transition("audit", "be applied", contract_errors)
     errors = validate_audit_metadata(
@@ -3221,14 +4420,30 @@ def audit_apply(args: argparse.Namespace) -> int:
     findings = metadata["findings"]
     closure_entries = metadata.get("closure", []) or []
     closure_ids = {str(entry["finding_id"]) for entry in closure_entries}
-    follow_up = findings if args.mode == "initial" else [finding for finding in findings if str(finding["id"]) not in closure_ids]
-    still_open_ids = {str(entry["finding_id"]) for entry in closure_entries if entry["outcome"] == "still_open"}
+    follow_up = (
+        findings
+        if args.mode == "initial"
+        else [finding for finding in findings if str(finding["id"]) not in closure_ids]
+    )
+    still_open_ids = {
+        str(entry["finding_id"])
+        for entry in closure_entries
+        if entry["outcome"] == "still_open"
+    }
     has_stop = any(
         finding["disposition"]["action"] == "stop"
         for finding in findings
-        if args.mode == "initial" or str(finding["id"]) not in closure_ids or str(finding["id"]) in still_open_ids
+        if args.mode == "initial"
+        or str(finding["id"]) not in closure_ids
+        or str(finding["id"]) in still_open_ids
     )
-    generated_work = list(dict.fromkeys(str(work_id) for finding in follow_up for work_id in finding["disposition"]["work_ids"]))
+    generated_work = list(
+        dict.fromkeys(
+            str(work_id)
+            for finding in follow_up
+            for work_id in finding["disposition"]["work_ids"]
+        )
+    )
     new_decisions = list(
         dict.fromkeys(
             str(decision_id)
@@ -3237,9 +4452,19 @@ def audit_apply(args: argparse.Namespace) -> int:
             for decision_id in finding["disposition"]["decision_ids"]
         )
     )
-    unresolved = list(dict.fromkeys([str(value) for value in prospective.get("unresolved_decisions", []) or []] + new_decisions))
+    unresolved = list(
+        dict.fromkeys(
+            [str(value) for value in prospective.get("unresolved_decisions", []) or []]
+            + new_decisions
+        )
+    )
     prospective["unresolved_decisions"] = unresolved
-    closes_scope = metadata["verdict"] == "pass" and not generated_work and not new_decisions and not has_stop
+    closes_scope = (
+        metadata["verdict"] == "pass"
+        and not generated_work
+        and not new_decisions
+        and not has_stop
+    )
     work_overrides: dict[Path, dict[str, Any]] = {}
     # Machine-owned closure provenance: findings is the next closure basis, while applied_against
     # preserves the basis used to accept the current closure. This projected record is validated
@@ -3260,7 +4485,15 @@ def audit_apply(args: argparse.Namespace) -> int:
 
     if args.scope == "plan":
         review = effective_plan_review(prospective)
-        review["status"] = "verified" if closes_scope else ("blocked" if has_stop else ("remediation" if generated_work else "pending"))
+        review["status"] = (
+            "verified"
+            if closes_scope
+            else (
+                "blocked"
+                if has_stop
+                else ("remediation" if generated_work else "pending")
+            )
+        )
         if generated_work:
             review["remediation_work_ids"] = generated_work
         else:
@@ -3270,7 +4503,11 @@ def audit_apply(args: argparse.Namespace) -> int:
     elif args.scope == "work":
         work_path, work_doc, _ = find_item(root, args.domain, str(args.task))
         next_doc = copy.deepcopy(work_doc)
-        next_item_doc = next(item for item in next_doc.get("items", []) if str(item.get("id")) == str(args.task))
+        next_item_doc = next(
+            item
+            for item in next_doc.get("items", [])
+            if str(item.get("id")) == str(args.task)
+        )
         review = effective_review(next_item_doc)
         if closes_scope:
             review["status"] = "verified"
@@ -3286,22 +4523,36 @@ def audit_apply(args: argparse.Namespace) -> int:
         key = phase_key(args.phase)
         raw = raw_phase_key(prospective, key)
         phase_entry_doc = prospective["phases"][raw if raw is not None else key]
-        phase_entry_doc["status"] = "verified" if closes_scope else ("remediation" if generated_work and not has_stop else "blocked")
+        phase_entry_doc["status"] = (
+            "verified"
+            if closes_scope
+            else ("remediation" if generated_work and not has_stop else "blocked")
+        )
         provenance_target = phase_entry_doc
     else:
         integration = dict(prospective.get("integration") or {})
-        integration["status"] = "verified" if closes_scope else ("blocked" if has_stop else "remediation")
+        integration["status"] = (
+            "verified" if closes_scope else ("blocked" if has_stop else "remediation")
+        )
         prospective["integration"] = integration
         provenance_target = integration
     if args.mode == "closure" and not closes_scope:
         prospective["next_action"] = {}
     provenance_target["audit_provenance"] = provenance
 
-    if closes_scope and args.scope == "plan" and not (domain_dir(root, args.domain) / "PLAN.md").exists():
+    if (
+        closes_scope
+        and args.scope == "plan"
+        and not (domain_dir(root, args.domain) / "PLAN.md").exists()
+    ):
         errors.append(f"PLAN.md not found: {domain_dir(root, args.domain) / 'PLAN.md'}")
     if closes_scope and args.scope == "phase":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
-        errors.extend(phase_verify_errors(root, args.domain, prospective, phase_key(args.phase), docs))
+        errors.extend(
+            phase_verify_errors(
+                root, args.domain, prospective, phase_key(args.phase), docs
+            )
+        )
     if closes_scope and args.scope == "integration":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
         errors.extend(integration_verify_errors(root, args.domain, prospective, docs))
@@ -3326,7 +4577,10 @@ def audit_apply(args: argparse.Namespace) -> int:
     print(f"findings: {len(findings)}")
     print(f"generated WORK: {', '.join(generated_work) or '<none>'}")
     print(f"unresolved_decisions: {', '.join(unresolved) or '<none>'}")
-    print(f"next_action: {next_action.get('command')}" + (f" {next_action.get('work_item')}" if next_action.get("work_item") else ""))
+    print(
+        f"next_action: {next_action.get('command')}"
+        + (f" {next_action.get('work_item')}" if next_action.get("work_item") else "")
+    )
     return 0
 
 
@@ -3379,7 +4633,9 @@ def extract_markdown_context(path: Path, ids: list[str]) -> list[str]:
         if not matches:
             missing.append(f"{value}: not found verbatim in {path.name}")
             continue
-        ranges.extend((max(0, index - 2), min(len(lines), index + 3)) for index in matches)
+        ranges.extend(
+            (max(0, index - 2), min(len(lines), index + 3)) for index in matches
+        )
 
     merged: list[tuple[int, int]] = []
     for start, end in sorted(ranges):
@@ -3413,17 +4669,24 @@ def render_closure_audit(title: str, path: Path, mode: str) -> None:
         render_markdown_file(title, path)
 
 
-def render_request(root: Path, args: argparse.Namespace, expected: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+def render_request(
+    root: Path, args: argparse.Namespace, expected: dict[str, Any]
+) -> tuple[dict[str, Any], str | None]:
     role = args.render_command
     if role in {"plan", "finalize"}:
         return {"command": role}, None
     if role == "run":
-        item_id = args.task or (expected.get("work_item") if expected.get("command") == "run" else None)
+        item_id = args.task or (
+            expected.get("work_item") if expected.get("command") == "run" else None
+        )
         if args.task:
             try:
                 find_item(root, args.domain, args.task)
             except KeyError:
-                return {"command": role, "work_item": item_id}, f"Unknown WORK item: {args.task}"
+                return {
+                    "command": role,
+                    "work_item": item_id,
+                }, f"Unknown WORK item: {args.task}"
         return {"command": role, "work_item": item_id}, None
 
     phase = phase_key(args.phase) if args.phase else None
@@ -3431,19 +4694,42 @@ def render_request(root: Path, args: argparse.Namespace, expected: dict[str, Any
         try:
             path, doc, _ = find_item(root, args.domain, args.task)
         except KeyError:
-            request = {"command": role, "scope": args.scope, "mode": args.mode, "phase": phase, "work_item": args.task}
+            request = {
+                "command": role,
+                "scope": args.scope,
+                "mode": args.mode,
+                "phase": phase,
+                "work_item": args.task,
+            }
             return request, f"Unknown WORK item: {args.task}"
         if phase is None:
             item_phase_key = item_phase(path, doc)
             phase = None if item_phase_key == "integration" else item_phase_key
-    return {"command": role, "scope": args.scope, "mode": args.mode, "phase": phase, "work_item": args.task}, None
+    return {
+        "command": role,
+        "scope": args.scope,
+        "mode": args.mode,
+        "phase": phase,
+        "work_item": args.task,
+    }, None
 
 
-def reject_render(domain: str, requested: dict[str, Any], expected: dict[str, Any], reason: str | None = None) -> int:
-    print(f"DevFlow error: {reason or 'render request does not match the lifecycle next action'}", file=sys.stderr)
+def reject_render(
+    domain: str,
+    requested: dict[str, Any],
+    expected: dict[str, Any],
+    reason: str | None = None,
+) -> int:
+    print(
+        f"DevFlow error: {reason or 'render request does not match the lifecycle next action'}",
+        file=sys.stderr,
+    )
     print(f"requested: {json.dumps(requested, sort_keys=True)}", file=sys.stderr)
     print(f"expected: {json.dumps(expected, sort_keys=True)}", file=sys.stderr)
-    print(f"Run 'devflow status {domain}' to inspect the current next action.", file=sys.stderr)
+    print(
+        f"Run 'devflow status {domain}' to inspect the current next action.",
+        file=sys.stderr,
+    )
     return 2
 
 
@@ -3459,7 +4745,11 @@ def render(args: argparse.Namespace) -> int:
         return reject_render(args.domain, requested, expected_request, error)
     state = refresh_state(root, args.domain)
 
-    print((plugin_root() / "core" / "prompts" / f"{role}.md").read_text(encoding="utf-8").rstrip())
+    print(
+        (plugin_root() / "core" / "prompts" / f"{role}.md")
+        .read_text(encoding="utf-8")
+        .rstrip()
+    )
 
     print("\n## Runtime context")
     print(f"- repository: {root}")
@@ -3472,25 +4762,38 @@ def render(args: argparse.Namespace) -> int:
     print(f"- baseline_sha: {state.get('baseline_sha')}")
     print(f"- target_sha: {state.get('target_sha')}")
     print(f"- risk_profile: {state.get('risk_profile')}")
-    print(f"- unresolved_decisions: {', '.join(state.get('unresolved_decisions', []) or []) or '<none>'}")
+    print(
+        f"- unresolved_decisions: {', '.join(state.get('unresolved_decisions', []) or []) or '<none>'}"
+    )
 
     print("\n## Delivery artifact context")
-    print(f"- delivery_policy: {'enabled' if delivery.active(state) else 'legacy; run devflow delivery enable ' + args.domain}")
+    print(
+        f"- delivery_policy: {'enabled' if delivery.active(state) else 'legacy; run devflow delivery enable ' + args.domain}"
+    )
     print(f"- PR template: {delivery.PR_TEMPLATE}")
     print("- artifact paths: devflow delivery paths " + args.domain)
     pr_template = delivery.inside(root, delivery.PR_TEMPLATE)
     if pr_template.is_file():
-        print_section("Consuming repository PR template", pr_template.read_text(encoding="utf-8-sig"))
+        print_section(
+            "Consuming repository PR template",
+            pr_template.read_text(encoding="utf-8-sig"),
+        )
     else:
-        print("- PR template is missing; restore the project's template before completing implementation.")
+        print(
+            "- PR template is missing; restore the project's template before completing implementation."
+        )
 
     if role == "audit":
         phases = normalized_phases(state)
         print(f"- audit_scope: {args.scope}")
         print(f"- audit_mode: {args.mode}")
         if args.mode == "closure":
-            prior = recorded_audit_provenance(root, args.domain, state, args.scope, args.phase, args.task)
-            print(f"- prior_findings: {', '.join(sorted(prior)) if prior else '<none recorded>'}")
+            prior = recorded_audit_provenance(
+                root, args.domain, state, args.scope, args.phase, args.task
+            )
+            print(
+                f"- prior_findings: {', '.join(sorted(prior)) if prior else '<none recorded>'}"
+            )
         if args.scope == "plan":
             review = effective_plan_review(state)
             print(f"- current_head: {current_sha(root) or '<none>'}")
@@ -3508,11 +4811,21 @@ def render(args: argparse.Namespace) -> int:
             print(f"- work_item: {item.get('id')}")
             print(f"- work_phase: {item_phase(path, doc)}")
             print(f"- work_risk: {(item.get('risk') or {}).get('level')}")
-            print(f"- work_origin_requirements: {', '.join(str(x) for x in ((item.get('origin') or {}).get('requirements') or [])) or '<none>'}")
-            print(f"- work_origin_plan_items: {', '.join(str(x) for x in ((item.get('origin') or {}).get('plan_items') or [])) or '<none>'}")
-            print(f"- work_evidence_commit: {(item.get('evidence') or {}).get('commit') or '<none>'}")
-            print(f"- work_changed_files: {', '.join((item.get('evidence') or {}).get('changed_files') or []) or '<none>'}")
-            print(f"- work_verification_evidence: {', '.join((item.get('evidence') or {}).get('commands') or []) or '<none>'}")
+            print(
+                f"- work_origin_requirements: {', '.join(str(x) for x in ((item.get('origin') or {}).get('requirements') or [])) or '<none>'}"
+            )
+            print(
+                f"- work_origin_plan_items: {', '.join(str(x) for x in ((item.get('origin') or {}).get('plan_items') or [])) or '<none>'}"
+            )
+            print(
+                f"- work_evidence_commit: {(item.get('evidence') or {}).get('commit') or '<none>'}"
+            )
+            print(
+                f"- work_changed_files: {', '.join((item.get('evidence') or {}).get('changed_files') or []) or '<none>'}"
+            )
+            print(
+                f"- work_verification_evidence: {', '.join((item.get('evidence') or {}).get('commands') or []) or '<none>'}"
+            )
             print(f"- audit_file: {audit_path}")
             print(f"- current_head: {current_sha(root) or '<none>'}")
             print("\n## Selected WORK item")
@@ -3536,24 +4849,38 @@ def render(args: argparse.Namespace) -> int:
             print(f"- phase: {key}")
             print(f"- phase_base_sha: {ps.get('base_sha') or '<unset>'}")
             print(f"- phase_head_sha: {ps.get('head_sha') or '<unset>'}")
-            print(f"- diff_range: {ps.get('diff_range') or '<unset — run devflow phase ref before auditing>'}")
+            print(
+                f"- diff_range: {ps.get('diff_range') or '<unset — run devflow phase ref before auditing>'}"
+            )
             print(f"- work_file: {d / ps.get('work_file', f'work/phase-{key}.yaml')}")
             print(f"- audit_file: {d / ps.get('audit_file', f'audits/phase-{key}.md')}")
             work_path = d / ps.get("work_file", f"work/phase-{key}.yaml")
             audit_path = d / ps.get("audit_file", f"audits/phase-{key}.md")
             work_doc = load_yaml(work_path, {}) or {}
             items = list(work_doc.get("items", []) or [])
-            requirements = list(dict.fromkeys(requirement for item in items for requirement in origin_ids(item)[0]))
-            plan_items = list(dict.fromkeys(plan_item for item in items for plan_item in origin_ids(item)[1]))
+            requirements = list(
+                dict.fromkeys(
+                    requirement for item in items for requirement in origin_ids(item)[0]
+                )
+            )
+            plan_items = list(
+                dict.fromkeys(
+                    plan_item for item in items for plan_item in origin_ids(item)[1]
+                )
+            )
             render_yaml_context("Phase WORK YAML", work_doc)
             render_markdown_context("Relevant PRD context", d / "PRD.md", requirements)
             render_markdown_context("Relevant PLAN context", d / "PLAN.md", plan_items)
             render_closure_audit("Existing phase audit", audit_path, args.mode)
         elif args.scope == "integration":
             integ = state.get("integration", {}) or {}
-            print(f"- diff_range: {state.get('baseline_sha')}...{state.get('target_sha')}")
+            print(
+                f"- diff_range: {state.get('baseline_sha')}...{state.get('target_sha')}"
+            )
             print(f"- work_file: {d / integ.get('work_file', 'work/integration.yaml')}")
-            print(f"- audit_file: {d / integ.get('audit_file', 'audits/integration.md')}")
+            print(
+                f"- audit_file: {d / integ.get('audit_file', 'audits/integration.md')}"
+            )
             render_markdown_file("Current PLAN", d / "PLAN.md")
             manifest = [
                 {
@@ -3571,8 +4898,14 @@ def render(args: argparse.Namespace) -> int:
                 print(f"- {d / entry['audit_file']}")
             integration_work_path = d / integ.get("work_file", "work/integration.yaml")
             if integration_work_path.exists():
-                render_yaml_context("Integration WORK YAML", load_yaml(integration_work_path, {}) or {})
-            render_closure_audit("Existing integration audit", d / integ.get("audit_file", "audits/integration.md"), args.mode)
+                render_yaml_context(
+                    "Integration WORK YAML", load_yaml(integration_work_path, {}) or {}
+                )
+            render_closure_audit(
+                "Existing integration audit",
+                d / integ.get("audit_file", "audits/integration.md"),
+                args.mode,
+            )
         else:
             raise ValueError(f"Unsupported audit scope: {args.scope}")
 
@@ -3596,10 +4929,12 @@ def render(args: argparse.Namespace) -> int:
         docs, _, _ = load_work_index(d)
         render_markdown_file("Approved PRD", d / "PRD.md")
         render_markdown_file("Whole-work PLAN", d / "PLAN.md")
-        render_yaml_context("Whole-work scope and HTML metadata", finalization.scope(root, args.domain, state, docs, d))
+        render_yaml_context(
+            "Whole-work scope and HTML metadata",
+            finalization.scope(root, args.domain, state, docs, d),
+        )
         for work_path, work_doc in docs.items():
             render_yaml_context(str(work_path.relative_to(root)), work_doc)
-
 
     for name in PROMPT_PROTOCOLS[role]:
         print_section(f"protocol/{name}.md", read_protocol(name))
@@ -3610,7 +4945,9 @@ def render(args: argparse.Namespace) -> int:
 
     pitfalls = d / "PITFALLS.md"
     if pitfalls.exists():
-        print_section(f"{args.domain}/PITFALLS.md", pitfalls.read_text(encoding="utf-8"))
+        print_section(
+            f"{args.domain}/PITFALLS.md", pitfalls.read_text(encoding="utf-8")
+        )
     return 0
 
 
@@ -3630,69 +4967,135 @@ def delivery_command(args: argparse.Namespace) -> int:
             branch_head = delivery.resolve_commit(root, "refs/heads/" + branch)
         except ValueError:
             policy = state.get("delivery") or {}
-            branch_head = ((policy.get("branches") or {}).get(branch) or {}).get("head_sha")
-        result.update(branch=branch, head_sha=branch_head, pr_template=delivery.PR_TEMPLATE)
+            branch_head = ((policy.get("branches") or {}).get(branch) or {}).get(
+                "head_sha"
+            )
+        result.update(
+            branch=branch, head_sha=branch_head, pr_template=delivery.PR_TEMPLATE
+        )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     docs, index, _ = load_work_index(d)
     if action == "enable":
         if not delivery.active(state):
             policy = delivery.default_policy()
-            policy["grandfathered_work_ids"] = sorted(item_id for item_id, (_, item) in index.items() if item.get("status") == "done")
+            policy["grandfathered_work_ids"] = sorted(
+                item_id
+                for item_id, (_, item) in index.items()
+                if item.get("status") == "done"
+            )
             state["delivery"] = policy
         if not finalization.active(state):
             state["delivery"]["finalization"] = finalization.default_policy()
         finalization.policy(state)
         state["protocol_version"] = PROTOCOL_VERSION
         commit_lifecycle_mutation(root, args.domain, state)
-        print("Delivery and whole-work finalization enabled; existing WORK exemptions remain unchanged.")
+        print(
+            "Delivery and whole-work finalization enabled; existing WORK exemptions remain unchanged."
+        )
         return 0
     if action == "context":
-        print(json.dumps(finalization.scope(root, args.domain, state, docs, d), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                finalization.scope(root, args.domain, state, docs, d),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     if action == "explain":
         ctx = finalization.scope(root, args.domain, state, docs, d)
-        finalization.record_explanation(root, ctx, state, args.skill_file, args.invocation)
+        finalization.record_explanation(
+            root, ctx, state, args.skill_file, args.invocation
+        )
         commit_lifecycle_mutation(root, args.domain, state)
         print("ELI5 explanation provenance recorded: " + ctx["html_file"])
         return 0
     if action == "newman":
         result = newman.execute(root, args.domain, state, args, markdown_sections)
         commit_lifecycle_mutation(root, args.domain, state)
-        print(json.dumps({key: result[key] for key in ("id", "branch", "status", "exit_code", "counts", "reason_codes", "summary_file")}, indent=2))
+        print(
+            json.dumps(
+                {
+                    key: result[key]
+                    for key in (
+                        "id",
+                        "branch",
+                        "status",
+                        "exit_code",
+                        "counts",
+                        "reason_codes",
+                        "summary_file",
+                    )
+                },
+                indent=2,
+            )
+        )
         if result["status"] == "blocked":
-            details = {"write_scenarios_require_allow_writes": "write scenarios require --allow-writes"}
+            details = {
+                "write_scenarios_require_allow_writes": "write scenarios require --allow-writes"
+            }
             reasons = [details.get(reason, reason) for reason in result["reason_codes"]]
             print("Newman blocked: " + ", ".join(reasons), file=sys.stderr)
-        return 0 if result["status"] in {"passed", "not_applicable"} else 1 if result["status"] == "failed" else 2
+        return (
+            0
+            if result["status"] in {"passed", "not_applicable"}
+            else 1
+            if result["status"] == "failed"
+            else 2
+        )
     if action == "triage":
         if (state.get("integration") or {}).get("status") == "verified":
-            raise ValueError("A verified integration keeps its audit history; use a new repair domain")
-        finalization.triage(root, state, docs, args.run_id, args.classification, args.reason, args.work_id)
+            raise ValueError(
+                "A verified integration keeps its audit history; use a new repair domain"
+            )
+        finalization.triage(
+            root,
+            state,
+            docs,
+            args.run_id,
+            args.classification,
+            args.reason,
+            args.work_id,
+        )
         commit_lifecycle_mutation(root, args.domain, state)
         print("Newman diagnosis recorded: " + args.run_id)
         return 0
     if action == "finalize":
-        errors = delivery.validation_errors(root, args.domain, state, docs, markdown_sections, final=True)
+        errors = delivery.validation_errors(
+            root, args.domain, state, docs, markdown_sections, final=True
+        )
         errors.extend(finalization.final_errors(root, args.domain, state, docs, d))
         if errors:
             return reject_transition(args.domain, "finalize whole delivery", errors)
         ctx = finalization.scope(root, args.domain, state, docs, d)
         fin = finalization.policy(state)
-        fin["receipt"] = {"scope_sha256": ctx["html_metadata"]["scope_sha256"],
-                          "html_sha256": fin["explanation"]["html_sha256"]}
+        fin["receipt"] = {
+            "scope_sha256": ctx["html_metadata"]["scope_sha256"],
+            "html_sha256": fin["explanation"]["html_sha256"],
+        }
         commit_lifecycle_mutation(root, args.domain, state)
-        print("Whole-work delivery finalized; independent lifecycle audits retain their gates.")
+        print(
+            "Whole-work delivery finalized; independent lifecycle audits retain their gates."
+        )
         return 0
     if action == "refresh":
-        delivery.refresh_artifacts(root, args.domain, state, args.branch, markdown_sections)
+        delivery.refresh_artifacts(
+            root, args.domain, state, args.branch, markdown_sections
+        )
         commit_lifecycle_mutation(root, args.domain, state)
         print(f"Delivery artifacts refreshed: {args.branch}")
         return 0
-    errors = delivery.validation_errors(root, args.domain, state, docs, markdown_sections, final=args.final)
+    errors = delivery.validation_errors(
+        root, args.domain, state, docs, markdown_sections, final=args.final
+    )
     if errors:
         return reject_transition(args.domain, "verify delivery artifacts", errors)
-    print("Delivery artifacts verified." if delivery.active(state) else "Legacy delivery policy is inactive; run delivery enable before implementation.")
+    print(
+        "Delivery artifacts verified."
+        if delivery.active(state)
+        else "Legacy delivery policy is inactive; run delivery enable before implementation."
+    )
     return 0
 
 
@@ -3713,20 +5116,56 @@ def autopilot_command(args: argparse.Namespace) -> int:
             raise ValueError(f"Requirements file not found: {requirements}")
         target = d / "PRD.md"
         action = {"command": "bootstrap", "scope": "project"}
-        spec = autopilot.RouteEngine(policy, capabilities).resolve(action, {"risk_profile": args.risk})
-        packet = "Target PRD path: " + str(target) + "\n\n## Approved requirements\n" + requirements.read_text(encoding="utf-8")
+        spec = autopilot.RouteEngine(policy, capabilities).resolve(
+            action, {"risk_profile": args.risk}
+        )
+        packet = (
+            "Target PRD path: "
+            + str(target)
+            + "\n\n## Approved requirements\n"
+            + requirements.read_text(encoding="utf-8")
+        )
         prompt = autopilot.ContextAssembler(plugin_root()).build(spec, packet)
-        receipt = autopilot.DispatchBroker(root, capabilities).execute(spec, prompt, args.timeout)
+        receipt = autopilot.DispatchBroker(root, capabilities).execute(
+            spec, prompt, args.timeout
+        )
         if receipt.get("status") != "success":
-            print(json.dumps({"status": "blocked", "route": spec, "receipt": receipt}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {"status": "blocked", "route": spec, "receipt": receipt},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 1
         errors = required_markdown_section_errors(target, "PRD.md")
         if errors:
-            print(json.dumps({"status": "blocked", "route": spec, "errors": errors}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {"status": "blocked", "route": spec, "errors": errors},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 1
         with contextlib.redirect_stdout(io.StringIO()):
-            init_domain(argparse.Namespace(domain=args.domain, risk=args.risk, workflow="delivery", extension="default", prd=None, force=False))
-        print(json.dumps({"status": "initialized", "route": spec, "receipt": receipt}, ensure_ascii=False, indent=2))
+            init_domain(
+                argparse.Namespace(
+                    domain=args.domain,
+                    risk=args.risk,
+                    workflow="delivery",
+                    extension="default",
+                    prd=None,
+                    force=False,
+                )
+            )
+        print(
+            json.dumps(
+                {"status": "initialized", "route": spec, "receipt": receipt},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     if not state_path(root, args.domain).exists():
@@ -3734,18 +5173,40 @@ def autopilot_command(args: argparse.Namespace) -> int:
     raw_state = load_yaml(state_path(root, args.domain), {}) or {}
     state = project_state(root, args.domain, copy.deepcopy(raw_state))
     controller_dir = root / ".devflow" / "runtime" / args.domain
-    ledger = autopilot.RuntimeLedger(controller_dir) if args.autopilot_command in {"start", "resume", "status"} else None
+    ledger = (
+        autopilot.RuntimeLedger(controller_dir)
+        if args.autopilot_command in {"start", "resume", "status"}
+        else None
+    )
     if args.autopilot_command == "route":
-        prior = autopilot.RuntimeLedger(controller_dir).load_controller() if controller_dir.exists() else {}
+        prior = (
+            autopilot.RuntimeLedger(controller_dir).load_controller()
+            if controller_dir.exists()
+            else {}
+        )
         capabilities.restore_unavailable(prior.get("unavailable_candidates"))
-        spec = autopilot.RouteEngine(policy, capabilities).resolve(state["next_action"], state, args.attempt)
-        print(json.dumps({"action": state["next_action"], "dispatch": spec}, ensure_ascii=False, indent=2))
+        spec = autopilot.RouteEngine(policy, capabilities).resolve(
+            state["next_action"], state, args.attempt
+        )
+        print(
+            json.dumps(
+                {"action": state["next_action"], "dispatch": spec},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     if args.autopilot_command == "status":
-        print(json.dumps(ledger.load_controller() if ledger else {}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                ledger.load_controller() if ledger else {}, ensure_ascii=False, indent=2
+            )
+        )
         return 0
     if args.until != "complete" and effective_workflow_type(state) != "delivery":
-        raise ValueError("Staged execution boundaries are supported only for delivery workflows")
+        raise ValueError(
+            "Staged execution boundaries are supported only for delivery workflows"
+        )
 
     prior = ledger.load_controller() if args.autopilot_command == "resume" else {}
     router = autopilot.RouteEngine(policy, capabilities)
@@ -3756,8 +5217,14 @@ def autopilot_command(args: argparse.Namespace) -> int:
 
     def render_fn(action: dict[str, Any]) -> str:
         command = action["command"]
-        render_args = argparse.Namespace(domain=args.domain, render_command=command, task=action.get("work_item"),
-                                         scope=action.get("scope"), phase=action.get("phase"), mode=action.get("mode", "initial"))
+        render_args = argparse.Namespace(
+            domain=args.domain,
+            render_command=command,
+            task=action.get("work_item"),
+            scope=action.get("scope"),
+            phase=action.get("phase"),
+            mode=action.get("mode", "initial"),
+        )
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             result = render(render_args)
@@ -3765,29 +5232,49 @@ def autopilot_command(args: argparse.Namespace) -> int:
             raise RuntimeError(f"render {command} refused")
         return output.getvalue()
 
-    def route_fn(action: dict[str, Any], current: dict[str, Any], attempt: int) -> dict[str, Any]:
+    def route_fn(
+        action: dict[str, Any], current: dict[str, Any], attempt: int
+    ) -> dict[str, Any]:
         return router.resolve(action, current, attempt)
 
     def dispatch_fn(dispatch_spec: dict[str, Any], prompt: str) -> dict[str, Any]:
         return autopilot.DispatchBroker(root, capabilities).execute(
             dispatch_spec,
             assembler.build(
-                dispatch_spec, prompt,
+                dispatch_spec,
+                prompt,
                 diagnosis=dispatch_spec.get("diagnosis"),
                 scout_digest=dispatch_spec.get("scout_digest"),
             ),
             args.timeout,
         )
 
-    budget = autopilot.TokenBudget(policy.get("budget"), total_tokens=args.token_budget,
-                                   state=prior.get("budget") if prior else None)
-    controller = autopilot.AutopilotController(status_fn, render_fn, route_fn, dispatch_fn, ledger,
-        max_steps=args.max_steps, max_no_progress=int(policy["escalation"]["retries"]["max_no_progress"]),
-        resume_state=prior, capabilities=capabilities, budget=budget,
+    budget = autopilot.TokenBudget(
+        policy.get("budget"),
+        total_tokens=args.token_budget,
+        state=prior.get("budget") if prior else None,
+    )
+    controller = autopilot.AutopilotController(
+        status_fn,
+        render_fn,
+        route_fn,
+        dispatch_fn,
+        ledger,
+        max_steps=args.max_steps,
+        max_no_progress=int(policy["escalation"]["retries"]["max_no_progress"]),
+        resume_state=prior,
+        capabilities=capabilities,
+        budget=budget,
         scout_before=set(policy.get("orchestration", {}).get("scout_before", [])),
-        scout_max_chars=int(policy.get("orchestration", {}).get("scout_max_chars", 12000)), until=args.until)
+        scout_max_chars=int(
+            policy.get("orchestration", {}).get("scout_max_chars", 12000)
+        ),
+        until=args.until,
+    )
     try:
-        with autopilot.DomainLease(controller_dir, int(policy["concurrency"]["mutating"])):
+        with autopilot.DomainLease(
+            controller_dir, int(policy["concurrency"]["mutating"])
+        ):
             result = controller.run()
     except RuntimeError as exc:
         if "concurrency limit" not in str(exc):
@@ -3798,13 +5285,17 @@ def autopilot_command(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="devflow", description="State-based agent development protocol runtime")
+    p = argparse.ArgumentParser(
+        prog="devflow", description="State-based agent development protocol runtime"
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     sp = sub.add_parser("init")
     sp.add_argument("domain")
     sp.add_argument("--risk", choices=sorted(RISK_LEVELS), default="medium")
-    sp.add_argument("--workflow", choices=["delivery", "audit-remediation"], default="delivery")
+    sp.add_argument(
+        "--workflow", choices=["delivery", "audit-remediation"], default="delivery"
+    )
     sp.add_argument("--extension", default="default")
     sp.add_argument("--prd")
     sp.add_argument("--force", action="store_true")
@@ -3826,25 +5317,43 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("autopilot")
     autosub = sp.add_subparsers(dest="autopilot_command", required=True)
-    s = autosub.add_parser("capabilities"); s.set_defaults(func=autopilot_command)
+    s = autosub.add_parser("capabilities")
+    s.set_defaults(func=autopilot_command)
     s = autosub.add_parser("bootstrap")
-    s.add_argument("domain"); s.add_argument("--requirements-file", required=True)
-    s.add_argument("--risk", choices=sorted(RISK_LEVELS), default="medium"); s.add_argument("--timeout", type=int, default=600)
+    s.add_argument("domain")
+    s.add_argument("--requirements-file", required=True)
+    s.add_argument("--risk", choices=sorted(RISK_LEVELS), default="medium")
+    s.add_argument("--timeout", type=int, default=600)
     s.set_defaults(func=autopilot_command)
     for name in ("route", "status", "start", "resume"):
-        s = autosub.add_parser(name); s.add_argument("domain")
+        s = autosub.add_parser(name)
+        s.add_argument("domain")
         if name == "route":
             s.add_argument("--attempt", type=int, default=0)
         if name in {"start", "resume"}:
             s.add_argument("--max-steps", type=int, default=100)
             s.add_argument("--token-budget", type=int)
             s.add_argument("--timeout", type=int, default=1800)
-            s.add_argument("--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete")
+            s.add_argument(
+                "--until",
+                choices=autopilot.ExecutionBoundary.VALUES,
+                default="complete",
+            )
         s.set_defaults(func=autopilot_command)
 
     sp = sub.add_parser("delivery")
     dsub = sp.add_subparsers(dest="delivery_command", required=True)
-    for name in ("enable", "paths", "check", "refresh", "context", "explain", "newman", "triage", "finalize"):
+    for name in (
+        "enable",
+        "paths",
+        "check",
+        "refresh",
+        "context",
+        "explain",
+        "newman",
+        "triage",
+        "finalize",
+    ):
         command = dsub.add_parser(name)
         command.add_argument("domain")
         if name in {"paths", "refresh"}:
@@ -3870,7 +5379,11 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--request-timeout", type=int, default=10)
         if name == "triage":
             command.add_argument("--run-id", required=True)
-            command.add_argument("--classification", choices=sorted(finalization.CLASSIFICATIONS), required=True)
+            command.add_argument(
+                "--classification",
+                choices=sorted(finalization.CLASSIFICATIONS),
+                required=True,
+            )
             command.add_argument("--reason", required=True)
             command.add_argument("--work-id")
         command.set_defaults(func=delivery_command)
@@ -3878,51 +5391,81 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("work")
     worksub = sp.add_subparsers(dest="work_command", required=True)
     s = worksub.add_parser("start")
-    s.add_argument("domain"); s.add_argument("item"); s.add_argument("--branch"); s.set_defaults(func=work_update)
+    s.add_argument("domain")
+    s.add_argument("item")
+    s.add_argument("--branch")
+    s.set_defaults(func=work_update)
     s = worksub.add_parser("done")
-    s.add_argument("domain"); s.add_argument("item"); s.add_argument("--commit"); s.add_argument("--branch")
+    s.add_argument("domain")
+    s.add_argument("item")
+    s.add_argument("--commit")
+    s.add_argument("--branch")
     s.add_argument("--changed-file", action="append", default=[])
     s.add_argument("--command", action="append", default=[])
     s.add_argument("--deviation", action="append", default=[])
     s.add_argument("--discovery", action="append", default=[])
     s.set_defaults(func=work_update)
     s = worksub.add_parser("block")
-    s.add_argument("domain"); s.add_argument("item"); s.add_argument("--reason", required=True); s.set_defaults(func=work_update)
+    s.add_argument("domain")
+    s.add_argument("item")
+    s.add_argument("--reason", required=True)
+    s.set_defaults(func=work_update)
     s = worksub.add_parser("review")
-    s.add_argument("domain"); s.add_argument("item"); s.add_argument("review_status", choices=["verified", "remediation", "blocked", "pending"])
+    s.add_argument("domain")
+    s.add_argument("item")
+    s.add_argument(
+        "review_status", choices=["verified", "remediation", "blocked", "pending"]
+    )
     s.add_argument("--remediation-work", action="append", default=[])
     s.set_defaults(func=work_review)
 
     sp = sub.add_parser("phase")
     phasesub = sp.add_subparsers(dest="phase_command", required=True)
     s = phasesub.add_parser("set")
-    s.add_argument("domain"); s.add_argument("phase"); s.add_argument("status", choices=sorted(PHASE_STATUSES)); s.set_defaults(func=set_phase)
+    s.add_argument("domain")
+    s.add_argument("phase")
+    s.add_argument("status", choices=sorted(PHASE_STATUSES))
+    s.set_defaults(func=set_phase)
     s = phasesub.add_parser("ref")
-    s.add_argument("domain"); s.add_argument("phase")
-    s.add_argument("--base", required=True); s.add_argument("--head", required=True)
-    s.add_argument("--range", help="Explicit diff range, for stacks where base is not an ancestor of head")
+    s.add_argument("domain")
+    s.add_argument("phase")
+    s.add_argument("--base", required=True)
+    s.add_argument("--head", required=True)
+    s.add_argument(
+        "--range",
+        help="Explicit diff range, for stacks where base is not an ancestor of head",
+    )
     s.set_defaults(func=set_phase_ref)
 
     sp = sub.add_parser("plan-review")
     prsub = sp.add_subparsers(dest="plan_review_command", required=True)
     s = prsub.add_parser("set")
-    s.add_argument("domain"); s.add_argument("status", choices=["pending", "verified", "skipped"]); s.set_defaults(func=set_plan_review)
+    s.add_argument("domain")
+    s.add_argument("status", choices=["pending", "verified", "skipped"])
+    s.set_defaults(func=set_plan_review)
 
     sp = sub.add_parser("integration")
     insub = sp.add_subparsers(dest="integration_command", required=True)
     s = insub.add_parser("set")
-    s.add_argument("domain"); s.add_argument("status", choices=sorted(INTEGRATION_STATUSES)); s.set_defaults(func=set_integration)
+    s.add_argument("domain")
+    s.add_argument("status", choices=sorted(INTEGRATION_STATUSES))
+    s.set_defaults(func=set_integration)
 
     sp = sub.add_parser("decision")
     dsub = sp.add_subparsers(dest="decision_command", required=True)
     for name in ["add", "resolve"]:
-        s = dsub.add_parser(name); s.add_argument("domain"); s.add_argument("decision"); s.set_defaults(func=decision_update)
+        s = dsub.add_parser(name)
+        s.add_argument("domain")
+        s.add_argument("decision")
+        s.set_defaults(func=decision_update)
 
     sp = sub.add_parser("audit")
     asub = sp.add_subparsers(dest="audit_command", required=True)
     s = asub.add_parser("apply")
     s.add_argument("domain")
-    s.add_argument("--scope", choices=["plan", "work", "phase", "integration"], required=True)
+    s.add_argument(
+        "--scope", choices=["plan", "work", "phase", "integration"], required=True
+    )
     s.add_argument("--task")
     s.add_argument("--phase")
     s.add_argument("--mode", choices=["initial", "closure"], default="initial")
@@ -3930,10 +5473,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("render")
     rsub = sp.add_subparsers(dest="render_command", required=True)
-    s = rsub.add_parser("finalize"); s.add_argument("domain"); s.set_defaults(func=render)
-    s = rsub.add_parser("plan"); s.add_argument("domain"); s.set_defaults(func=render)
-    s = rsub.add_parser("run"); s.add_argument("domain"); s.add_argument("--task"); s.set_defaults(func=render)
-    s = rsub.add_parser("audit"); s.add_argument("domain"); s.add_argument("--scope", choices=["plan", "work", "phase", "integration"], required=True); s.add_argument("--task"); s.add_argument("--phase"); s.add_argument("--mode", choices=["initial", "closure"], default="initial"); s.set_defaults(func=render)
+    s = rsub.add_parser("finalize")
+    s.add_argument("domain")
+    s.set_defaults(func=render)
+    s = rsub.add_parser("plan")
+    s.add_argument("domain")
+    s.set_defaults(func=render)
+    s = rsub.add_parser("run")
+    s.add_argument("domain")
+    s.add_argument("--task")
+    s.set_defaults(func=render)
+    s = rsub.add_parser("audit")
+    s.add_argument("domain")
+    s.add_argument(
+        "--scope", choices=["plan", "work", "phase", "integration"], required=True
+    )
+    s.add_argument("--task")
+    s.add_argument("--phase")
+    s.add_argument("--mode", choices=["initial", "closure"], default="initial")
+    s.set_defaults(func=render)
     return p
 
 
@@ -3941,9 +5499,15 @@ def main() -> int:
     try:
         configure_work_schema()
         args = build_parser().parse_args()
-        readonly_delivery = args.func == delivery_command and args.delivery_command in {"paths", "check", "context"}
+        readonly_delivery = args.func == delivery_command and args.delivery_command in {
+            "paths",
+            "check",
+            "context",
+        }
         if args.func not in {validate, print_status} and not readonly_delivery:
-            config_errors, _config_warnings, newer_config = config_protocol_diagnostics(repo_root())
+            config_errors, _config_warnings, newer_config = config_protocol_diagnostics(
+                repo_root()
+            )
             if config_errors:
                 for error in config_errors:
                     print(f"DevFlow error: {error}", file=sys.stderr)

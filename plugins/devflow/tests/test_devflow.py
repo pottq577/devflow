@@ -23,9 +23,9 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-from unittest import mock
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 

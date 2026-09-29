@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 import importlib.util
 import json
 import tempfile
@@ -615,9 +616,8 @@ class AutopilotRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             first = self.ap.DomainLease(Path(td), 1, owner="run-a")
             second = self.ap.DomainLease(Path(td), 1, owner="run-b")
-            with first:
-                with self.assertRaises(RuntimeError):
-                    second.acquire()
+            with first, self.assertRaises(RuntimeError):
+                second.acquire()
             with second:
                 self.assertTrue(second.acquired)
 
@@ -1201,7 +1201,8 @@ class AutopilotCliTests(unittest.TestCase):
         self.models = {alias: registry.model_id(alias) for alias in registry.aliases()}
 
     def test_cli_exposes_autopilot_capabilities(self):
-        import subprocess, sys
+        import subprocess
+        import sys
 
         proc = subprocess.run(
             [
@@ -1229,7 +1230,8 @@ class AutopilotCliTests(unittest.TestCase):
         )
 
     def test_cli_help_exposes_autopilot(self):
-        import subprocess, sys
+        import subprocess
+        import sys
 
         proc = subprocess.run(
             [sys.executable, str(PLUGIN / "scripts" / "devflow.py"), "--help"],
@@ -1240,7 +1242,8 @@ class AutopilotCliTests(unittest.TestCase):
         self.assertIn("autopilot", proc.stdout)
 
     def test_start_help_exposes_token_budget_override(self):
-        import subprocess, sys
+        import subprocess
+        import sys
 
         proc = subprocess.run(
             [
@@ -1258,7 +1261,8 @@ class AutopilotCliTests(unittest.TestCase):
         self.assertIn("--until", proc.stdout)
 
     def test_resume_help_exposes_execution_boundary(self):
-        import subprocess, sys
+        import subprocess
+        import sys
 
         proc = subprocess.run(
             [
@@ -1278,7 +1282,8 @@ class AutopilotCliTests(unittest.TestCase):
         self.assertIn("complete", proc.stdout)
 
     def test_staged_boundary_rejects_audit_remediation_workflow(self):
-        import subprocess, sys
+        import subprocess
+        import sys
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1321,7 +1326,9 @@ class AutopilotCliTests(unittest.TestCase):
     def test_bootstrap_routes_prd_creation_through_architect_then_initializes_domain(
         self,
     ):
-        import os, subprocess, sys
+        import os
+        import subprocess
+        import sys
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1383,7 +1390,9 @@ class AutopilotCliTests(unittest.TestCase):
         self.assertNotIn("turn the user's approved requirements into a PRD", text)
 
     def test_route_fails_closed_when_persisted_authority_candidate_is_unavailable(self):
-        import os, subprocess, sys
+        import os
+        import subprocess
+        import sys
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1439,7 +1448,9 @@ class AutopilotCliTests(unittest.TestCase):
             )
 
     def test_route_is_observational_when_runtime_directory_is_absent(self):
-        import os, subprocess, sys
+        import os
+        import subprocess
+        import sys
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1471,7 +1482,9 @@ class AutopilotCliTests(unittest.TestCase):
             self.assertFalse(runtime.exists())
 
     def test_concurrent_start_does_not_overwrite_active_controller_checkpoint(self):
-        import os, subprocess, sys
+        import os
+        import subprocess
+        import sys
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1522,7 +1535,9 @@ class AutopilotCliTests(unittest.TestCase):
             )
 
     def test_fresh_start_does_not_inherit_previous_run_unavailable_candidates(self):
-        import os, subprocess, sys
+        import os
+        import subprocess
+        import sys
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

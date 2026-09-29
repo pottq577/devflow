@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
+import os
+import sys
 from pathlib import Path
-import os, sys
 
 plugin_root = Path(__file__).resolve().parents[3]
 script = plugin_root / "scripts" / "devflow.py"

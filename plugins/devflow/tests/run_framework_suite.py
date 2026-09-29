@@ -6,16 +6,18 @@ PyYAML's explicit package directory is inherited so the runtime's declared depen
 """
 
 from __future__ import annotations
+
 import concurrent.futures
 import contextlib
 import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import shutil
 import sys
 import time
+from pathlib import Path
+
 import yaml
 
 TEST = Path(__file__).with_name("test_devflow.py")
@@ -51,13 +53,13 @@ def run_case(name):
         finally:
             if root is not None:
                 shutil.rmtree(root, ignore_errors=True)
-    return dict(
-        name=name,
-        passed=len(module.PASSED),
-        failures=module.FAILED,
-        seconds=round(time.monotonic() - start, 2),
-        output=output.getvalue(),
-    )
+    return {
+        "name": name,
+        "passed": len(module.PASSED),
+        "failures": module.FAILED,
+        "seconds": round(time.monotonic() - start, 2),
+        "output": output.getvalue(),
+    }
 
 
 if __name__ == "__main__":
@@ -90,13 +92,13 @@ if __name__ == "__main__":
                     indent=2,
                 )
             )
-    report = dict(
-        scenarios=len(results),
-        passed=sum(r["passed"] for r in results),
-        failed=sum(len(r["failures"]) for r in results),
-        seconds=round(time.monotonic() - start, 2),
-        cases=results,
-    )
+    report = {
+        "scenarios": len(results),
+        "passed": sum(r["passed"] for r in results),
+        "failed": sum(len(r["failures"]) for r in results),
+        "seconds": round(time.monotonic() - start, 2),
+        "cases": results,
+    }
     target.write_text(json.dumps(report, indent=2))
     print({k: v for k, v in report.items() if k != "cases"}, flush=True)
     raise SystemExit(bool(report["failed"]))

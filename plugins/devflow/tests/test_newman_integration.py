@@ -5,11 +5,12 @@ No package installation or external service is performed. A missing Newman repor
 """
 
 from __future__ import annotations
+
 import json
 import shutil
 import sys
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_delivery import DeliveryTests
