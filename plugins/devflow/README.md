@@ -93,7 +93,7 @@ Integration render supplies the current PLAN, phase manifest, audit paths, and i
 This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
 
 
-## Autonomous `/goal` routing (0.9.0 / protocol 1.8.0)
+## Autonomous `/goal` routing (0.9.1 / protocol 1.8.0)
 
 DevFlow has two equivalent lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Autopilot executes the same `STATE -> compute_next_action()` result until completion, a human or blocker gate, or an explicit execution boundary.
 
@@ -112,9 +112,13 @@ Use `--until plan` to finish planning, including required plan review and remedi
 
 A reached boundary writes controller status `checkpoint` and exits successfully before route, render, scout, or specialist dispatch for the next stage. Start the next stage with a fresh `autopilot start` so it gets a new run budget and operational state. Use `autopilot resume` for interrupted or blocked runs that must retain their operational telemetry.
 
-Routine implementation and test WORK use the `fast` alias at `high`. Documentation uses `fast` at `medium`. Evidence WORK uses `balanced` at `high`; remediation and migration use `balanced` at `xhigh`. High-risk WORK promotes execution to `balanced` at `xhigh`, while critical WORK promotes execution to `frontier` at `xhigh`. Work verification uses `balanced` at `high` by default, `frontier` at `xhigh` for high risk, and `frontier` at `max` for critical risk. Planning, phase and integration audits, diagnosis, and finalization use `frontier`. The first stalled worker retry promotes to `balanced` at `xhigh`; diagnosis and post-diagnosis retry use `frontier` at `xhigh`. Model or backend availability failures fall through to the next alias in the selected profile.
+All executor WORK stays on Luna by default: documentation, tests, implementation and evidence use `fast/high`; remediation, migration and high/critical WORK use `fast/xhigh`. Routine stalled execution follows `fast/high -> fast/xhigh -> fast/max -> frontier/xhigh diagnosis -> fast/max -> balanced/xhigh`, then blocks if there is still no progress. This retry ladder changes only the executor for a stalled action; semantic defects found later by audit become ordinary remediation WORK and return to Luna. Existing project overrides that still supply pre-0.9.1 retry keys keep those semantics; policy loading replaces the bundled staged defaults with the legacy retry defaults plus the project override.
 
-The controller is foreground, bounded, resumable, and observable. It enforces a persisted measured-token dispatch budget with a pre-dispatch reservation (`25,000` specialist / `8,000` scout by default), automatically runs one bounded read-only scout before configured expensive roles while budget pressure is normal, and holds a cross-process per-domain mutating lease. Backend usage is measured after each dispatch, so one in-flight dispatch may exceed its reservation; no later dispatch starts when the required reservation no longer fits. Retry counts, diagnoses, scout digests, unavailable candidates, budget usage, and dispatch receipts survive `resume` under `.devflow/runtime/<domain>/`; they are telemetry rather than lifecycle authority. Unavailable-candidate checkpoints record both alias and concrete model ID. A remapped alias therefore does not inherit a stale failure from its previous concrete model. Specialist agents receive rendered context capsules with the concrete installed DevFlow CLI path. Recursive delegation remains policy-controlled and disabled by default. Use `--token-budget TOKENS` on `autopilot start` or `resume` to override the run budget.
+Planning, work verification, phase audit and finalization use Sol (`frontier`) at `high`; high/critical specialist reasoning, integration audit and independent diagnosis use `xhigh`. `frontier` and `hardest` are Sol-only so decision authority never silently falls back to Terra. Terra supports `medium/high/xhigh`: `medium` is the normal read/analyze/compress tier, high-risk actions promote pre-analysis to `high`, and `xhigh` is reserved for the final alternative executor path after the Luna ladder is exhausted.
+
+Before each configured Sol decision role, the controller gives the full rendered packet to the Terra scout and persists a bounded evidence capsule. A successful capsule replaces the full rendered packet in the subsequent Sol dispatch, rather than being appended to it, so the expensive model does not pay again for repository-wide context. The capsule is advisory: Sol must verify cited evidence and can run DevFlow status/re-render through the concrete runtime CLI if anything material is missing or contradictory. If Terra pre-analysis fails, produces no digest, or resolves to the same Sol model after capability fallback, the controller skips compression and sends Sol the full authoritative packet instead. Capsules are bounded by `orchestration.scout_max_chars` (12,000 by default).
+
+The controller is foreground, bounded, resumable, and observable. It enforces a persisted measured-token dispatch budget with a pre-dispatch reservation (`25,000` specialist / `8,000` scout by default) and holds a cross-process per-domain mutating lease. Retry counts, diagnoses, pre-analysis capsules, unavailable candidates, budget usage, and dispatch receipts survive `resume` under `.devflow/runtime/<domain>/`; they are telemetry rather than lifecycle authority. Unavailable-candidate checkpoints record both alias and concrete model ID. A remapped alias therefore does not inherit a stale failure from its previous concrete model. Recursive delegation remains policy-controlled and disabled by default. Use `--token-budget TOKENS` on `autopilot start` or `resume` to override the run budget.
 
 Codex CLI compatibility comes from each model registry entry. `autopilot capabilities` keeps the concrete-ID compatibility view under `models` and `codex_exec.model_compatibility`. It exposes alias-oriented data under `model_registry` and `codex_exec.alias_compatibility`.
 
@@ -263,7 +267,7 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.9.0` ships protocol version `1.9.0`.
+Plugin version `0.9.1` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
@@ -280,7 +284,7 @@ Existing audit Markdown without YAML front matter remains readable as a legacy a
 No bulk migration or automatic rewrite is required.
 A protocol 1.3.0 domain sitting mid-closure re-runs its scope's initial audit through the scope's recovery command to record provenance, then the closure proceeds.
 
-A fresh project initialization records `1.9.0` in both `.devflow/config.yaml` and the domain's `STATE.yaml`.
+A fresh project initialization records `1.8.0` in both `.devflow/config.yaml` and the domain's `STATE.yaml`.
 The config value is a project runtime compatibility guard, while STATE identifies the domain artifact contract.
 Older same-major versions are readable.
 A malformed or different-major version is an error, and a newer config minor permits read-only status and validation but blocks mutation.
@@ -350,7 +354,7 @@ Run these from the marketplace root.
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
-## Whole-work finalization (0.9.0 / protocol 1.9.0)
+## Whole-work finalization (0.9.1 / protocol 1.8.0)
 
 Read `core/protocol/finalization.md` for the normative procedure.
 Existing completed WORK remains intact after `delivery enable`; the new field is additive.

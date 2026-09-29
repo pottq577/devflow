@@ -198,7 +198,25 @@ def load_policy(plugin_root: Path, repo_root: Path | None) -> dict[str, Any]:
     if repo_root is not None:
         override = repo_root / ".devflow" / "routing.yaml"
         if override.exists():
-            policy = _merge(policy, _load_yaml(override))
+            routing_override = _load_yaml(override)
+            policy = _merge(policy, routing_override)
+            override_retries = ((routing_override.get("escalation") or {}).get("retries") or {})
+            legacy_retry_keys = {
+                "worker_promote_at", "worker_xhigh_at", "worker_retry_profile", "worker_retry_effort",
+                "worker_post_diagnosis_profile", "worker_post_diagnosis_effort",
+            }
+            if isinstance(override_retries, dict) and "worker_stages" not in override_retries and any(
+                key in override_retries for key in legacy_retry_keys
+            ):
+                policy.setdefault("escalation", {})["retries"] = _merge({
+                    "worker_promote_at": 1,
+                    "worker_retry_profile": "balanced",
+                    "worker_retry_effort": "xhigh",
+                    "diagnose_at": 2,
+                    "worker_post_diagnosis_profile": "frontier",
+                    "worker_post_diagnosis_effort": "xhigh",
+                    "max_no_progress": 3,
+                }, override_retries)
 
     registry_config = _load_yaml(models_path)
     registry_config = _apply_legacy_model_overrides(registry_config, policy.pop("models", None))
@@ -700,6 +718,27 @@ class RouteEngine:
             return candidate
         return candidate if cls.EFFORT_ORDER[candidate] > cls.EFFORT_ORDER[current] else current
 
+    @staticmethod
+    def _worker_retry_stage(retries: dict[str, Any], attempt: int) -> dict[str, Any] | None:
+        stages = retries.get("worker_stages")
+        if not isinstance(stages, list):
+            raise ValueError("escalation.retries.worker_stages must be a list")
+        selected: tuple[int, dict[str, Any]] | None = None
+        previous = 0
+        for raw in stages:
+            if not isinstance(raw, dict):
+                raise ValueError("worker retry stages must be mappings")
+            try:
+                threshold = int(raw["attempt"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("worker retry stages require integer attempt") from exc
+            if threshold <= previous:
+                raise ValueError("worker retry stage attempts must be strictly increasing positive integers")
+            previous = threshold
+            if attempt >= threshold:
+                selected = (threshold, raw)
+        return copy.deepcopy(selected[1]) if selected else None
+
     def decide(self, action: dict[str, Any], state: dict[str, Any], attempt: int = 0) -> dict[str, Any]:
         role = self._role(action, attempt)
         cfg = copy.deepcopy(self.policy["roles"][role])
@@ -714,14 +753,24 @@ class RouteEngine:
 
         if role == "worker":
             retries = escalation.get("retries", {})
-            diagnose_at = int(retries.get("diagnose_at", 2))
-            promote_at = int(retries.get("worker_promote_at", retries.get("worker_xhigh_at", 1)))
-            if attempt > diagnose_at:
-                cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_post_diagnosis_profile"))
-                cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_post_diagnosis_effort", "xhigh"))
-            elif attempt >= promote_at:
-                cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_retry_profile"))
-                cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_retry_effort", "xhigh"))
+            if "worker_stages" in retries:
+                stage = self._worker_retry_stage(retries, attempt)
+                if stage:
+                    if stage.get("replace"):
+                        cfg["profile"] = str(stage.get("profile") or cfg["profile"])
+                        cfg["effort"] = str(stage.get("effort") or cfg["effort"])
+                    else:
+                        cfg["profile"] = self._stronger_profile(cfg["profile"], stage.get("profile"))
+                        cfg["effort"] = self._stronger_effort(cfg["effort"], stage.get("effort"))
+            else:
+                diagnose_at = int(retries.get("diagnose_at", 2))
+                promote_at = int(retries.get("worker_promote_at", retries.get("worker_xhigh_at", 1)))
+                if attempt > diagnose_at:
+                    cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_post_diagnosis_profile"))
+                    cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_post_diagnosis_effort", "xhigh"))
+                elif attempt >= promote_at:
+                    cfg["profile"] = self._stronger_profile(cfg["profile"], retries.get("worker_retry_profile"))
+                    cfg["effort"] = self._stronger_effort(cfg["effort"], retries.get("worker_retry_effort", "xhigh"))
 
         return {
             "role": role,
@@ -748,6 +797,10 @@ ROLE_CONTRACTS = {
 
 
 class ContextAssembler:
+    COMPACT_PACKET_ROLES = frozenset({
+        "architect", "verifier", "auditor", "integration_auditor", "diagnostician", "finalizer",
+    })
+
     def __init__(self, plugin_root: Path):
         self.plugin_root = plugin_root
 
@@ -765,6 +818,35 @@ class ContextAssembler:
         path = self.plugin_root / "skills" / name / "SKILL.md" if kind == "skill" else self.plugin_root / "core" / "prompts" / name
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
+    @staticmethod
+    def _runtime_domain(rendered_packet: str) -> str | None:
+        match = re.search(r"(?m)^- domain: (.+?)\s*$", rendered_packet)
+        return match.group(1).strip() if match else None
+
+    def _packet_section(self, spec: dict[str, Any], rendered_packet: str, scout_digest: str | None) -> str:
+        role = str(spec.get("role") or "")
+        if not scout_digest or role not in self.COMPACT_PACKET_ROLES:
+            return "## Runtime packet\n" + rendered_packet
+        domain = self._runtime_domain(rendered_packet)
+        if domain:
+            recovery = (
+                f" If material evidence is missing or contradictory, run `python3 \"{self.plugin_root / 'scripts' / 'devflow.py'}\" "
+                f"status {domain}` and re-render the exact current action before deciding."
+            )
+        else:
+            recovery = (
+                " If material evidence is missing or contradictory, use the concrete lifecycle CLI above to run status and "
+                "re-render the exact current action before deciding."
+            )
+        return (
+            "## Terra pre-analysis capsule\n" + scout_digest + "\n\n"
+            "## Authoritative packet recovery\n"
+            "The full rendered runtime packet is intentionally omitted from this Sol dispatch to avoid paying twice for "
+            "repository-wide context. Treat the Terra capsule as a navigation/evidence index, not lifecycle authority. "
+            "Verify cited repository evidence before making the final architecture, audit, diagnosis, or completion decision."
+            + recovery
+        )
+
     def build(self, spec: dict[str, Any], rendered_packet: str, diagnosis: str | None = None,
               scout_digest: str | None = None) -> str:
         command = str((spec.get("action") or {}).get("command") or "")
@@ -774,6 +856,7 @@ class ContextAssembler:
         header = {
             "role": spec["role"],
             "task_id": spec.get("task_id"),
+            "action": spec.get("action"),
             "model": spec.get("model"),
             "autopilot": True,
             "context_mode": execution.get("context_mode", "capsule"),
@@ -786,9 +869,9 @@ class ContextAssembler:
             f"Use this exact lifecycle CLI from the repository root: `python3 \"{runtime_cli}\" <args>`. "
             "This concrete path overrides placeholder plugin-root examples in the role contract.",
             "## Role contract\n" + contract,
-            "## Runtime packet\n" + rendered_packet,
+            self._packet_section(spec, rendered_packet, scout_digest),
         ]
-        if scout_digest:
+        if scout_digest and spec["role"] not in self.COMPACT_PACKET_ROLES:
             parts.append("## Repository scout\n" + scout_digest)
         if diagnosis:
             parts.append("## Prior independent diagnosis\n" + diagnosis)
@@ -805,8 +888,9 @@ class ContextAssembler:
             )
         elif spec["role"] == "scout":
             parts.append(
-                "## Completion contract\nPerform read-only repository reconnaissance only. Return a compact digest of "
-                "the exact files, symbols, contracts, tests, and risks the routed specialist should inspect. Do not mutate anything."
+                "## Completion contract\nPerform read-only repository pre-analysis only. Return a compact evidence capsule "
+                "with exact files, symbols, tests, constraints, candidate concerns, and unresolved uncertainty. "
+                "Do not make the specialist's final architecture/audit verdict and do not mutate anything."
             )
         else:
             delegation = (
@@ -819,7 +903,6 @@ class ContextAssembler:
                 f"{delegation} Re-read status after mutation and return a concise receipt."
             )
         return "\n\n".join(parts)
-
 
 class RuntimeLedger:
     def __init__(self, directory: Path):
@@ -1005,7 +1088,7 @@ class AutopilotController:
                  max_steps: int = 100, max_no_progress: int = 3, *, run_id: str | None = None,
                  resume_state: dict[str, Any] | None = None, capabilities: CapabilityRegistry | None = None,
                  budget: TokenBudget | None = None, scout_before: set[str] | None = None,
-                 until: str = "complete"):
+                 scout_max_chars: int = 12000, until: str = "complete"):
         self.status_fn = status_fn
         self.render_fn = render_fn
         self.route_fn = route_fn
@@ -1016,12 +1099,19 @@ class AutopilotController:
         self.capabilities = capabilities
         self.budget = budget
         self.scout_before = set(scout_before or set())
+        self.scout_max_chars = int(scout_max_chars)
+        if self.scout_max_chars < 1:
+            raise ValueError("orchestration.scout_max_chars must be positive")
         self.boundary = ExecutionBoundary(until)
         resume = resume_state or {}
         self.run_id = run_id or str(resume.get("run_id") or f"run_{uuid.uuid4().hex[:12]}")
         self.attempts = {str(k): int(v) for k, v in (resume.get("attempts") or {}).items()}
         self.diagnoses = {str(k): str(v) for k, v in (resume.get("diagnoses") or {}).items()}
-        self.scouts = {str(k): str(v) for k, v in (resume.get("scouts") or {}).items()}
+        self.scouts = {
+            str(k): self._bounded_scout_digest(str(v))
+            for k, v in (resume.get("scouts") or {}).items()
+            if str(v).strip()
+        }
         self.steps_completed = int(resume.get("steps_completed") or 0)
         if self.capabilities:
             self.capabilities.restore_unavailable(resume.get("unavailable_candidates"))
@@ -1034,6 +1124,18 @@ class AutopilotController:
     @staticmethod
     def _bucket(spec: dict[str, Any]) -> str:
         return TokenBudget.bucket_for_role(str(spec.get("role") or "worker"))
+
+    @staticmethod
+    def _same_model(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        return str((left.get("model") or {}).get("selected") or "") == str((right.get("model") or {}).get("selected") or "")
+
+    def _bounded_scout_digest(self, value: str) -> str:
+        digest = value.strip()
+        if len(digest) <= self.scout_max_chars:
+            return digest
+        marker = "\n[pre-analysis capsule truncated by DevFlow]"
+        keep = max(0, self.scout_max_chars - len(marker))
+        return digest[:keep].rstrip() + marker
 
     def _checkpoint(self, status: str, *, action: dict[str, Any] | None = None,
                     reason: str | None = None, steps: int | None = None) -> dict[str, Any]:
@@ -1156,18 +1258,21 @@ class AutopilotController:
                 scout_action = copy.deepcopy(action)
                 scout_action["_role_override"] = "scout"
                 scout_spec = self._route(scout_action, state, attempt)
-                if scout_spec is not None:
+                scout_receipt: dict[str, Any] | None = None
+                if scout_spec is not None and not self._same_model(scout_spec, spec):
                     scout_receipt = self._dispatch(scout_spec, packet, step=step, budget_bucket=bucket)
                     if self._mark_capability_failure(scout_spec, scout_receipt):
                         scout_spec = self._route(scout_action, state, attempt)
-                        if scout_spec is not None:
+                        if scout_spec is not None and not self._same_model(scout_spec, spec):
                             scout_receipt = self._dispatch(scout_spec, packet, step=step, budget_bucket=bucket)
                             self._mark_capability_failure(scout_spec, scout_receipt)
-                    if scout_receipt.get("status") == "success":
-                        digest = scout_receipt.get("message") or scout_receipt.get("stdout")
-                        if isinstance(digest, str) and digest.strip():
-                            self.scouts[fp] = digest.strip()
-                            spec["scout_digest"] = self.scouts[fp]
+                        else:
+                            scout_receipt = None
+                if scout_receipt is not None and scout_receipt.get("status") == "success":
+                    digest = scout_receipt.get("message") or scout_receipt.get("stdout")
+                    if isinstance(digest, str) and digest.strip():
+                        self.scouts[fp] = self._bounded_scout_digest(digest)
+                        spec["scout_digest"] = self.scouts[fp]
 
             if self.budget and not self.budget.can_dispatch(bucket, required_tokens=required_tokens):
                 self.steps_completed = step

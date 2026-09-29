@@ -2,7 +2,7 @@
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
 Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version
-0.9.0 and its protocol version is `1.9.0`.
+0.9.1 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -37,9 +37,9 @@ adopt the new completion requirements; completed WORK is preserved. New domains 
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
 
-## Version 0.9.0 autonomous routing
+## Version 0.9.1 cost-aware autonomous routing
 
-`/goal` can now keep one user-facing session while DevFlow deterministically routes lifecycle actions to task-appropriate specialist models. New-domain PRD bootstrap is routed through the Architect profile before initialization; routine implementation defaults to Luna, high/critical WORK is promoted by its own risk, planning and verification default to Sol, and critical integration reasoning stays on Sol at maximum effort with Terra as the fallback candidate. Runtime capacity/model/backend failures fall through to persisted candidate fallback, Codex CLI versions are checked per model before dispatch, and retry/diagnosis state survives resume. A measured-token pre-dispatch budget, bounded read-only scouting, and a per-domain mutating lease make the controller cost-aware and safe against competing workspace writers. Existing manual plan/run/audit/status commands remain supported.
+`/goal` keeps one user-facing session while DevFlow separates context processing, judgment, execution, and verification. Terra performs bounded read-only pre-analysis and compresses the full runtime/repository context into an evidence capsule. Sol receives that capsule instead of the full rendered packet for planning, verification, audit, diagnosis, and finalization, while retaining an explicit re-render escape hatch when evidence is incomplete. Luna owns mutation WORK and escalates `high -> xhigh -> max`; after independent Sol diagnosis, Luna retries at `max` before Terra `xhigh` is used as the final alternative executor. Sol remains the final decision authority and does not silently fall back to Terra. Runtime capacity/model/backend failures, retry/diagnosis state, measured-token budgeting, and the per-domain mutating lease remain resumable and observable.
 
 Adopt an existing domain with `devflow delivery enable <domain>`, then use `devflow status <domain>`.
 Use `devflow autopilot start <domain>` or invoke the `goal` skill to run the complete lifecycle; use `devflow autopilot status <domain>` and `route` for observability.

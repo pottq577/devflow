@@ -5,12 +5,15 @@ notes:
   - Profiles bind logical capability tiers to model aliases from the model registry.
   - Concrete model IDs and capabilities live in core/routing/models.yaml, not in routing policy.
   - Project routing overrides live in .devflow/routing.yaml; model registry overrides live in .devflow/models.yaml.
-  - profile_order ranks capability tiers for retry promotion; retries never downgrade an already stronger risk-selected profile.
+  - profile_order ranks capability tiers for retry promotion; retries never downgrade an already stronger risk-selected profile unless a stage explicitly sets replace: true for a cross-family fallback.
   - escalation.kind applies role-specific task-kind overrides before risk overrides.
   - escalation.risk treats domain risk as a floor and may promote a WORK above that floor through next_action.item_risk.
-  - escalation.retries may promote a stalled worker to stronger profiles and effort without changing lifecycle authority.
+  - escalation.retries.worker_stages is an ordered retry ladder keyed by minimum attempt; legacy retry fields remain readable; a project override using them replaces the bundled staged retry defaults.
+  - Retry stages normally respect profile/effort floors; replace: true explicitly switches to an alternative model family after diagnosis.
   - Dispatcher capabilities choose execution backend after a model alias resolves to a concrete model.
   - Budget total_tokens is a measured-usage pre-dispatch guard; percentage buckets may borrow only from reserve.
   - dispatch_reserve_tokens and scout_reserve_tokens must fit before a new dispatch starts; one in-flight backend run may report usage above its reservation.
-  - orchestration.scout_before names specialist roles that receive one persisted read-only scout digest per action.
+  - orchestration.scout_before names Sol decision roles that receive one persisted Terra pre-analysis capsule per action when budget permits.
+  - A successful scout capsule replaces the full rendered runtime packet for Sol decision dispatches; the specialist can re-render on demand when evidence is missing or ambiguous.
+  - orchestration.scout_max_chars bounds the persisted/passed pre-analysis capsule; failed or same-model scouts fall back to the full runtime packet.
   - concurrency.mutating is enforced with cross-process domain leases.

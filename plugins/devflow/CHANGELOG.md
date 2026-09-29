@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+## 0.9.1 - 2026-09-29 - Cost-aware routing and detached delivery
+
 - Support Codex-style detached linked worktrees in delivery lifecycle handling by capturing the target branch at `work start`, preserving it through completion, and allowing final checks/refresh while the target branch remains an ancestor of isolated delivered commits.
 - Keep attached-branch provenance strict: explicit branch mismatches, detached divergence, and branch commits beyond delivered HEAD still fail closed.
+- Make Sol the decision authority: planning, verification, audit and finalization default to `frontier` at `high`, with `xhigh` reserved for high/critical reasoning, integration audit and diagnosis; `frontier`/`hardest` no longer silently fall back to Terra.
+- Keep implementation authority on Luna: routine executor WORK uses `fast/high`, difficult/high-risk execution uses `fast/xhigh`, critical execution uses `fast/max`, and stalled workers climb `high -> xhigh -> max`, receive an independent Sol diagnosis, retry Luna at `max`, then explicitly replace the executor with Terra `xhigh` as the final alternative.
+- Make Terra the bounded pre-analysis layer for Sol decision roles: Terra reads the full runtime/repository context at `medium` (or `high` for high/critical risk), emits a capped evidence capsule, and the subsequent Sol dispatch receives that capsule instead of the full packet with an explicit re-render escape hatch. Same-model scout fallback is skipped to avoid paying for duplicate Sol calls.
+- Preserve pre-0.9.1 project retry overrides by replacing the staged defaults when legacy retry keys are detected, and align marketplace/plugin version assertions and documentation on plugin `0.9.1` without changing the runtime artifact protocol.
 
 ## 0.9.0 - Autonomous routing
 

@@ -3770,7 +3770,13 @@ def autopilot_command(args: argparse.Namespace) -> int:
 
     def dispatch_fn(dispatch_spec: dict[str, Any], prompt: str) -> dict[str, Any]:
         return autopilot.DispatchBroker(root, capabilities).execute(
-            dispatch_spec, assembler.build(dispatch_spec, prompt), args.timeout,
+            dispatch_spec,
+            assembler.build(
+                dispatch_spec, prompt,
+                diagnosis=dispatch_spec.get("diagnosis"),
+                scout_digest=dispatch_spec.get("scout_digest"),
+            ),
+            args.timeout,
         )
 
     budget = autopilot.TokenBudget(policy.get("budget"), total_tokens=args.token_budget,
@@ -3778,7 +3784,8 @@ def autopilot_command(args: argparse.Namespace) -> int:
     controller = autopilot.AutopilotController(status_fn, render_fn, route_fn, dispatch_fn, ledger,
         max_steps=args.max_steps, max_no_progress=int(policy["escalation"]["retries"]["max_no_progress"]),
         resume_state=prior, capabilities=capabilities, budget=budget,
-        scout_before=set(policy.get("orchestration", {}).get("scout_before", [])), until=args.until)
+        scout_before=set(policy.get("orchestration", {}).get("scout_before", [])),
+        scout_max_chars=int(policy.get("orchestration", {}).get("scout_max_chars", 12000)), until=args.until)
     try:
         with autopilot.DomainLease(controller_dir, int(policy["concurrency"]["mutating"])):
             result = controller.run()

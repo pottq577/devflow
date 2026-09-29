@@ -9,7 +9,7 @@ models:
         min_version: 0.144.0
   balanced:
     id: gpt-5.6-terra
-    efforts: [medium, high]
+    efforts: [medium, high, xhigh]
     multi_agent: v2
     backends:
       codex_exec:
