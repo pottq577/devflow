@@ -190,11 +190,10 @@ def collection_errors(doc: Any, endpoints: Any, api_note: Any) -> list[str]:
                 "accessToken",
                 "clientSecret",
                 "value",
-            }:
-                if val and (not isinstance(val, str) or not VARIABLE.fullmatch(val)):
-                    errors.append(
-                        "Postman credential auth values must be variable references"
-                    )
+            } and val and (not isinstance(val, str) or not VARIABLE.fullmatch(val)):
+                errors.append(
+                    "Postman credential auth values must be variable references"
+                )
 
     def scan(value, names):
         if isinstance(value, str):
