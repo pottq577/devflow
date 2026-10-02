@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -912,6 +913,37 @@ def has_nonblank_string(values: Any) -> bool:
     )
 
 
+def utc_timestamp() -> str:
+    """Return a stable UTC timestamp for explicit lifecycle transition provenance."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def work_block_kind(item: dict[str, Any]) -> str | None:
+    """Classify blocked WORK while keeping legacy blocked artifacts backward-readable."""
+    if item.get("status") != "blocked":
+        return None
+    value = item.get("block_kind")
+    return str(value) if value is not None else "execution"
+
+
+def record_work_transition(
+    item: dict[str, Any],
+    to_status: str,
+    reason: str,
+    **details: Any,
+) -> None:
+    """Record explicit recovery/blocking transitions without inventing a second state store."""
+    transition = {
+        "from": str(item.get("status")),
+        "to": to_status,
+        "reason": reason,
+        "at": utc_timestamp(),
+    }
+    transition.update({key: value for key, value in details.items() if value is not None})
+    item.setdefault("transition_history", []).append(transition)
+    item["status"] = to_status
+
+
 def work_document_version(doc: dict[str, Any]) -> int:
     version = doc.get("version", 1)
     return version if type(version) is int else 0
@@ -1706,14 +1738,63 @@ def work_review_action(
                 "work_item": item_id,
                 **work_routing_fields(item),
             }
-        return {
-            "role": "human",
-            "command": "decision",
-            "scope": "work",
-            "phase": None if phase == "integration" else phase,
-            "work_item": item_id,
-        }
+        # A remediation set can be stalled by one branch while another reviewed WORK is ready
+        # for its own closure, or while unrelated WORK remains executable. Membership in the
+        # same audit remediation set is a closure condition, not an execution dependency.
+        continue
     return None
+
+
+def external_wait_action(
+    root: Path,
+    domain: str,
+    state: dict[str, Any],
+    work_overrides: dict[Path, dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Return a human evidence handoff only after executable lifecycle actions are exhausted."""
+    d = domain_dir(root, domain)
+    docs, _, _ = load_work_index(d, work_overrides)
+    phases = normalized_phases(state)
+    all_phases_verified = effective_workflow_type(state) == "audit_remediation" or (
+        bool(phases)
+        and all(entry.get("status") == "verified" for entry in phases.values())
+    )
+    waits = []
+    for path, doc in docs.items():
+        phase = item_phase(path, doc)
+        if phase == "integration":
+            if not all_phases_verified:
+                continue
+        elif phases.get(phase, {}).get("status") in {"verified", "blocked"}:
+            continue
+        for item in doc.get("items", []) or []:
+            if work_block_kind(item) != "external":
+                continue
+            evidence = item.get("evidence")
+            wait = (
+                evidence.get("external_wait") if isinstance(evidence, dict) else {}
+            )
+            wait = wait if isinstance(wait, dict) else {}
+            waits.append(
+                (
+                    phase == "integration",
+                    phase,
+                    str(item.get("id")),
+                    item,
+                    wait,
+                )
+            )
+    if not waits:
+        return None
+    _, phase, item_id, item, wait = sorted(waits, key=lambda entry: entry[:3])[0]
+    return {
+        "role": "human",
+        "command": "provide-evidence",
+        "scope": "work",
+        "phase": None if phase == "integration" else phase,
+        "work_item": item_id,
+        "reason": wait.get("reason") or item.get("block_reason") or "external evidence required",
+    }
 
 
 def plan_remediation_action(
@@ -2012,6 +2093,10 @@ def base_next_action(
             **work_routing_fields(item),
         }
 
+    external_wait = external_wait_action(root, domain, state, work_overrides)
+    if external_wait:
+        return external_wait
+
     docs, _, _ = load_work_index(d, work_overrides)
     for key in sorted(phases):
         ps = phases[key]
@@ -2021,7 +2106,9 @@ def base_next_action(
         doc = docs.get(work_file) or load_yaml(work_file, {}) or {}
         items = doc.get("items", []) or []
         if ps.get("status") == "blocked" or any(
-            i.get("status") == "blocked" for i in items
+            i.get("status") == "blocked"
+            and work_block_kind(i) != "external"
+            for i in items
         ):
             return {
                 "role": "human",
@@ -2052,6 +2139,7 @@ def base_next_action(
             str(item.get("id"))
             for item in integration_items
             if item.get("status") == "blocked"
+            and work_block_kind(item) != "external"
         ]
         if blocked:
             return {
@@ -2107,6 +2195,7 @@ def base_next_action(
             str(item.get("id"))
             for item in integration_items
             if item.get("status") == "blocked"
+            and work_block_kind(item) != "external"
         ]
         if blocked:
             action = {
@@ -2216,6 +2305,24 @@ def compute_next_action(
                     **work_routing_fields(item),
                 }
             if item.get("status") == "blocked":
+                if work_block_kind(item) == "external":
+                    evidence = item.get("evidence")
+                    wait = (
+                        evidence.get("external_wait")
+                        if isinstance(evidence, dict)
+                        else {}
+                    )
+                    wait = wait if isinstance(wait, dict) else {}
+                    return {
+                        "role": "human",
+                        "command": "provide-evidence",
+                        "scope": "work",
+                        "phase": None,
+                        "work_item": item_id,
+                        "reason": wait.get("reason")
+                        or item.get("block_reason")
+                        or "external evidence required",
+                    }
                 return {
                     "role": "human",
                     "command": "decision",
@@ -2417,13 +2524,24 @@ def print_status(args: argparse.Namespace) -> int:
     blocked = [
         i
         for _, (_, i) in load_work_index(domain_dir(root, args.domain))[1].items()
-        if i.get("status") == "blocked"
+        if i.get("status") == "blocked" and work_block_kind(i) != "external"
     ]
     if blocked:
         print(f"blocked_work: {', '.join(str(i.get('id')) for i in blocked)}")
+    waiting_external = [
+        i
+        for _, (_, i) in load_work_index(domain_dir(root, args.domain))[1].items()
+        if work_block_kind(i) == "external"
+    ]
+    if waiting_external:
+        print(
+            f"waiting_external_work: {', '.join(str(i.get('id')) for i in waiting_external)}"
+        )
     print(f"next.role: {action.get('role')}")
     print(f"next.command: {action.get('command')}")
     print(f"next.scope: {action.get('scope')}")
+    if action.get("reason"):
+        print(f"next.reason: {action.get('reason')}")
     if action.get("mode"):
         print(f"next.mode: {action.get('mode')}")
     if action.get("phase") is not None:
@@ -2494,7 +2612,16 @@ def work_update(args: argparse.Namespace) -> int:
             branch, checkout_mode, branch_start = delivery.delivery_context(
                 root, getattr(args, "branch", None)
             )
-            delivery_evidence = evidence.setdefault("delivery", {})
+            delivery_evidence = evidence.get("delivery")
+            if delivery_evidence is None:
+                delivery_evidence = {}
+                evidence["delivery"] = delivery_evidence
+            elif not isinstance(delivery_evidence, dict):
+                return reject_transition(
+                    args.item,
+                    "start",
+                    ["evidence.delivery must be a mapping or null"],
+                )
             recorded_branch = delivery_evidence.get("branch")
             if recorded_branch and recorded_branch != branch:
                 return reject_transition(
@@ -2573,8 +2700,123 @@ def work_update(args: argparse.Namespace) -> int:
             return reject_transition(
                 args.item, "block", ["a non-empty reason is required"]
             )
-        item["status"] = "blocked"
+        resume_status = str(item.get("status"))
+        record_work_transition(
+            item,
+            "blocked",
+            reason,
+            block_kind="execution",
+        )
+        item["block_kind"] = "execution"
+        item["block_resume_status"] = resume_status
         item["block_reason"] = reason
+    elif args.work_command == "wait-external":
+        if document_errors:
+            return reject_transition(args.item, "wait for external evidence", document_errors)
+        if item.get("status") not in {"ready", "in_progress", "blocked"}:
+            return reject_transition(
+                args.item,
+                "wait for external evidence",
+                [f"cannot wait from status {item.get('status')}"],
+            )
+        if work_block_kind(item) == "external":
+            return reject_transition(
+                args.item,
+                "wait for external evidence",
+                [
+                    "WORK is already waiting for external evidence; "
+                    "use work resume after evidence arrives"
+                ],
+            )
+        reason = (args.reason or "").strip()
+        missing = [
+            value.strip()
+            for value in (args.missing_evidence or [])
+            if isinstance(value, str) and value.strip()
+        ]
+        if not reason or not missing:
+            return reject_transition(
+                args.item,
+                "wait for external evidence",
+                ["a non-empty reason and at least one --missing-evidence value are required"],
+            )
+        previous_reason = item.get("block_reason") if item.get("status") == "blocked" else None
+        resume_status = (
+            item.get("block_resume_status")
+            if item.get("status") == "blocked"
+            else item.get("status")
+        )
+        if resume_status not in {"ready", "in_progress"}:
+            resume_status = "ready"
+        record_work_transition(
+            item,
+            "blocked",
+            reason,
+            block_kind="external",
+            prior_block_reason=previous_reason,
+        )
+        item["block_kind"] = "external"
+        item["block_resume_status"] = resume_status
+        item["block_reason"] = reason
+        evidence = item.get("evidence")
+        if evidence is None:
+            evidence = {}
+            item["evidence"] = evidence
+        evidence["external_wait"] = {
+            "status": "unverified",
+            "reason": reason,
+            "checked_at": utc_timestamp(),
+            "missing_evidence": list(dict.fromkeys(missing)),
+        }
+    elif args.work_command == "resume":
+        if document_errors:
+            return reject_transition(args.item, "resume", document_errors)
+        if work_block_kind(item) != "external":
+            return reject_transition(
+                args.item,
+                "resume",
+                ["work resume requires an external evidence wait"],
+            )
+        wait = ((item.get("evidence") or {}).get("external_wait") or {})
+        resume_status = item.get("block_resume_status")
+        if resume_status not in {"ready", "in_progress"}:
+            resume_status = "ready"
+        reason = (args.reason or "").strip()
+        if not reason:
+            return reject_transition(args.item, "resume", ["a non-empty reason is required"])
+        wait["status"] = "resolved"
+        wait["resolved_at"] = utc_timestamp()
+        wait["resolution"] = reason
+        record_work_transition(item, resume_status, reason, block_kind="external")
+        item.pop("block_kind", None)
+        item.pop("block_resume_status", None)
+        item["block_reason"] = None
+    elif args.work_command == "unblock":
+        if document_errors:
+            return reject_transition(args.item, "unblock", document_errors)
+        if item.get("status") != "blocked":
+            return reject_transition(args.item, "unblock", ["status=blocked is required"])
+        if work_block_kind(item) == "external":
+            return reject_transition(
+                args.item,
+                "unblock",
+                ["external evidence waits use work resume so evidence provenance is preserved"],
+            )
+        reason = (args.reason or "").strip()
+        if not reason:
+            return reject_transition(args.item, "unblock", ["a non-empty reason is required"])
+        resume_status = item.get("block_resume_status")
+        if resume_status not in {"ready", "in_progress"}:
+            resume_status = "ready"
+        record_work_transition(
+            item,
+            resume_status,
+            reason,
+            prior_block_reason=item.get("block_reason"),
+        )
+        item.pop("block_kind", None)
+        item.pop("block_resume_status", None)
+        item["block_reason"] = None
     commit_lifecycle_mutation(root, args.domain, copy.deepcopy(state), {path: doc})
     print(f"{args.item}: {item['status']}")
     return 0
@@ -3272,13 +3514,101 @@ def validate_item(
         )
 
     # Evidence must back a completion claim.
-    evidence = item.get("evidence") or {}
+    raw_evidence = item.get("evidence")
+    if raw_evidence is None:
+        evidence: dict[str, Any] = {}
+    elif not isinstance(raw_evidence, dict):
+        errors.append(f"{item_id}: evidence must be a mapping")
+        evidence = {}
+    else:
+        evidence = raw_evidence
+    delivery_evidence = evidence.get("delivery")
+    if delivery_evidence is not None and not isinstance(delivery_evidence, dict):
+        errors.append(f"{item_id}: evidence.delivery must be a mapping or null")
     if (
         status == "done"
         and kind != "documentation"
         and not has_nonblank_string(evidence.get("commands"))
     ):
         errors.append(f"{item_id}: done without evidence.commands")
+
+    block_kind = item.get("block_kind")
+    if block_kind not in {None, "execution", "external"}:
+        errors.append(f"{item_id}: invalid block_kind {block_kind}")
+    if block_kind is not None and status != "blocked":
+        errors.append(f"{item_id}: block_kind requires status=blocked")
+    block_resume_status = item.get("block_resume_status")
+    if block_resume_status is not None and block_resume_status not in {"ready", "in_progress"}:
+        errors.append(
+            f"{item_id}: block_resume_status must be ready or in_progress"
+        )
+
+    external_wait = evidence.get("external_wait")
+    if external_wait is not None and not isinstance(external_wait, dict):
+        errors.append(f"{item_id}: evidence.external_wait must be a mapping")
+    elif isinstance(external_wait, dict):
+        external_status = external_wait.get("status")
+        if external_status not in {"unverified", "resolved"}:
+            errors.append(
+                f"{item_id}: evidence.external_wait.status must be unverified or resolved"
+            )
+        if not isinstance(external_wait.get("reason"), str) or not external_wait["reason"].strip():
+            errors.append(f"{item_id}: evidence.external_wait.reason is required")
+        if (
+            not isinstance(external_wait.get("checked_at"), str)
+            or not external_wait["checked_at"].strip()
+        ):
+            errors.append(f"{item_id}: evidence.external_wait.checked_at is required")
+        if not has_nonblank_string(external_wait.get("missing_evidence")):
+            errors.append(
+                f"{item_id}: evidence.external_wait.missing_evidence must contain a nonblank value"
+            )
+        if external_status == "resolved":
+            if (
+                not isinstance(external_wait.get("resolved_at"), str)
+                or not external_wait["resolved_at"].strip()
+            ):
+                errors.append(f"{item_id}: resolved external wait requires resolved_at")
+            if (
+                not isinstance(external_wait.get("resolution"), str)
+                or not external_wait["resolution"].strip()
+            ):
+                errors.append(f"{item_id}: resolved external wait requires resolution")
+    if status == "blocked" and block_kind == "external":
+        if not isinstance(external_wait, dict) or external_wait.get("status") != "unverified":
+            errors.append(
+                f"{item_id}: external block requires unverified evidence.external_wait"
+            )
+
+    transition_history = item.get("transition_history")
+    if transition_history is not None:
+        if not isinstance(transition_history, list):
+            errors.append(f"{item_id}: transition_history must be a list")
+        else:
+            for offset, transition in enumerate(transition_history):
+                if not isinstance(transition, dict):
+                    errors.append(
+                        f"{item_id}: transition_history[{offset}] must be a mapping"
+                    )
+                    continue
+                if (
+                    transition.get("from") not in WORK_STATUSES
+                    or transition.get("to") not in WORK_STATUSES
+                ):
+                    errors.append(
+                        f"{item_id}: transition_history[{offset}] has an invalid status"
+                    )
+                if (
+                    not isinstance(transition.get("reason"), str)
+                    or not transition["reason"].strip()
+                ):
+                    errors.append(
+                        f"{item_id}: transition_history[{offset}].reason is required"
+                    )
+                if not isinstance(transition.get("at"), str) or not transition["at"].strip():
+                    errors.append(
+                        f"{item_id}: transition_history[{offset}].at is required"
+                    )
 
     review = item.get("review")
     if review is not None:
@@ -5409,6 +5739,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--discovery", action="append", default=[])
     s.set_defaults(func=work_update)
     s = worksub.add_parser("block")
+    s.add_argument("domain")
+    s.add_argument("item")
+    s.add_argument("--reason", required=True)
+    s.set_defaults(func=work_update)
+    s = worksub.add_parser("wait-external")
+    s.add_argument("domain")
+    s.add_argument("item")
+    s.add_argument("--reason", required=True)
+    s.add_argument("--missing-evidence", action="append", required=True)
+    s.set_defaults(func=work_update)
+    s = worksub.add_parser("resume")
+    s.add_argument("domain")
+    s.add_argument("item")
+    s.add_argument("--reason", required=True)
+    s.set_defaults(func=work_update)
+    s = worksub.add_parser("unblock")
     s.add_argument("domain")
     s.add_argument("item")
     s.add_argument("--reason", required=True)

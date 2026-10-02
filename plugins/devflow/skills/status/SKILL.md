@@ -25,7 +25,7 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 ## Workflow
 
 1. Run `devflow status <domain>`.
-   1. It reports lifecycle position, blocked work, the computed next action, workflow type, runtime config, domains root, domain directory, the phase diff range when one is pinned, and the documents that action needs as `next.input` lines.
+   1. It reports lifecycle position, execution-blocked WORK, external-evidence waits, the computed next action, workflow type, runtime config, domains root, domain directory, the phase diff range when one is pinned, and the documents that action needs as `next.input` lines.
 2. When detailed machine state is needed, run `devflow status <domain> --json`.
 3. When the next executable work contract is needed, run `devflow next <domain>`.
 4. Read the domain's `PITFALLS.md` before acting on the next action.
@@ -38,6 +38,8 @@ A pending high/critical WORK review appears before a dependent WORK is released.
 
 Do not infer a different next action from a stale README, audit prose, historical chat, or handoff documents.
 If STATE or WORK validation fails, report the validation problem as the next thing to fix.
+`next.command: provide-evidence` is an external evidence/access handoff for the named WORK. It is not a product decision.
+Independent runnable WORK takes precedence over this handoff; DevFlow reports it only when the scheduler has no executable or auditable action left.
 
 ## Delivery inspection
 

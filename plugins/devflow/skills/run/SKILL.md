@@ -48,8 +48,10 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
 8. Execute the item's verification commands plus repository-required checks.
    1. For version 2, confirm the executed set covers every acceptance ID.
    2. Verify API and end-to-end criteria at an observable contract layer; static source search alone is not runtime behavior evidence.
-9. If a stop condition is reached, run `devflow work block <domain> <ID> --reason "..."` and stop.
-   1. Record a decision when human or product authority is required.
+9. If a stop condition makes execution impossible, run `devflow work block <domain> <ID> --reason "..."`.
+   1. Use `devflow work wait-external <domain> <ID> --reason "..." --missing-evidence "..."` when the missing input is external evidence or access. Keep unknown facts unknown.
+   2. Record a decision only when human or product authority must choose among valid policies.
+   3. After an execution blocker clears, use `work unblock`. After external evidence arrives, use `work resume` so DevFlow preserves the wait provenance.
 10. Commit the verified source/test changes first.
     1. Read the actual `docs/PR/templates.md`, then run `devflow delivery paths <domain> --branch <evidence.delivery.branch>` and generate/update the cumulative PR body and Postman v2.1 collection at those paths against this HEAD.
     2. Preserve the captured delivery branch, actual branch base, template headings, prior WORK coverage, empty credential variables and honest execution status.

@@ -53,9 +53,11 @@ python3 <this-skill-directory>/scripts/invoke.py <args>
    1. Only a command you actually executed, with its output, is grounds for a pass.
 10. Create remediation WORK for confirmed findings, documentation WORK for documentation findings, and evidence WORK for evidence-required findings.
     1. Give each generated item `context`, `premise_checks`, and `pitfalls` the same as any planned item.
-    2. Link every item and finding in both directions.
-    3. Default to one finding per WORK; when root cause, change and rollback boundary, and verification are shared, explain the aggregation in `origin.aggregation_reason`.
-    4. Build dependencies before severity ordering.
+    2. Keep inaccessible external facts unknown. Do not write a false value to make evidence verification pass.
+    3. Let the Executor use `work wait-external` when the evidence WORK reaches a concrete external access or evidence boundary.
+    4. Link every item and finding in both directions.
+    5. Default to one finding per WORK; when root cause, change and rollback boundary, and verification are shared, explain the aggregation in `origin.aggregation_reason`.
+    6. Build dependencies before severity ordering.
 11. Preserve the finding's expected event and outcome in WORK objective and acceptance.
     1. Do not infer or substitute a different meaning.
     2. Re-read generated WORK and record coverage in the audit body.

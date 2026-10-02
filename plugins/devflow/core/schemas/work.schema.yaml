@@ -26,6 +26,10 @@ optional_item_fields:
   transfer: Where a transferred requirement went, as {to, requirements}. Mandatory when status is transferred.
   references: External document ids or paths the Executor should read.
   review: Optional work-level review metadata, as {required, status, audit_file, remediation_work_ids, audit_provenance}. review.audit_provenance is machine-owned closure provenance. Its findings mapping is read by the next work closure; optional applied_against records the prior findings used to validate the persisted closure audit. Runtime defaults preserve legacy WORK files.
+  block_kind: Optional blocked-state discriminator. execution is a real execution blocker; external is an evidence/access wait. Missing legacy values read as execution.
+  block_resume_status: Ready or in_progress status to restore through work unblock or work resume.
+  transition_history: Ordered explicit block/wait/recovery transitions with from, to, reason, and timestamp.
+  evidence.external_wait: External evidence provenance as {status, reason, checked_at, missing_evidence, resolved_at, resolution}. status is unverified while waiting and resolved after work resume.
 backward_compatibility:
   legacy_shape: Version 1 acceptance and verification.commands remain string lists and are not rewritten.
   legacy_review: Existing WORK without review remains readable; high/critical done WORK defaults to pending required review.
@@ -68,6 +72,11 @@ enforced_by_validate:
   - done requires evidence.commands, except for kind documentation
   - transferred requires transfer.to, and the target must carry the same origin.requirements
   - explicit review metadata must use a supported status and valid remediation WORK ids
+  - evidence may be null for backward readability; otherwise it must be a mapping. evidence.delivery may be null before work start and is normalized to a mapping when delivery is active
+  - blocked WORK may use block_kind execution or external; missing legacy block_kind means execution
+  - external blocks require unverified evidence.external_wait with a reason, checked_at, and nonempty missing_evidence
+  - resolved external waits retain resolution provenance after work resume
+  - transition_history entries use supported WORK statuses and nonblank reason/timestamp values
 
 delivery_evidence:
   enabled_when: STATE.delivery.version equals 1 and WORK is not grandfathered.

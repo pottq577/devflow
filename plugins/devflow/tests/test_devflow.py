@@ -7595,6 +7595,225 @@ def case_integration_next_action_guards(root: Path) -> None:
     )
 
 
+def case_external_wait_is_dependency_local_and_recoverable(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    r15 = item(
+        "P01-R15",
+        kind="implementation",
+        origin={"requirements": [], "findings": [], "plan_items": []},
+    )
+    dump(
+        d / "work/phase-01.yaml",
+        work(
+            "01",
+            r15,
+            item("P01-R11"),
+            item("P01-R14", dependencies=["P01-R15"]),
+        ),
+    )
+
+    waiting = devflow(
+        root,
+        "work",
+        "wait-external",
+        "billing",
+        "P01-R15",
+        "--reason",
+        "non-local migration history is unavailable",
+        "--missing-evidence",
+        "staging flyway schema history",
+        "--missing-evidence",
+        "production deployment ref",
+    )
+    projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    work_doc = yaml.safe_load(
+        (d / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )
+    r15_after_wait = work_doc["items"][0]
+    check(
+        "external evidence wait does not block an independent ready WORK",
+        waiting.returncode == 0
+        and projected["project_status"] != "blocked"
+        and projected["next_action"]["command"] == "run"
+        and projected["next_action"]["work_item"] == "P01-R11"
+        and r15_after_wait["status"] == "blocked"
+        and r15_after_wait["block_kind"] == "external"
+        and r15_after_wait["evidence"]["external_wait"]["status"] == "unverified",
+        waiting.stdout + waiting.stderr + repr(projected) + repr(r15_after_wait),
+    )
+
+    work_doc["items"][1]["status"] = "done"
+    work_doc["items"][1]["evidence"]["commands"] = ["true -> ok"]
+    dump(d / "work/phase-01.yaml", work_doc)
+    no_runnable = devflow(root, "status", "billing")
+    projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "external evidence wait becomes provide-evidence only after runnable work is exhausted",
+        no_runnable.returncode == 0
+        and projected["next_action"]["role"] == "human"
+        and projected["next_action"]["command"] == "provide-evidence"
+        and projected["next_action"]["work_item"] == "P01-R15"
+        and "waiting_external_work: P01-R15" in no_runnable.stdout
+        and "unresolved_decisions: <none>" in no_runnable.stdout,
+        no_runnable.stdout + no_runnable.stderr + repr(projected),
+    )
+
+    resumed = devflow(
+        root,
+        "work",
+        "resume",
+        "billing",
+        "P01-R15",
+        "--reason",
+        "deployment evidence supplied by operator",
+    )
+    work_doc = yaml.safe_load(
+        (d / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )
+    r15_resumed = work_doc["items"][0]
+    check(
+        "work resume restores the external wait without pretending it is done",
+        resumed.returncode == 0
+        and r15_resumed["status"] == "ready"
+        and r15_resumed["evidence"]["external_wait"]["status"] == "resolved"
+        and len(r15_resumed["transition_history"]) == 2,
+        resumed.stdout + resumed.stderr + repr(r15_resumed),
+    )
+
+
+def case_work_unblock_restores_prior_active_status(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+
+    started = devflow(root, "work", "start", "billing", "P01-I01")
+    blocked = devflow(
+        root,
+        "work",
+        "block",
+        "billing",
+        "P01-I01",
+        "--reason",
+        "required fixture is temporarily unavailable",
+    )
+    unblocked = devflow(
+        root,
+        "work",
+        "unblock",
+        "billing",
+        "P01-I01",
+        "--reason",
+        "fixture restored",
+    )
+    restored = yaml.safe_load(
+        (d / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )["items"][0]
+    check(
+        "work unblock restores the status that was active before the block",
+        started.returncode == 0
+        and blocked.returncode == 0
+        and unblocked.returncode == 0
+        and restored["status"] == "in_progress"
+        and restored["block_reason"] is None
+        and len(restored["transition_history"]) == 2
+        and restored["transition_history"][1]["prior_block_reason"]
+        == "required fixture is temporarily unavailable",
+        started.stdout
+        + started.stderr
+        + blocked.stdout
+        + blocked.stderr
+        + unblocked.stdout
+        + unblocked.stderr
+        + repr(restored),
+    )
+
+
+def case_stalled_remediation_membership_does_not_hide_other_review_actions(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    parent = high_done(
+        "P01-I04",
+        review={
+            "required": True,
+            "status": "remediation",
+            "audit_file": "audits/work/P01-I04.md",
+            "remediation_work_ids": ["P01-R10", "P01-R11", "P01-R15"],
+        },
+    )
+    r10 = high_done(
+        "P01-R10",
+        kind="implementation",
+        origin={"requirements": [], "findings": [], "plan_items": []},
+        review={
+            "required": True,
+            "status": "remediation",
+            "audit_file": "audits/work/P01-R10.md",
+            "remediation_work_ids": ["P01-R17"],
+        },
+    )
+    r11 = item(
+        "P01-R11",
+        kind="implementation",
+        origin={"requirements": [], "findings": [], "plan_items": []},
+        dependencies=["P01-R10"],
+    )
+    r15 = item(
+        "P01-R15",
+        kind="implementation",
+        origin={"requirements": [], "findings": [], "plan_items": []},
+        status="blocked",
+        block_reason="production migration history is unavailable",
+        block_kind="external",
+        block_resume_status="ready",
+    )
+    r15["evidence"]["external_wait"] = {
+        "status": "unverified",
+        "reason": "production migration history is unavailable",
+        "checked_at": "2026-10-02T00:00:00Z",
+        "missing_evidence": ["production flyway schema history"],
+    }
+    r17 = item(
+        "P01-R17",
+        kind="implementation",
+        origin={"requirements": [], "findings": [], "plan_items": []},
+        status="done",
+        commands=["true -> ok"],
+    )
+    dump(d / "work/phase-01.yaml", work("01", parent, r10, r11, r15, r17))
+
+    first = devflow(root, "status", "billing")
+    projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "a stalled parent remediation set does not hide an eligible child work closure",
+        first.returncode == 0
+        and projected["next_action"]["command"] == "audit"
+        and projected["next_action"]["scope"] == "work"
+        and projected["next_action"]["mode"] == "closure"
+        and projected["next_action"]["work_item"] == "P01-R10",
+        first.stdout + first.stderr + repr(projected),
+    )
+
+    work_doc = yaml.safe_load(
+        (d / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )
+    work_doc["items"][1]["review"]["status"] = "verified"
+    dump(d / "work/phase-01.yaml", work_doc)
+    second = devflow(root, "status", "billing")
+    projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "remediation membership does not make an external sibling an execution dependency",
+        second.returncode == 0
+        and projected["project_status"] != "blocked"
+        and projected["next_action"]["command"] == "run"
+        and projected["next_action"]["work_item"] == "P01-R11",
+        second.stdout + second.stderr + repr(projected),
+    )
+
+
 def case_plan_review_gate(root: Path) -> None:
     devflow(root, "init", "billing", "--risk", "critical")
     legacy_config(root, "1.2.0")
@@ -9217,6 +9436,9 @@ CASES = [
     case_derived_lifecycle_state,
     case_derived_integration_work_review_state,
     case_derived_blocked_state_and_audit_scopes,
+    case_external_wait_is_dependency_local_and_recoverable,
+    case_work_unblock_restores_prior_active_status,
+    case_stalled_remediation_membership_does_not_hide_other_review_actions,
     case_integration_next_action_guards,
     case_plan_review_gate,
     case_high_risk_dependency_is_gated,

@@ -134,6 +134,20 @@ The finding classification fixes the generated WORK kind:
 Its decision IDs are recorded in `DECISIONS.md` and registered in STATE by audit apply.
 A later WORK for the selected path records the resolved ID in `decision_dependencies`.
 
+## External evidence waits
+
+An evidence WORK can reach a valid state where the repository checks are complete but a required environment, deployment record, schema history, credentialed lookup, or responsible-person confirmation is unavailable. Preserve that fact as unknown. Do not rewrite unknown as `true` or `false` to satisfy a verification command.
+
+Use `work wait-external` for this condition. The runtime keeps `status: blocked` for protocol 1.8 backward readability and adds `block_kind: external`. `evidence.external_wait` records `status: unverified`, the check time, and each missing evidence source. This subtype is nonterminal and blocks only WORK that depends on it.
+
+The domain-specific evidence payload may use a tri-state value such as `true | false | unknown` when that matches the fact being investigated. DevFlow's lifecycle contract is:
+
+- `true` or `false`: direct evidence supports that value before closure
+- `unknown`: the required source is inaccessible or missing, so the WORK remains externally waiting
+- a contradiction: record the evidence and create the appropriate traced remediation instead of forcing the original assumption
+
+`work resume` records how the missing evidence arrived and restores `ready` or `in_progress`. It never converts the WORK to `done`.
+
 ## Completion
 
 `done` requires evidence, not assertion.
@@ -143,7 +157,10 @@ Record the command and its result, not a claim that it passed.
 The runtime also requires `in_progress` before `done`.
 A high or critical implementation completion records a pending required review unless WORK already contains a later valid review state.
 `start` only accepts ready WORK after dependency, decision, phase, and required plan-review gates pass.
-`block` only accepts ready or in-progress WORK and requires a non-empty reason.
+`block` only accepts ready or in-progress WORK and requires a non-empty reason. `unblock` restores the recorded active state when that execution blocker clears.
+`wait-external` records an external evidence/access wait without inventing a product decision. Independent WORK remains schedulable.
+`resume` resolves only the external wait and restores the recorded active state.
+All explicit block and recovery commands append transition history so the original blocker is not lost when the WORK becomes runnable again.
 
 ## Backward compatibility
 
@@ -151,6 +168,7 @@ Version 1 WORK keeps its string lists under `acceptance` and `verification.comma
 The runtime normalizes that shape for reading and preserves its lifecycle without rewriting it to version 2.
 
 `review` is optional for existing WORK.
+`block_kind`, `block_resume_status`, `transition_history`, and `evidence.external_wait` are additive. A legacy runtime still sees the underlying `blocked` status and ignores the extra fields.
 The runtime reads legacy high or critical done WORK as requiring review before a dependent starts, without requiring an artifact migration.
 New high and critical WORK should record the review metadata explicitly.
 

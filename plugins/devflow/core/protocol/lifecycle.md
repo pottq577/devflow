@@ -58,15 +58,21 @@ While remediation is active, only the linked remediation or evidence WORK may ru
 When those items and their required reviews are terminal, the next action is the plan closure audit.
 A passing closure marks the plan review verified and releases ordinary planned WORK.
 
+For work-level remediation, `review.remediation_work_ids` defines the parent audit's closure membership. It does not create execution dependencies between sibling remediation items. The scheduler follows each WORK item's `dependencies` and `decision_dependencies`, continues scanning other review chains when one remediation set is stalled, and can run independent WORK before the parent audit becomes closable.
+
 An audit finding with `disposition.action: stop` blocks its audited plan, WORK, phase, or integration scope and projects a human decision.
 It never loops directly back to closure and never releases other remediation until the specification conflict is resolved and the scope is audited again.
 Every scope has a command that returns it to a fresh initial audit once the conflict is resolved: `plan-review set <domain> pending`, `work review <domain> <WORK-ID> pending`, `phase set <domain> <phase> audit`, and `integration set <domain> audit`.
+
+External evidence or access is a separate wait from a product decision. Use `work wait-external <domain> <WORK-ID> --reason "..." --missing-evidence "..."` when the current session cannot verify a required fact. DevFlow keeps the WORK nonterminal as a backward-readable `blocked` item with `block_kind: external`, so only dependency edges that reach that WORK wait. Independent runnable WORK and eligible work-review closures continue.
+
+When no executable or auditable action remains, an external wait projects `role: human`, `command: provide-evidence`, and the exact WORK id. It does not create a DECISION entry. After evidence arrives, use `work resume <domain> <WORK-ID> --reason "..."`. Use `work unblock` only for a normal execution block whose blocking condition has cleared.
 
 Independent low and medium WORK remains batch-reviewed in the phase audit.
 A work audit uses `--scope work --task <WORK-ID>` and `--mode initial|closure`; plan, phase, and integration audits use those same modes at their own scope.
 The runtime computes the next action from STATE and WORK, but it does not autonomously execute, audit, remediate, or orchestrate those actions.
 
-Return to the human/Chat layer only for product-policy decisions, scope changes, conflicting requirements, or deliberately requested third-party review.
+Return to the human/Chat layer for product-policy decisions, scope changes, conflicting requirements, deliberately requested third-party review, or concrete external evidence/access that DevFlow cannot obtain itself. Keep decision and evidence handoffs distinct.
 
 `refresh_state()` owns those derived fields.
 Mutation commands update authoritative lifecycle state and then refresh the projection; status writes STATE only when that projection changed.
@@ -120,7 +126,11 @@ A command that exits non-zero has written nothing, including when the derived-st
 This is process-local failure rollback, not crash recovery or concurrent-writer isolation.
 
 - `work start` requires ready status, completed dependencies with required reviews verified, resolved decisions, an unverified containing phase, and a verified required plan review. Integration WORK also waits for all project phases.
-- `work done` requires `in_progress` and completion evidence. `work block` is limited to `ready` and `in_progress` with a non-empty reason.
+- `work done` requires `in_progress` and completion evidence. `work start` normalizes `evidence.delivery: null` to an empty mapping before recording delivery provenance.
+- `work block` is limited to `ready` and `in_progress` with a non-empty reason. It records the prior active status and transition history.
+- `work unblock` restores the recorded `ready` or `in_progress` state after a normal execution block clears. It cannot bypass an external evidence wait.
+- `work wait-external` accepts `ready`, `in_progress`, or legacy `blocked` WORK, requires a reason and explicit missing-evidence entries, and records unverified evidence provenance without converting unknown facts to false.
+- `work resume` resolves that external-wait provenance and restores the recorded active status. It does not mark the WORK done or verified.
 - `work review pending` is accepted when the current effective review status is `blocked`, or when a legacy `remediation` review has no `audit_provenance`. It clears `remediation_work_ids` and returns the review to `pending` so the WORK can be re-audited. A remediation review with provenance cannot use this reset. The command never sets a review verified and is not gated on `audit apply`.
 - A verified plan review requires `PLAN.md` and its audit artifact. Required plan reviews cannot be skipped.
 - A phase verification requires terminal phase WORK, completed high-risk WORK reviews, a diff range, a phase audit artifact, and no unresolved phase decision. Verified phases cannot be reopened through `phase set`.

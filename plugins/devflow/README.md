@@ -55,6 +55,9 @@ devflow audit apply  <domain> --scope plan|work|phase|integration [--task <ID>] 
 devflow work start <domain> <ID>
 devflow work done  <domain> <ID> --commit <sha> --command '<cmd> -> <result>' [--changed-file ...]
 devflow work block <domain> <ID> --reason "..."
+devflow work unblock <domain> <ID> --reason "..."
+devflow work wait-external <domain> <ID> --reason "..." --missing-evidence "..."
+devflow work resume <domain> <ID> --reason "..."
 devflow work review <domain> <ID> verified|remediation|blocked|pending [--remediation-work <ID>]
 
 devflow phase set <domain> <phase> <status>
@@ -68,7 +71,7 @@ devflow decision add|resolve <domain> <ID>
 A mismatch exits before a packet or lifecycle mutation is produced.
 `audit apply` reads the canonical audit Markdown selected by STATE or WORK, validates its YAML front matter and traced artifacts, and commits the accepted lifecycle transition atomically.
 
-Every lifecycle mutation command (`work start|done|block|review`, `phase set|ref`, `plan-review set`, `integration set`, `decision add|resolve`) projects its prospective state on copies and commits the changed STATE and WORK together in one transaction.
+Every lifecycle mutation command (`work start|done|block|unblock|wait-external|resume|review`, `phase set|ref`, `plan-review set`, `integration set`, `decision add|resolve`) projects its prospective state on copies and commits the changed STATE and WORK together in one transaction.
 A rejected lifecycle mutation writes nothing.
 Explicit `delivery newman` executions persist attempt evidence on success, assertion failure and execution blockers, including nonzero exits.
 `validate` reports structural defects; it never rewrites STATE to normalize them.
@@ -78,6 +81,8 @@ Protocol 1.3 verified audit transitions go through `audit apply` so they cannot 
 
 `phase set` and `phase ref` operate on a phase that already exists in `STATE.yaml`, or on one whose `work/phase-XX.yaml` is on disk.
 They refuse anything else rather than inventing a phase entry, since a mistyped number would otherwise sit in STATE and block integration forever.
+
+External evidence waits remain protocol 1.8 compatible: the persisted WORK status stays `blocked`, while additive `block_kind: external` and `evidence.external_wait` metadata let current runtimes distinguish evidence/access waits from execution blockers. The scheduler continues independent dependency branches and work-review closures before it emits a human `provide-evidence` handoff.
 
 `bin/devflow` is a thin wrapper if you prefer a bare command name on `PATH`.
 Skills invoke `scripts/devflow.py` through each skill's `scripts/invoke.py`, which resolves the plugin root from its own location and so works from any working directory.

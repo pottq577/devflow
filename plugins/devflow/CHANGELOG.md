@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep work-review remediation membership separate from execution dependencies. A stalled sibling no longer forces an immediate human decision before another review closure or runnable WORK is considered.
+- Add explicit external-evidence recovery with `work wait-external`, `work resume`, and `work unblock`. External waits persist as a backward-readable blocked subtype, expose `provide-evidence` only after runnable actions are exhausted, and retain transition/evidence provenance.
+- Normalize legacy `evidence.delivery: null` on `work start` and validate malformed non-mapping delivery evidence before runtime access.
+- Keep protocol `1.8.0`: existing status enums are unchanged, and protocol 1.8 readers continue to see the additive external-wait metadata as ordinary blocked WORK.
 - Add a Codex-hosted `/goal` driver that delegates routed specialists through native `spawn_agent` calls instead of nesting `codex exec` under the parent session.
 - Keep model and reasoning-effort routing deterministic while sending compact repository-recovery messages. Each child renders the authoritative DevFlow packet from disk, which avoids duplicating large runtime packets in a second Codex session.
 - Keep `autopilot start`, `autopilot resume`, and `autopilot bootstrap` as standalone compatibility drivers. Hosted Goal execution no longer depends on their blocking subprocess timeout path.

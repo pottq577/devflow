@@ -30,6 +30,8 @@ Re-run `devflow status` instead of auditing another lifecycle position.
    1. Only a command you actually executed, with its output, is grounds for a pass.
 9. Create remediation WORK for `CONFIRMED` findings and documentation WORK for `DOCUMENTATION_DRIFT` findings, carrying `context`, `premise_checks`, and `pitfalls` the same as any planned item.
 10. Create evidence WORK for `EVIDENCE_REQUIRED` findings. No product-code changes.
+    1. If required external evidence is unavailable, keep the fact unknown and use the external-wait lifecycle. Do not coerce unknown to false or create a product decision for an evidence gap.
+    2. Record each missing source so `provide-evidence` identifies the concrete human handoff.
 11. Give each generated WORK the reciprocal finding IDs in `origin.findings`.
     1. Default to one finding per WORK.
     2. Aggregate only findings with the same root cause, change and rollback boundary, and verification set, and state that reason in `origin.aggregation_reason`.

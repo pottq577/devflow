@@ -212,6 +212,31 @@ class DeliveryTests(unittest.TestCase):
         )
         self.assertEqual(state.get("delivery", {}).get("version"), 1)
 
+    def test_start_normalizes_null_delivery_evidence(self):
+        self.enable()
+        doc = self.read_work()
+        doc["items"][0]["evidence"]["delivery"] = None
+        fixtures.dump(self.work_path, doc)
+
+        result = self.cli("work", "start", "sample", "P01-I01")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        delivery_evidence = self.read_work()["items"][0]["evidence"]["delivery"]
+        self.assertIsInstance(delivery_evidence, dict)
+        self.assertEqual(delivery_evidence["branch"], "feature/sample")
+
+    def test_start_rejects_non_mapping_delivery_evidence_cleanly(self):
+        self.enable()
+        doc = self.read_work()
+        doc["items"][0]["evidence"]["delivery"] = "invalid"
+        fixtures.dump(self.work_path, doc)
+
+        result = self.cli("work", "start", "sample", "P01-I01")
+
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("evidence.delivery must be a mapping or null", result.stderr)
+        self.assertEqual(self.read_work()["items"][0]["status"], "ready")
+
     def test_enable_is_idempotent_and_preserves_done_work(self):
         doc = self.read_work()
         doc["items"][0]["status"] = "done"
