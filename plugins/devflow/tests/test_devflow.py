@@ -7890,7 +7890,12 @@ def case_stalled_remediation_membership_does_not_hide_other_review_actions(root:
 def case_verified_mitigation_does_not_resolve_historical_evidence(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
-    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    initial_state = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    head = sh(["git", "rev-parse", "HEAD"], root, check=True).stdout.strip()
+    fixture_state = state({"01": phase("executing", "01")})
+    fixture_state["baseline_sha"] = initial_state.get("baseline_sha") or head
+    fixture_state["target_sha"] = head
+    dump(d / "STATE.yaml", fixture_state)
     parent = high_done(
         "P01-I04",
         review={
@@ -7947,19 +7952,49 @@ def case_verified_mitigation_does_not_resolve_historical_evidence(root: Path) ->
         d / "work/phase-01.yaml",
         work("01", parent, r10, r11, r15, r17, r18),
     )
+    r11_finding = audit_finding(
+        "F-R11",
+        classification="CONFIRMED",
+        severity="major",
+        severity_reason="The verified parent audit requires P01-R11 remediation.",
+        disposition={
+            "action": "remediation_work",
+            "work_ids": ["P01-R11"],
+            "decision_ids": [],
+        },
+    )
+    write_audit(
+        d / "audits/work/P01-I04.md",
+        audit_metadata(
+            d,
+            scope="work",
+            verdict="conditional_pass",
+            findings=[r11_finding],
+        ),
+    )
+    write_audit(
+        d / "audits/work/P01-R18.md",
+        audit_metadata(d, scope="work"),
+    )
+    validated = devflow(root, "validate", "billing")
 
     first = devflow(root, "status", "billing")
     projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
     check(
         "verified mitigation does not let historical evidence hide an eligible closure",
-        first.returncode == 0
+        validated.returncode == 0
+        and first.returncode == 0
         and projected["project_status"] != "blocked"
         and projected["next_action"]["command"] == "audit"
         and projected["next_action"]["scope"] == "work"
         and projected["next_action"]["mode"] == "closure"
         and projected["next_action"]["work_item"] == "P01-R10"
         and "waiting_external_work: P01-R15" in first.stdout,
-        first.stdout + first.stderr + repr(projected),
+        validated.stdout
+        + validated.stderr
+        + first.stdout
+        + first.stderr
+        + repr(projected),
     )
 
     work_doc = yaml.safe_load(
