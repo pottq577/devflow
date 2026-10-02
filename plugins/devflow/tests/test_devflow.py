@@ -7165,7 +7165,7 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
         and entries[0].get("version")
         == manifest.get("version")
         == codex_manifest.get("version")
-        == "0.9.2",
+        == "0.9.3",
         repr(entries) + repr(codex_manifest.get("version")),
     )
 
@@ -7234,6 +7234,40 @@ def case_status_reports_inputs(root: Path) -> None:
     check("status names the documents the next action needs", "next.input:" in out, out)
     check("status names the requirement ids to load", "REQ-021" in out, out)
     check("status names PITFALLS as an input", "PITFALLS.md" in out, out)
+
+
+def case_integration_external_wait_reports_its_work_manifest(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(
+        d / "STATE.yaml",
+        state({"01": phase("verified", "01")}, integration="remediation"),
+    )
+    dump(
+        d / "work/phase-01.yaml",
+        work("01", item("P01-I01", status="done", commands=["true -> ok"])),
+    )
+    waiting = item(
+        "INT-E01", status="blocked",
+        block_reason="deployment evidence is unavailable",
+        block_kind="external", block_resume_status="ready",
+    )
+    waiting["evidence"]["external_wait"] = {
+        "status": "unverified",
+        "reason": "deployment evidence is unavailable",
+        "checked_at": "2026-10-02T00:00:00Z",
+        "missing_evidence": ["deployment digest"],
+    }
+    dump(d / "work/integration.yaml", work("integration", waiting))
+
+    out = devflow(root, "status", "billing").stdout
+    check(
+        "integration provide-evidence names the integration WORK manifest as input",
+        "next.command: provide-evidence" in out
+        and "next.work_item: INT-E01" in out
+        and "next.input: work/integration.yaml" in out,
+        out,
+    )
 
 
 def case_next_action_carries_work_routing_metadata(root: Path) -> None:
@@ -7683,6 +7717,45 @@ def case_external_wait_is_dependency_local_and_recoverable(root: Path) -> None:
     )
 
 
+def case_legacy_block_can_be_reclassified_as_external(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    dump(
+        d / "work/phase-01.yaml",
+        work(
+            "01",
+            item(
+                "P01-R15",
+                status="blocked",
+                block_reason="production migration history is unavailable",
+            ),
+            item("P01-R11"),
+        ),
+    )
+
+    reclassified = devflow(
+        root, "work", "wait-external", "billing", "P01-R15",
+        "--reason", "production migration history is unavailable",
+        "--missing-evidence", "production flyway schema history",
+    )
+    work_doc = yaml.safe_load(
+        (d / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )
+    projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    r15 = work_doc["items"][0]
+    check(
+        "legacy blocked WORK can be reclassified as an external evidence wait",
+        reclassified.returncode == 0
+        and r15["block_kind"] == "external"
+        and r15["block_resume_status"] == "ready"
+        and r15["evidence"]["external_wait"]["status"] == "unverified"
+        and projected["project_status"] != "blocked"
+        and projected["next_action"]["work_item"] == "P01-R11",
+        reclassified.stdout + reclassified.stderr + repr(projected) + repr(r15),
+    )
+
+
 def case_work_unblock_restores_prior_active_status(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -7810,6 +7883,99 @@ def case_stalled_remediation_membership_does_not_hide_other_review_actions(root:
         and projected["project_status"] != "blocked"
         and projected["next_action"]["command"] == "run"
         and projected["next_action"]["work_item"] == "P01-R11",
+        second.stdout + second.stderr + repr(projected),
+    )
+
+
+def case_verified_mitigation_does_not_resolve_historical_evidence(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    parent = high_done(
+        "P01-I04",
+        review={
+            "required": True,
+            "status": "remediation",
+            "audit_file": "audits/work/P01-I04.md",
+            "remediation_work_ids": ["P01-R10", "P01-R11", "P01-R15", "P01-R18"],
+        },
+    )
+    r10 = high_done(
+        "P01-R10",
+        review={
+            "required": True,
+            "status": "remediation",
+            "audit_file": "audits/work/P01-R10.md",
+            "remediation_work_ids": ["P01-R17"],
+        },
+    )
+    r11 = item(
+        "P01-R11",
+        kind="remediation",
+        origin={"requirements": [], "findings": ["F-R11"], "plan_items": []},
+        dependencies=["P01-R10"],
+    )
+    r15 = item(
+        "P01-R15", status="blocked",
+        block_reason="production migration history is unavailable",
+        block_kind="external", block_resume_status="ready",
+    )
+    r15["evidence"]["external_wait"] = {
+        "status": "unverified",
+        "reason": "production migration history is unavailable",
+        "checked_at": "2026-10-02T00:00:00Z",
+        "missing_evidence": ["production flyway schema history"],
+    }
+    r15["evidence"]["mitigation"] = {
+        "status": "verified", "work_ids": ["P01-R18"],
+    }
+    r15["evidence"]["residual_risks"] = [{
+        "id": "modified_v1_010_4_applied_unknown",
+        "status": "unknown",
+        "blocks": ["P01-R14", "P01-I04-closure"],
+    }]
+    r17 = item("P01-R17", status="done", commands=["true -> ok"])
+    r18 = high_done(
+        "P01-R18", kind="migration",
+        review={
+            "required": True, "status": "verified",
+            "audit_file": "audits/work/P01-R18.md",
+            "remediation_work_ids": [],
+        },
+    )
+    dump(
+        d / "work/phase-01.yaml",
+        work("01", parent, r10, r11, r15, r17, r18),
+    )
+
+    first = devflow(root, "status", "billing")
+    projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "verified mitigation does not let historical evidence hide an eligible closure",
+        first.returncode == 0
+        and projected["project_status"] != "blocked"
+        and projected["next_action"]["command"] == "audit"
+        and projected["next_action"]["scope"] == "work"
+        and projected["next_action"]["mode"] == "closure"
+        and projected["next_action"]["work_item"] == "P01-R10"
+        and "waiting_external_work: P01-R15" in first.stdout,
+        first.stdout + first.stderr + repr(projected),
+    )
+
+    work_doc = yaml.safe_load(
+        (d / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )
+    work_doc["items"][1]["review"]["status"] = "verified"
+    dump(d / "work/phase-01.yaml", work_doc)
+    second = devflow(root, "status", "billing")
+    projected = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    check(
+        "historical evidence pending blocks only its dependency branch after mitigation",
+        second.returncode == 0
+        and projected["project_status"] == "remediation"
+        and projected["next_action"]["command"] == "run"
+        and projected["next_action"]["work_item"] == "P01-R11"
+        and "waiting_external_work: P01-R15" in second.stdout,
         second.stdout + second.stderr + repr(projected),
     )
 
@@ -8647,6 +8813,53 @@ def case_work_block_requires_active_status_and_reason(root: Path) -> None:
     )
 
 
+def case_verified_mitigation_requires_completed_reviewed_work(root: Path) -> None:
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    waiting = item(
+        "P01-R15", status="blocked", block_reason="history unavailable",
+        block_kind="external", block_resume_status="ready",
+    )
+    waiting["evidence"]["external_wait"] = {
+        "status": "unverified", "reason": "history unavailable",
+        "checked_at": "2026-10-02T00:00:00Z",
+        "missing_evidence": ["production schema history"],
+    }
+    waiting["evidence"]["mitigation"] = {
+        "status": "verified", "work_ids": ["P01-R18"],
+    }
+    waiting["evidence"]["residual_risks"] = [{
+        "id": "historical_checksum_unknown", "status": "unknown",
+        "blocks": ["P01-I04-closure"],
+    }]
+    dump(
+        d / "work/phase-01.yaml",
+        work("01", waiting, item("P01-R18")),
+    )
+
+    invalid = devflow(root, "validate", "billing")
+    check(
+        "verified mitigation rejects a referenced WORK that is not complete",
+        invalid.returncode != 0
+        and "verified mitigation WORK P01-R18" in invalid.stdout,
+        invalid.stdout + invalid.stderr,
+    )
+
+    doc = yaml.safe_load(
+        (d / "work/phase-01.yaml").read_text(encoding="utf-8")
+    )
+    doc["items"][1]["status"] = "done"
+    doc["items"][1]["evidence"]["commands"] = ["true -> ok"]
+    dump(d / "work/phase-01.yaml", doc)
+    valid = devflow(root, "validate", "billing")
+    check(
+        "verified mitigation accepts completed review-satisfied WORK",
+        valid.returncode == 0,
+        valid.stdout + valid.stderr,
+    )
+
+
 def case_verification_is_gated_by_validation(root: Path) -> None:
     """A structurally invalid manifest used to reach project completion untouched."""
     devflow(root, "init", "billing")
@@ -9431,14 +9644,17 @@ CASES = [
     case_marketplace_plugin_version_matches_manifest,
     case_codex_adapter_uses_shared_plugin,
     case_status_reports_inputs,
+    case_integration_external_wait_reports_its_work_manifest,
     case_next_action_carries_work_routing_metadata,
     case_lifecycle_walk,
     case_derived_lifecycle_state,
     case_derived_integration_work_review_state,
     case_derived_blocked_state_and_audit_scopes,
     case_external_wait_is_dependency_local_and_recoverable,
+    case_legacy_block_can_be_reclassified_as_external,
     case_work_unblock_restores_prior_active_status,
     case_stalled_remediation_membership_does_not_hide_other_review_actions,
+    case_verified_mitigation_does_not_resolve_historical_evidence,
     case_integration_next_action_guards,
     case_plan_review_gate,
     case_high_risk_dependency_is_gated,
@@ -9466,6 +9682,7 @@ CASES = [
     case_integration_verification_requires_audit_artifact,
     case_rejected_phase_transition_does_not_mutate_state,
     case_work_block_requires_active_status_and_reason,
+    case_verified_mitigation_requires_completed_reviewed_work,
     case_verification_is_gated_by_validation,
     case_protocol_version_is_enforced,
     case_state_protocol_downgrade_cannot_disable_the_audit_gate,

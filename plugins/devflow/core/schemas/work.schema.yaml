@@ -30,6 +30,8 @@ optional_item_fields:
   block_resume_status: Ready or in_progress status to restore through work unblock or work resume.
   transition_history: Ordered explicit block/wait/recovery transitions with from, to, reason, and timestamp.
   evidence.external_wait: External evidence provenance as {status, reason, checked_at, missing_evidence, resolved_at, resolution}. status is unverified while waiting and resolved after work resume.
+  evidence.mitigation: Optional risk-mitigation linkage as {status, work_ids}. status is pending or verified; verified references must point to done WORK whose required review is satisfied.
+  evidence.residual_risks: Optional list of remaining risks as {id, status, blocks}. status is unknown, open, or resolved; unknown/open entries name the lifecycle targets they still block.
 backward_compatibility:
   legacy_shape: Version 1 acceptance and verification.commands remain string lists and are not rewritten.
   legacy_review: Existing WORK without review remains readable; high/critical done WORK defaults to pending required review.
@@ -77,6 +79,8 @@ enforced_by_validate:
   - external blocks require unverified evidence.external_wait with a reason, checked_at, and nonempty missing_evidence
   - resolved external waits retain resolution provenance after work resume
   - transition_history entries use supported WORK statuses and nonblank reason/timestamp values
+  - evidence.mitigation uses pending or verified status and references existing WORK; verified mitigation references must be done and review-satisfied
+  - evidence.residual_risks entries have unique nonblank ids, supported statuses, and nonblank block targets while unknown or open
 
 delivery_evidence:
   enabled_when: STATE.delivery.version equals 1 and WORK is not grandfathered.

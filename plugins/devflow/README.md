@@ -84,6 +84,8 @@ They refuse anything else rather than inventing a phase entry, since a mistyped 
 
 External evidence waits remain protocol 1.8 compatible: the persisted WORK status stays `blocked`, while additive `block_kind: external` and `evidence.external_wait` metadata let current runtimes distinguish evidence/access waits from execution blockers. The scheduler continues independent dependency branches and work-review closures before it emits a human `provide-evidence` handoff.
 
+A verified remediation can reduce operational risk without proving the historical fact that created an evidence wait. Record the verified WORK under `evidence.mitigation` and keep any remaining uncertainty under `evidence.residual_risks`. This metadata never marks the waiting WORK done and never creates an execution dependency.
+
 `bin/devflow` is a thin wrapper if you prefer a bare command name on `PATH`.
 Skills invoke `scripts/devflow.py` through each skill's `scripts/invoke.py`, which resolves the plugin root from its own location and so works from any working directory.
 
@@ -97,7 +99,7 @@ Work and phase audit render include scope-linked WORK and origin context.
 Integration render supplies the current PLAN, phase manifest, audit paths, and integration WORK without inlining every phase WORK body.
 This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
 
-## Autonomous `/goal` routing (0.9.2 / protocol 1.8.0)
+## Autonomous `/goal` routing (0.9.3 / protocol 1.8.0)
 
 DevFlow has two lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Both consume the same `STATE -> compute_next_action()` result and stop at completion, a human or blocker gate, or an explicit execution boundary.
 

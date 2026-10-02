@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.3 - 2026-10-02 - Remediation recovery and hosted routing
+
+- Keep verified mitigation separate from unresolved historical evidence through additive `evidence.mitigation` and `evidence.residual_risks` metadata. A mitigation can be verified while an external evidence WORK remains unresolved.
+- Include the selected WORK manifest in `next.input`, including integration-scoped `provide-evidence` handoffs.
+- Publish the scheduler and external-wait runtime changes as plugin `0.9.3` so plugin caches do not continue serving the older `0.9.2` runtime.
 - Keep work-review remediation membership separate from execution dependencies. A stalled sibling no longer forces an immediate human decision before another review closure or runnable WORK is considered.
 - Add explicit external-evidence recovery with `work wait-external`, `work resume`, and `work unblock`. External waits persist as a backward-readable blocked subtype, expose `provide-evidence` only after runnable actions are exhausted, and retain transition/evidence provenance.
 - Normalize legacy `evidence.delivery: null` on `work start` and validate malformed non-mapping delivery evidence before runtime access.

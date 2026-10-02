@@ -1,7 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.9.2 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.9.3 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -35,6 +35,10 @@ Existing domains keep their PLAN/WORK documents. Run `devflow delivery enable <d
 adopt the new completion requirements; completed WORK is preserved. New domains enable it by
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
+
+## Version 0.9.3 remediation recovery
+
+DevFlow keeps verified risk mitigation separate from unresolved historical evidence. External evidence waits can link verified mitigation WORK and explicit residual risks without marking the historical fact resolved. The scheduler continues independent remediation and review closures, while `provide-evidence` remains a final handoff after runnable actions are exhausted. Version 0.9.3 also publishes the remediation scheduler fixes under a new plugin version so Codex and Claude plugin caches can load the updated runtime.
 
 ## Version 0.9.2 transport-safe autonomous routing
 

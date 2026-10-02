@@ -2459,9 +2459,12 @@ def action_inputs(root: Path, domain: str, state: dict[str, Any]) -> list[str]:
     item_id = action.get("work_item")
     if item_id:
         try:
-            _, _, item = find_item(root, domain, item_id)
+            item_path, _, item = find_item(root, domain, item_id)
         except KeyError:
             return inputs
+        work_input = str(item_path.relative_to(d))
+        if work_input not in inputs:
+            inputs.append(work_input)
         origin = item.get("origin") or {}
         ids = [
             str(x)
@@ -3579,6 +3582,92 @@ def validate_item(
             errors.append(
                 f"{item_id}: external block requires unverified evidence.external_wait"
             )
+
+    mitigation = evidence.get("mitigation")
+    if mitigation is not None and not isinstance(mitigation, dict):
+        errors.append(f"{item_id}: evidence.mitigation must be a mapping")
+    elif isinstance(mitigation, dict):
+        mitigation_status = mitigation.get("status")
+        if mitigation_status not in {"pending", "verified"}:
+            errors.append(
+                f"{item_id}: evidence.mitigation.status must be pending or verified"
+            )
+        mitigation_ids = mitigation.get("work_ids")
+        if (
+            not isinstance(mitigation_ids, list)
+            or not mitigation_ids
+            or any(
+                not isinstance(value, str) or not value.strip()
+                for value in mitigation_ids
+            )
+        ):
+            errors.append(
+                f"{item_id}: evidence.mitigation.work_ids must contain nonblank WORK ids"
+            )
+        else:
+            for mitigation_id in dict.fromkeys(mitigation_ids):
+                if mitigation_id == item_id:
+                    errors.append(
+                        f"{item_id}: evidence.mitigation cannot reference itself"
+                    )
+                    continue
+                target = index.get(mitigation_id)
+                if not target:
+                    errors.append(
+                        f"{item_id}: evidence.mitigation references unknown WORK {mitigation_id}"
+                    )
+                    continue
+                if mitigation_status == "verified" and (
+                    target[1].get("status") != "done"
+                    or not review_satisfied(target[1])
+                ):
+                    errors.append(
+                        f"{item_id}: verified mitigation WORK {mitigation_id} "
+                        "must be done with its required review satisfied"
+                    )
+
+    residual_risks = evidence.get("residual_risks")
+    if residual_risks is not None and not isinstance(residual_risks, list):
+        errors.append(f"{item_id}: evidence.residual_risks must be a list")
+    elif isinstance(residual_risks, list):
+        residual_ids: set[str] = set()
+        for offset, residual in enumerate(residual_risks):
+            if not isinstance(residual, dict):
+                errors.append(
+                    f"{item_id}: evidence.residual_risks[{offset}] must be a mapping"
+                )
+                continue
+            residual_id = residual.get("id")
+            if not isinstance(residual_id, str) or not residual_id.strip():
+                errors.append(
+                    f"{item_id}: evidence.residual_risks[{offset}].id is required"
+                )
+            elif residual_id in residual_ids:
+                errors.append(
+                    f"{item_id}: duplicate residual risk id {residual_id}"
+                )
+            else:
+                residual_ids.add(residual_id)
+            residual_status = residual.get("status")
+            if residual_status not in {"unknown", "open", "resolved"}:
+                errors.append(
+                    f"{item_id}: evidence.residual_risks[{offset}].status "
+                    "must be unknown, open, or resolved"
+                )
+            blocks = residual.get("blocks")
+            blocks_are_valid = isinstance(blocks, list) and all(
+                isinstance(value, str) and bool(value.strip()) for value in blocks
+            )
+            if not blocks_are_valid:
+                errors.append(
+                    f"{item_id}: evidence.residual_risks[{offset}].blocks "
+                    "must be a list of nonblank lifecycle targets"
+                )
+            elif residual_status in {"unknown", "open"} and not blocks:
+                errors.append(
+                    f"{item_id}: unresolved residual risk {residual_id} "
+                    "must name at least one blocked lifecycle target"
+                )
 
     transition_history = item.get("transition_history")
     if transition_history is not None:

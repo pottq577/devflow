@@ -32,6 +32,7 @@ Re-run `devflow status` instead of auditing another lifecycle position.
 10. Create evidence WORK for `EVIDENCE_REQUIRED` findings. No product-code changes.
     1. If required external evidence is unavailable, keep the fact unknown and use the external-wait lifecycle. Do not coerce unknown to false or create a product decision for an evidence gap.
     2. Record each missing source so `provide-evidence` identifies the concrete human handoff.
+    3. If separate remediation reduces the risk but does not prove the historical fact, keep the evidence WORK unresolved. Link verified remediation through `evidence.mitigation` and record remaining uncertainty in `evidence.residual_risks`.
 11. Give each generated WORK the reciprocal finding IDs in `origin.findings`.
     1. Default to one finding per WORK.
     2. Aggregate only findings with the same root cause, change and rollback boundary, and verification set, and state that reason in `origin.aggregation_reason`.

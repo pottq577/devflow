@@ -148,6 +148,10 @@ The domain-specific evidence payload may use a tri-state value such as `true | f
 
 `work resume` records how the missing evidence arrived and restores `ready` or `in_progress`. It never converts the WORK to `done`.
 
+A separate remediation may reduce the operational risk without proving the missing historical fact. Keep the evidence WORK externally waiting in that case. Record the remediation under `evidence.mitigation` and record remaining uncertainty under `evidence.residual_risks`.
+
+`evidence.mitigation.status: verified` means every referenced mitigation WORK is done and its required review is satisfied. It does not resolve `evidence.external_wait`. An `unknown` or `open` residual risk must list the WORK or closure targets that still depend on that fact. The scheduler continues to use normal WORK dependencies and review gates; mitigation metadata does not create hidden execution dependencies.
+
 ## Completion
 
 `done` requires evidence, not assertion.
@@ -168,7 +172,7 @@ Version 1 WORK keeps its string lists under `acceptance` and `verification.comma
 The runtime normalizes that shape for reading and preserves its lifecycle without rewriting it to version 2.
 
 `review` is optional for existing WORK.
-`block_kind`, `block_resume_status`, `transition_history`, and `evidence.external_wait` are additive. A legacy runtime still sees the underlying `blocked` status and ignores the extra fields.
+`block_kind`, `block_resume_status`, `transition_history`, `evidence.external_wait`, `evidence.mitigation`, and `evidence.residual_risks` are additive. A legacy runtime still sees the underlying `blocked` status and ignores the extra fields.
 The runtime reads legacy high or critical done WORK as requiring review before a dependent starts, without requiring an artifact migration.
 New high and critical WORK should record the review metadata explicitly.
 
