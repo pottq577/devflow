@@ -39,7 +39,7 @@ The runtime holds that floor against the recorded provenance.
 `resolved` and `accepted_risk` findings leave the active set and may be re-evaluated at any severity.
 
 The audit scopes are `plan`, `work`, `phase`, and `integration`.
-Initial and closure modes apply to work, phase, and integration; a high-risk plan review is initial before WORK begins.
+Initial and closure modes apply to all four scopes. A high-risk plan review is initial before WORK begins, and it becomes closure after the linked plan-review remediation or evidence WORK is terminal and its required work reviews are verified.
 
 ## Why the timing is graded rather than uniform
 
