@@ -68,10 +68,13 @@ When contract, implementation, and documentation drift apart, verify the current
 │   │   ├── templates/                    # project artifact templates
 │   │   ├── extensions/                   # audit extensions
 │   │   └── references/                   # non-normative background material
-│   ├── skills/{plan,run,audit,status}/   # agent-facing skills
+│   ├── skills/{plan,run,audit,status,goal,autopilot}/  # agent-facing skills
 │   └── tests/test_devflow.py             # framework regression suite
 └── docs/                                 # implementation and release records
 ```
+
+`docs/` is excluded by `.gitignore`, so its records are local working material and are not part of
+a release archive. Do not treat a `docs/` file as a tracked distribution artifact.
 
 Do not copy shared runtime, protocol, schema, prompt, template, or skill implementations into `.agents/`, `.claude-plugin/`, `.codex-plugin/`, or another adapter-specific location.
 
