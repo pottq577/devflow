@@ -209,7 +209,18 @@ For runtime or test changes:
 ```bash
 python3 -m py_compile \
   plugins/devflow/scripts/devflow.py \
-  plugins/devflow/tests/test_devflow.py
+  plugins/devflow/scripts/devflow_autopilot.py \
+  plugins/devflow/scripts/devflow_delivery.py \
+  plugins/devflow/scripts/devflow_finalization.py \
+  plugins/devflow/scripts/devflow_host.py \
+  plugins/devflow/scripts/devflow_newman.py \
+  plugins/devflow/scripts/devflow_postman.py \
+  plugins/devflow/tests/test_devflow.py \
+  plugins/devflow/tests/test_autopilot.py \
+  plugins/devflow/tests/test_delivery.py \
+  plugins/devflow/tests/test_finalization.py \
+  plugins/devflow/tests/test_host_autopilot.py \
+  plugins/devflow/tests/test_newman_integration.py
 ```
 
 ### Framework suite
@@ -298,8 +309,11 @@ Do not claim completion, release readiness, or adapter validation from static in
 
 ### Delivery regression suite
 
-Run `python3 plugins/devflow/tests/test_delivery.py` alongside the framework suite, twice for a
-release. Syntax checks include `scripts/devflow_delivery.py` and `scripts/devflow_postman.py`.
+Run `python3 plugins/devflow/tests/test_delivery.py` and
+`python3 plugins/devflow/tests/test_autopilot.py` alongside the framework suite, twice for a
+release. The autopilot and hosted-host suites cover routing, model registry, and `devflow_host.py`:
+a change there is incomplete unless `tests/test_autopilot.py` and `tests/test_host_autopilot.py`
+also pass. Syntax checks include `scripts/devflow_delivery.py` and `scripts/devflow_postman.py`.
 The offline Postman profile is narrower than the complete official JSON Schema; semantic comment
 quality and actual API-contract coverage remain independent audit responsibilities.
 
