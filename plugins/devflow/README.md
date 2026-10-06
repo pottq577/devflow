@@ -279,7 +279,7 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.9.2` ships protocol version `1.8.0`.
+Plugin version `0.9.3` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
