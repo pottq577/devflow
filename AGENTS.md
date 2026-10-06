@@ -257,8 +257,8 @@ Inspect the archive for required adapter/plugin files and reject repository/cach
 Current baseline:
 
 ```text
-plugin version:   0.8.0
-protocol version: 1.7.0
+plugin version:   0.9.3
+protocol version: 1.8.0
 ```
 
 Treat these as separate version domains.
@@ -300,7 +300,7 @@ release. Syntax checks include `scripts/devflow_delivery.py` and `scripts/devflo
 The offline Postman profile is narrower than the complete official JSON Schema; semantic comment
 quality and actual API-contract coverage remain independent audit responsibilities.
 
-## Protocol 1.7 finalization maintenance
+## Protocol 1.8 finalization maintenance
 
 The requested whole-domain ELI5 HTML and sanitized Newman summaries join the narrow derived output
 allowance. Private raw diagnostics live in locally Git-excluded `.devflow/private/newman/`.
