@@ -2848,60 +2848,51 @@ def work_review(args: argparse.Namespace) -> int:
         return reject_transition(args.item, "be reviewed", document_errors)
     review = effective_review(item)
     if item.get("status") != "done":
-        print(f"{args.item}: review requires status=done", file=sys.stderr)
-        return 2
+        return reject_transition(args.item, "be reviewed", ["review requires status=done"])
     if not review["required"]:
-        print(f"{args.item}: review is not required", file=sys.stderr)
-        return 2
+        return reject_transition(args.item, "be reviewed", ["review is not required"])
     if args.review_status == "verified":
         if review["status"] == "remediation":
             blockers = remediation_completion_blockers(review, index)
             if blockers:
-                for blocker in blockers:
-                    print(f"{args.item}: {blocker}", file=sys.stderr)
-                return 2
+                return reject_transition(args.item, "be verified", blockers)
         audit_path = d / review["audit_file"]
         if not audit_path.exists():
-            print(
-                f"{args.item}: work audit artifact not found: {audit_path}",
-                file=sys.stderr,
+            return reject_transition(
+                args.item,
+                "be verified",
+                [f"work audit artifact not found: {audit_path}"],
             )
-            return 2
         review["status"] = "verified"
     elif args.review_status == "remediation":
         if not args.remediation_work:
-            print(
-                f"{args.item}: remediation review requires --remediation-work",
-                file=sys.stderr,
+            return reject_transition(
+                args.item,
+                "be set to remediation",
+                ["remediation review requires --remediation-work"],
             )
-            return 2
+        errors: list[str] = []
         for remediation_id in args.remediation_work:
             target = index.get(remediation_id)
             if not target:
-                print(
-                    f"{args.item}: unknown remediation WORK {remediation_id}",
-                    file=sys.stderr,
-                )
-                return 2
+                errors.append(f"unknown remediation WORK {remediation_id}")
+                continue
             remediation = target[1]
             if remediation.get("kind") not in {"remediation", "evidence"}:
-                print(
-                    f"{args.item}: {remediation_id} must be kind remediation or evidence",
-                    file=sys.stderr,
-                )
-                return 2
+                errors.append(f"{remediation_id} must be kind remediation or evidence")
+                continue
             if not ((remediation.get("origin") or {}).get("findings") or []):
-                print(
-                    f"{args.item}: {remediation_id} must carry origin.findings traceability",
-                    file=sys.stderr,
+                errors.append(
+                    f"{remediation_id} must carry origin.findings traceability"
                 )
-                return 2
+                continue
             if dependency_reaches(str(remediation_id), args.item, index):
-                print(
-                    f"{args.item}: remediation WORK {remediation_id} depends on {args.item} and cannot run before {args.item} review closure",
-                    file=sys.stderr,
+                errors.append(
+                    f"remediation WORK {remediation_id} depends on {args.item} "
+                    f"and cannot run before {args.item} review closure"
                 )
-                return 2
+        if errors:
+            return reject_transition(args.item, "be set to remediation", errors)
         review["status"] = "remediation"
         review["remediation_work_ids"] = list(dict.fromkeys(args.remediation_work))
     elif args.review_status == "pending":
@@ -2912,12 +2903,14 @@ def work_review(args: argparse.Namespace) -> int:
             review["status"] == "remediation" and "audit_provenance" not in review
         )
         if review["status"] != "blocked" and not legacy_mid_closure:
-            print(
-                f"{args.item}: review pending requires a blocked review or legacy remediation "
-                f"without provenance, not {review['status']}",
-                file=sys.stderr,
+            return reject_transition(
+                args.item,
+                "be set to pending",
+                [
+                    "review pending requires a blocked review or legacy remediation "
+                    f"without provenance, not {review['status']}"
+                ],
             )
-            return 2
         review["status"] = "pending"
         review["remediation_work_ids"] = []
     else:
