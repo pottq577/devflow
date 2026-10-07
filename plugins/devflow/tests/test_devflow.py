@@ -859,6 +859,106 @@ def case_validate_rejects_phase_document_mismatch(root: Path) -> None:
     )
 
 
+def case_validate_reports_work_item_errors_in_a_fixed_order(root: Path) -> None:
+    """Error order inside one WORK item is a reported contract, not an accident.
+
+    `validate_item` is split into per-concern validators. The suite elsewhere checks each rule in
+    isolation, so a reordering inside one call would pass every existing case while changing what
+    a maintainer reads. This pins the reported sequence for an item that breaks several rules at
+    once.
+    """
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    broken = item(
+        "P01-I01",
+        risk_level="high",
+        acceptance=[],
+        origin={"requirements": [], "findings": [], "plan_items": []},
+    )
+    broken["risk"] = {"level": "critical"}
+    broken.pop("premise_checks", None)
+    broken["block_kind"] = "sideways"
+    broken["evidence"] = ["not", "a", "mapping"]
+    dump(d / "work/phase-01.yaml", work("01", broken))
+    out = devflow(root, "validate", "billing")
+    reported = [
+        line.strip().removeprefix("ERROR: ").strip()
+        for line in out.stdout.splitlines()
+        if line.startswith("ERROR: P01-I01:")
+    ]
+    check(
+        "validate reports one WORK item's errors in a fixed, concern-ordered sequence",
+        out.returncode == 1
+        and reported
+        == [
+            "P01-I01: acceptance must not be empty",
+            "P01-I01: risk=critical requires premise_checks "
+            "(facts to re-verify at HEAD before editing)",
+            "P01-I01: evidence must be a mapping",
+            "P01-I01: invalid block_kind sideways",
+            "P01-I01: block_kind requires status=blocked",
+        ],
+        out.stdout + out.stderr,
+    )
+
+
+def case_non_mapping_risk_is_a_deterministic_failure_not_a_silent_pass(root: Path) -> None:
+    """A string `risk` cannot be read as a mapping. Today that surfaces as a clean refusal.
+
+    This does not endorse the crash as correct behavior: a validator should report `risk must be a
+    mapping` the way it reports every other malformed field. It pins the current observable outcome
+    so a refactor cannot quietly turn a refusal into a passing validation, and so the eventual fix
+    has a failing test to change deliberately.
+    """
+    devflow(root, "init", "billing")
+    d = root / "docs/domains/billing"
+    dump(d / "STATE.yaml", state({"01": phase("executing", "01")}))
+    broken = item("P01-I01")
+    broken["risk"] = "high"
+    dump(d / "work/phase-01.yaml", work("01", broken))
+    out = devflow(root, "validate", "billing")
+    check(
+        "a non-mapping WORK risk refuses deterministically instead of validating clean",
+        out.returncode == 2
+        and "no attribute 'get'" in out.stderr
+        and "errors=0" not in out.stdout,
+        out.stdout + out.stderr,
+    )
+
+
+def case_work_refusals_share_one_output_format(root: Path) -> None:
+    """Every lifecycle refusal reads `<subject> cannot <action>: <reason>` on stderr with exit 2.
+
+    The `work review` refusals used to print their own text, so the same failure looked different
+    depending on which command raised it.
+    """
+    devflow(root, "init", "billing")
+    legacy_config(root, "1.2.0")
+    d = root / "docs/domains/billing"
+    dump(
+        d / "STATE.yaml",
+        state({"01": phase("executing", "01")}, protocol_version="1.2.0"),
+    )
+    dump(d / "work/phase-01.yaml", work("01", item("P01-I01")))
+    refusals = {
+        "unblock": devflow(root, "work", "unblock", "billing", "P01-I01", "--reason", "ok"),
+        "resume": devflow(root, "work", "resume", "billing", "P01-I01", "--reason", "ok"),
+        "block": devflow(root, "work", "block", "billing", "P01-I01", "--reason", ""),
+        "review": devflow(root, "work", "review", "billing", "P01-I01", "verified"),
+    }
+    for name, out in refusals.items():
+        check(
+            f"work {name} refuses through the shared transition-refusal format",
+            out.returncode == 2
+            and not out.stdout
+            and out.stderr.startswith("P01-I01 cannot ")
+            and out.stderr.count("P01-I01 cannot ") == 1
+            and ": " in out.stderr,
+            out.stdout + out.stderr,
+        )
+
+
 def case_validate_rejects_placeholder_delivery_contract_before_execution(
     root: Path,
 ) -> None:
@@ -9580,6 +9680,9 @@ CASES = [
     case_audit_remediation_allows_initial_integration_render,
     case_validate_rejects_orphan_phase_manifest,
     case_validate_rejects_phase_document_mismatch,
+    case_validate_reports_work_item_errors_in_a_fixed_order,
+    case_non_mapping_risk_is_a_deterministic_failure_not_a_silent_pass,
+    case_work_refusals_share_one_output_format,
     case_validate_rejects_placeholder_delivery_contract_before_execution,
     case_render_guard_does_not_mutate_artifacts,
     case_audit_apply_rejects_missing_front_matter,
