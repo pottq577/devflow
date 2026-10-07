@@ -12,6 +12,25 @@ required:
 optional:
   workflow_type: Workflow type, one of delivery or audit_remediation. Missing legacy values read as delivery.
   extension: Name of the audit extension to load. Resolved from .devflow/extensions/<name>.md first, then the plugin's core/extensions/<name>.md, then default.
+  target_sha: HEAD at the time the state was computed. Recomputed by the runtime before every read projection and before every lifecycle mutation; not an input to any decision.
+  active_phase: Phase the computed next_action belongs to, or null for project-level and integration-level actions. Derived from next_action.phase.
+  next_action:
+    required: [role, command, scope, phase, work_item]
+    optional: [mode, reason, item_kind, item_risk]
+    role: [architect, executor, auditor, human, none]
+    command: [plan, run, audit, decision, finalize, provide-evidence, complete, bootstrap]
+    scope: [project, plan, phase, work, integration]
+    mode: Audit mode, one of initial or closure. Present only when command is audit.
+    phase: Phase key the action belongs to, or null. The runtime normalizes the key on read, so "1" and "01" both resolve.
+    work_item: WORK id the action targets, or null. Present only for work-scoped actions and provide-evidence handoffs.
+    reason: Why a blocking action was selected. Present only when the action returns control to a human or records a no-progress condition.
+    item_kind: WORK kind carried from the selected item. Present only on run-scoped actions.
+    item_risk: WORK risk level carried from the selected item. Present only on run-scoped actions.
+    derived_input: The status command renders an additional next.input line per document from action_inputs(); it is not persisted into next_action.
+    derivation: >
+      Machine-owned. The runtime recomputes next_action through compute_next_action() before every
+      status, next, validate, and mutation, so a hand-edited value never selects work. project_status
+      and active_phase are derived from it.
   plan_review:
     required: Whether plan review must be verified before WORK begins.
     status: Plan review status, one of pending, remediation, blocked, verified, or skipped.

@@ -19,6 +19,10 @@ required:
     verification,
     findings,
   ]
+optional:
+  phase: Phase key this audit covers. Required in effect for a phase-scoped audit and absent for project-level scopes. The runtime normalizes the key on read, so "1" and "01" both resolve, and validates it against the lifecycle phase that the audit is being applied to.
+  task: WORK id this audit covers. Required in effect for a work-scoped audit and validated against the lifecycle WORK item that the audit is being applied to.
+  enforcement: Both keys stay optional in the schema because a phase or task is not representable as a required string for every scope. When either key is present, devflow.py audit_artifact_contract_errors() rejects a mismatch instead of ignoring it.
 properties:
   schema:
     type: string
