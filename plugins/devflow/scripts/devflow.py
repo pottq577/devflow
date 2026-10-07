@@ -3362,16 +3362,13 @@ def validate_state(
         errors.append(f"Invalid integration.status: {istatus}")
 
 
-def validate_item(
-    item: dict[str, Any],
-    version: int,
-    all_ids: set[str],
-    index,
-    unresolved: set[str],
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    item_id = str(item.get("id", "<missing>"))
+def validate_item_identity(
+    item: dict[str, Any], item_id: str, errors: list[str]
+) -> tuple[Any, Any, Any]:
+    """Required fields, kind/status/risk enums, and finding traceability.
+
+    Returns the resolved kind, status, and risk level so later checks share them.
+    """
     for field in WORK_REQUIRED_ITEM_FIELDS:
         if field not in item:
             errors.append(f"{item_id}: missing {field}")
@@ -3394,6 +3391,13 @@ def validate_item(
             errors.append(
                 f"{item_id}: multiple origin.findings require nonblank origin.aggregation_reason"
             )
+    return kind, status, level
+
+
+def validate_item_acceptance(
+    item: dict[str, Any], item_id: str, version: int, errors: list[str]
+) -> None:
+    """Acceptance and verification shape, plus version 2 coverage completeness."""
     acceptance = normalized_acceptance(item, version)
     commands = normalized_verification_commands(item, version)
     if version == 1:
@@ -3481,6 +3485,17 @@ def validate_item(
             errors.append(
                 f"{item_id}: acceptance ids lack verification coverage: {', '.join(uncovered_ids)}"
             )
+
+
+def validate_item_dependencies(
+    item: dict[str, Any],
+    item_id: str,
+    status: Any,
+    all_ids: set[str],
+    unresolved: set[str],
+    errors: list[str],
+) -> None:
+    """Execution dependencies and the ready-but-decision-blocked rule."""
     for dep in item.get("dependencies", []) or []:
         if str(dep) not in all_ids:
             errors.append(f"{item_id}: unknown dependency {dep}")
@@ -3489,7 +3504,11 @@ def validate_item(
     ):
         errors.append(f"{item_id}: READY while blocked by unresolved decision")
 
-    # Executable contract depth. High risk items must tell the executor what to re-verify.
+
+def validate_item_depth(
+    item: dict[str, Any], item_id: str, level: Any, errors: list[str], warnings: list[str]
+) -> None:
+    """Executable contract depth. High risk items must tell the executor what to re-verify."""
     if level in HIGH_RISK and not (item.get("premise_checks") or []):
         errors.append(
             f"{item_id}: risk={level} requires premise_checks (facts to re-verify at HEAD before editing)"
@@ -3503,7 +3522,11 @@ def validate_item(
             f"{item_id}: no pitfalls recorded (known failure modes for this change)"
         )
 
-    # Evidence must back a completion claim.
+
+def validate_item_completion_evidence(
+    item: dict[str, Any], item_id: str, kind: Any, status: Any, errors: list[str]
+) -> dict[str, Any]:
+    """Evidence must back a completion claim. Returns the normalized evidence mapping."""
     raw_evidence = item.get("evidence")
     if raw_evidence is None:
         evidence: dict[str, Any] = {}
@@ -3521,7 +3544,13 @@ def validate_item(
         and not has_nonblank_string(evidence.get("commands"))
     ):
         errors.append(f"{item_id}: done without evidence.commands")
+    return evidence
 
+
+def validate_item_block_state(
+    item: dict[str, Any], item_id: str, status: Any, errors: list[str]
+) -> None:
+    """block_kind and block_resume_status, which only a blocked item may carry."""
     block_kind = item.get("block_kind")
     if block_kind not in {None, "execution", "external"}:
         errors.append(f"{item_id}: invalid block_kind {block_kind}")
@@ -3533,6 +3562,16 @@ def validate_item(
             f"{item_id}: block_resume_status must be ready or in_progress"
         )
 
+
+def validate_item_external_wait(
+    item: dict[str, Any],
+    item_id: str,
+    status: Any,
+    block_kind: Any,
+    evidence: dict[str, Any],
+    errors: list[str],
+) -> None:
+    """External evidence provenance, including the nonterminal wait it must keep."""
     external_wait = evidence.get("external_wait")
     if external_wait is not None and not isinstance(external_wait, dict):
         errors.append(f"{item_id}: evidence.external_wait must be a mapping")
@@ -3570,6 +3609,11 @@ def validate_item(
                 f"{item_id}: external block requires unverified evidence.external_wait"
             )
 
+
+def validate_item_mitigation(
+    item_id: str, evidence: dict[str, Any], index, errors: list[str]
+) -> None:
+    """Verified risk mitigation must reference done, review-satisfied WORK."""
     mitigation = evidence.get("mitigation")
     if mitigation is not None and not isinstance(mitigation, dict):
         errors.append(f"{item_id}: evidence.mitigation must be a mapping")
@@ -3613,6 +3657,11 @@ def validate_item(
                         "must be done with its required review satisfied"
                     )
 
+
+def validate_item_residual_risks(
+    item_id: str, evidence: dict[str, Any], errors: list[str]
+) -> None:
+    """Every remaining risk names what it still blocks while it is unresolved."""
     residual_risks = evidence.get("residual_risks")
     if residual_risks is not None and not isinstance(residual_risks, list):
         errors.append(f"{item_id}: evidence.residual_risks must be a list")
@@ -3656,6 +3705,11 @@ def validate_item(
                     "must name at least one blocked lifecycle target"
                 )
 
+
+def validate_item_transition_history(
+    item: dict[str, Any], item_id: str, errors: list[str]
+) -> None:
+    """Explicit block/wait/recovery transitions must carry a reason and a timestamp."""
     transition_history = item.get("transition_history")
     if transition_history is not None:
         if not isinstance(transition_history, list):
@@ -3686,6 +3740,17 @@ def validate_item(
                         f"{item_id}: transition_history[{offset}].at is required"
                     )
 
+
+def validate_item_review(
+    item: dict[str, Any],
+    item_id: str,
+    status: Any,
+    level: Any,
+    all_ids: set[str],
+    index,
+    errors: list[str],
+) -> None:
+    """Work-level review metadata, including the high-risk review requirement."""
     review = item.get("review")
     if review is not None:
         if not isinstance(review, dict):
@@ -3736,7 +3801,12 @@ def validate_item(
             ):
                 errors.append(f"{item_id}: risk={level} review.required must be true")
 
-    # The transfer rule exists because a silently transferred requirement was missed for a whole cycle.
+
+def validate_item_transfer(
+    item: dict[str, Any], item_id: str, status: Any, index, errors: list[str]
+) -> None:
+    """The transfer rule exists because a silently transferred requirement was missed for a
+    whole cycle: the receiving item must register the same origin.requirements."""
     if status == "transferred":
         transfer = item.get("transfer") or {}
         target_id = str(transfer.get("to", ""))
@@ -3758,6 +3828,34 @@ def validate_item(
                 errors.append(
                     f"{item_id}: transferred requirements not registered on {target_id}: {', '.join(sorted(missing))}"
                 )
+
+
+def validate_item(
+    item: dict[str, Any],
+    version: int,
+    all_ids: set[str],
+    index,
+    unresolved: set[str],
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Validate one WORK item. Each concern is delegated so the rule set stays readable;
+    the call order below is also the order in which errors are reported."""
+    item_id = str(item.get("id", "<missing>"))
+    kind, status, level = validate_item_identity(item, item_id, errors)
+    validate_item_acceptance(item, item_id, version, errors)
+    validate_item_dependencies(item, item_id, status, all_ids, unresolved, errors)
+    validate_item_depth(item, item_id, level, errors, warnings)
+    evidence = validate_item_completion_evidence(item, item_id, kind, status, errors)
+    validate_item_block_state(item, item_id, status, errors)
+    validate_item_external_wait(
+        item, item_id, status, item.get("block_kind"), evidence, errors
+    )
+    validate_item_mitigation(item_id, evidence, index, errors)
+    validate_item_residual_risks(item_id, evidence, errors)
+    validate_item_transition_history(item, item_id, errors)
+    validate_item_review(item, item_id, status, level, all_ids, index, errors)
+    validate_item_transfer(item, item_id, status, index, errors)
 
 
 def validate_work_file(
