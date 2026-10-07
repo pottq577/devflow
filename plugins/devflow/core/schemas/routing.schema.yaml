@@ -1,5 +1,14 @@
 version: 1
 required: [version, profiles, roles, escalation, context, concurrency, orchestration, budget, backends]
+load_bearing_optional:
+  profile_order: >
+    Ranked capability tiers for retry promotion. Absent, the runtime falls back to the profiles
+    mapping key order. RoutingController._stronger_profile() reads it, so a policy that omits it
+    silently changes retry promotion.
+  delegation.recursive: >
+    Whether a dispatched specialist may recursively delegate. Absent, delegation is refused.
+    RoutingController reads it before backend selection, so an override that drops the key disables
+    recursive delegation for the whole project.
 notes:
   - Routing policy is runtime configuration, never PLAN/WORK authority.
   - Profiles bind logical capability tiers to model aliases from the model registry.

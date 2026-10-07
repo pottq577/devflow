@@ -167,6 +167,20 @@ class AutopilotRoutingTests(unittest.TestCase):
             self.assertEqual(registry.codex_min_version("fast"), "9.9.9")
             self.assertEqual(policy["models"][model_id]["codex_min_version"], "9.9.9")
 
+    def test_model_registry_requires_multi_agent(self):
+        config = {
+            "version": 1,
+            "models": {"fast": {"id": "some-model", "efforts": ["high"]}},
+        }
+        with self.assertRaisesRegex(ValueError, "must define multi_agent"):
+            self.ap.ModelRegistry(config)
+
+    def test_legacy_models_default_multi_agent_to_false(self):
+        registry = self.ap.ModelRegistry.from_legacy(
+            {self.models["fast"]: {"efforts": ["high"]}}
+        )
+        self.assertFalse(registry.meta(self.models["fast"])["multi_agent"])
+
     def test_route_decision_is_independent_from_concrete_model_resolution(self):
         decision = self.router.decide(
             {"command": "run", "scope": "phase", "item_kind": "implementation"},

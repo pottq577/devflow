@@ -132,16 +132,27 @@ class ModelRegistry:
                 raise ValueError(
                     f"Model registry alias {alias!r} must define non-empty efforts"
                 )
+            if "multi_agent" not in meta:
+                raise ValueError(
+                    f"Model registry alias {alias!r} must define multi_agent; "
+                    "use false when the concrete model cannot delegate recursively"
+                )
             self._models[alias] = meta
             self._aliases_by_id[model_id] = alias
 
     @classmethod
     def from_legacy(cls, models: dict[str, dict[str, Any]]) -> ModelRegistry:
+        # A legacy routing.yaml `models:` entry predates multi_agent, so default it to false
+        # rather than refusing an already-readable project policy.
         return cls(
             {
                 "version": 0,
                 "models": {
-                    str(model_id): {"id": str(model_id), **copy.deepcopy(meta or {})}
+                    str(model_id): {
+                        "multi_agent": False,
+                        "id": str(model_id),
+                        **copy.deepcopy(meta or {}),
+                    }
                     for model_id, meta in (models or {}).items()
                 },
             }
