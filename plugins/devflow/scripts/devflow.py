@@ -1119,6 +1119,10 @@ def config_protocol_floor(root: Path) -> tuple[int, int, int] | None:
     return parsed_protocol_version(runtime_config(root).get("protocol_version"))
 
 
+AUDIT_APPLY_FLOOR = (1, 3, 0)
+AUDIT_APPLY_GATE_MESSAGE = "protocol 1.3+ requires devflow audit apply"
+
+
 def requires_audit_apply(state: dict[str, Any], root: Path | None = None) -> bool:
     """The 1.3 audit-apply gate. It fires from the higher of the STATE protocol version and the
     project config's, so a STATE downgrade cannot disable the gate that init recorded."""
@@ -1130,7 +1134,7 @@ def requires_audit_apply(state: dict[str, Any], root: Path | None = None) -> boo
         )
         if version is not None
     ]
-    return bool(candidates and max(candidates) >= (1, 3, 0))
+    return bool(candidates and max(candidates) >= AUDIT_APPLY_FLOOR)
 
 
 def raw_phase_key(state: dict[str, Any], key: str) -> str | None:
@@ -2831,7 +2835,7 @@ def work_review(args: argparse.Namespace) -> int:
     state = load_yaml(state_path(root, args.domain), {}) or {}
     if args.review_status == "verified" and requires_audit_apply(state, root):
         return reject_transition(
-            args.item, "be verified", ["protocol 1.3+ requires devflow audit apply"]
+            args.item, "be verified", [AUDIT_APPLY_GATE_MESSAGE]
         )
     try:
         path, doc, item = find_item(root, args.domain, args.item)
@@ -2969,7 +2973,7 @@ def set_phase(args: argparse.Namespace) -> int:
         return reject_transition(
             f"phase {key}",
             "be verified",
-            ["protocol 1.3+ requires devflow audit apply"],
+            [AUDIT_APPLY_GATE_MESSAGE],
         )
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
@@ -3049,7 +3053,7 @@ def set_plan_review(args: argparse.Namespace) -> int:
         return reject_transition("plan review", "be skipped", ["review is required"])
     if args.status == "verified" and requires_audit_apply(state, root):
         return reject_transition(
-            "plan review", "be verified", ["protocol 1.3+ requires devflow audit apply"]
+            "plan review", "be verified", [AUDIT_APPLY_GATE_MESSAGE]
         )
     if args.status == "verified":
         d = domain_dir(root, args.domain)
@@ -3083,7 +3087,7 @@ def set_integration(args: argparse.Namespace) -> int:
         )
     if args.status == "verified" and requires_audit_apply(state, root):
         return reject_transition(
-            "integration", "be verified", ["protocol 1.3+ requires devflow audit apply"]
+            "integration", "be verified", [AUDIT_APPLY_GATE_MESSAGE]
         )
     if args.status == "verified":
         docs, _, _ = load_work_index(domain_dir(root, args.domain))
