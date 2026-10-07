@@ -121,6 +121,14 @@ delivery:
     content_hashes: [template_sha256, pr_sha256, postman_sha256]
     work_ids: Unique ordered ids; exactly the delivered done WORK on this branch, latest commit equals head_sha.
     final_gate: Extant local branch tips must equal recorded head_sha at integration verification.
+    optional_fields: [checkout_mode, branch_start_sha]
+    conditional_required_fields:
+      checkout_mode: >
+        One of attached or detached. Absent, delivery reads the branch as attached, so an existing
+        branch record stays valid without a migration write.
+      branch_start_sha: Required only when checkout_mode is detached. devflow_delivery.py refuses a
+        detached head that is not a full existing commit descending from this value, so a detached
+        branch without it cannot pass delivery check.
   migration: delivery enable preserves PLAN/WORK bytes and upgrades only the domain STATE protocol; future ready/in-progress WORK obeys the new gate.
   provenance: Branch artifacts are local files; Git history of documentation is optional.
 
