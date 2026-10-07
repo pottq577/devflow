@@ -18,6 +18,7 @@ required_item_fields:
   - status
   - evidence
 optional_item_fields:
+  title: Short human label for the item. Carried in the WORK template and read for status reporting context; it never selects work.
   origin.aggregation_reason: Required nonblank rationale when origin.findings contains two or more ids.
   context: Repository facts the Architect already verified, so the Executor does not re-derive them. Expected for high and critical risk.
   premise_checks: Facts to re-confirm at current HEAD before editing anything. Mandatory for high and critical risk.
@@ -28,6 +29,12 @@ optional_item_fields:
   review: Optional work-level review metadata, as {required, status, audit_file, remediation_work_ids, audit_provenance}. review.audit_provenance is machine-owned closure provenance. Its findings mapping is read by the next work closure; optional applied_against records the prior findings used to validate the persisted closure audit. Runtime defaults preserve legacy WORK files.
   block_kind: Optional blocked-state discriminator. execution is a real execution blocker; external is an evidence/access wait. Missing legacy values read as execution.
   block_resume_status: Ready or in_progress status to restore through work unblock or work resume.
+  block_reason: Free-text reason recorded by work block or work wait-external. The runtime falls back to it when rendering the provide-evidence handoff reason.
+  risk.axes: Optional audit axes this item is expected to be reviewed against. Author intent for the Auditor; it is not a review gate and validate does not read it.
+  evidence.commit: Source commit recorded by work done. Ordinary completion evidence.
+  evidence.changed_files: Paths recorded by work done through --changed-file. Reported evidence; validate does not require it to match the commit diff.
+  evidence.deviations: Deviations from scope recorded through --deviation.
+  evidence.discoveries: Findings surfaced during execution recorded through --discovery.
   transition_history: Ordered explicit block/wait/recovery transitions with from, to, reason, and timestamp.
   evidence.external_wait: External evidence provenance as {status, reason, checked_at, missing_evidence, resolved_at, resolution}. status is unverified while waiting and resolved after work resume.
   evidence.mitigation: Optional risk-mitigation linkage as {status, work_ids}. status is pending or verified; verified references must point to done WORK whose required review is satisfied.
