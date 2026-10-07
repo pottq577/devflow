@@ -9,17 +9,18 @@ Use the deterministic runtime instead of reconstructing state from narrative doc
 
 ## Runtime
 
-Every `devflow` command below runs from the repository root:
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
-```
-
-If that variable is unset, use this skill's wrapper instead.
-It resolves the plugin root from its own location, so the working directory does not matter:
+Every `devflow` command below runs from the repository root.
+Use this skill's wrapper. It resolves the plugin root from its own location, so it works under
+both the Claude Code and the Codex adapter and the working directory does not matter:
 
 ```bash
 python3 <this-skill-directory>/scripts/invoke.py <args>
+```
+
+Under Claude Code only, the runtime path is equivalent when the variable is set:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
 ```
 
 ## Workflow
