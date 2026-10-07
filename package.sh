@@ -22,10 +22,11 @@ OUTPUT="devflow-${VERSION}.zip"
 rm -f "$OUTPUT"
 
 zip -r "$OUTPUT" \
+  .agents/plugins/marketplace.json \
+  .claude-plugin/marketplace.json \
   AGENTS.md \
   CLAUDE.md \
   README.md \
-  docs \
   plugins/devflow \
   -x "*/__pycache__/*" \
      "*.pyc" \
