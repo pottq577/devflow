@@ -118,6 +118,20 @@ The DevFlow lifecycle stays authoritative even when peer skills are active.
 WORK selection, STATE transitions, review gates, remediation scheduling, and completion decisions remain DevFlow's.
 Optional peer execution disciplines and minimization guidance compose inside the current lifecycle boundary according to `core/protocol/skill-composition.md`, and a missing peer plugin never blocks a DevFlow command.
 
+## Automated execution surfaces
+
+The `goal` and `autopilot` skills are execution drivers, not a second lifecycle.
+They read the same computed `next_action` that `status` and `next` print, and they own no transition.
+
+- A driver dispatches the action the runtime selected. It never selects a different WORK item, closes a review, or applies an audit on its own.
+- `plan`, `run`, `audit`, and `finalize` retain their role contract and their one-change or one-scope boundary while dispatched. A dispatched child is still bound by this document.
+- `finalize` is the one aggregated action. Its packet covers the whole domain by design, not because the driver widened the scope.
+- A driver stops at `role: human`, a decision handoff, a missing evidence handoff, a blocker, or `command: complete`. It reports the blocker instead of retrying around a lifecycle guard.
+- Model selection, execution backend, context assembly, retry escalation, token budget, and concurrency live in `core/routing/` as runtime configuration. They never enter PLAN, WORK, or STATE as product authority, and a routing change cannot alter a lifecycle decision.
+- Controller telemetry under `.devflow/runtime/<domain>/` and private test diagnostics under `.devflow/private/` are operational records. They grant no lifecycle authority and are not lifecycle artifacts.
+
+Manual operation remains the default. Removing a driver changes who performs the work, never what the next action is.
+
 ## Runtime transition guards
 
 Mutation commands reject invalid transitions with exit code `2` before writing STATE or WORK.
