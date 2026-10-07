@@ -264,7 +264,28 @@ For release packaging, prefer:
 git archive --format=zip --output=devflow-marketplace-<version>.zip HEAD
 ```
 
-Inspect the archive for required adapter/plugin files and reject repository/cache metadata.
+`./package.sh` builds the same tree from the working copy. It must list both marketplace adapters
+explicitly, because `zip -r` on `plugins/devflow` alone cannot reach either one.
+
+Inspect the archive for required adapter/plugin files and reject repository/cache metadata:
+
+```bash
+python3 - devflow-marketplace-<version>.zip <<'PY'
+import sys, zipfile
+names = set(zipfile.ZipFile(sys.argv[1]).namelist())
+required = {
+    ".agents/plugins/marketplace.json",
+    ".claude-plugin/marketplace.json",
+    "plugins/devflow/.claude-plugin/plugin.json",
+    "plugins/devflow/.codex-plugin/plugin.json",
+    "plugins/devflow/bin/devflow",
+}
+missing = required - names
+assert not missing, f"missing from archive: {sorted(missing)}"
+assert not [n for n in names if "__pycache__" in n or n.endswith(".pyc")]
+print("archive ok", len(names), "entries")
+PY
+```
 
 ## 9. Versioning and release rules
 
