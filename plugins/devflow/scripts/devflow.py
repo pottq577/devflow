@@ -841,7 +841,9 @@ def dump_yaml_if_changed(path: Path, data: Any) -> bool:
     return True
 
 
-def commit_yaml_transaction(documents: dict[Path, Any]) -> None:
+def commit_yaml_transaction(documents: dict[Path, Any], label: str = "transaction") -> None:
+    """Write every document or none. `label` names the caller in a rollback failure, because
+    this is shared by `audit apply` and by every lifecycle mutation."""
     rendered = {
         path: yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000)
         for path, data in documents.items()
@@ -882,7 +884,7 @@ def commit_yaml_transaction(documents: dict[Path, Any]) -> None:
                 backup_path.unlink(missing_ok=True)
         if rollback_errors:
             raise RuntimeError(
-                "Audit apply rollback failed: " + "; ".join(rollback_errors)
+                f"{label} rollback failed: " + "; ".join(rollback_errors)
             ) from commit_error
         raise
     for backup_path in backups.values():
@@ -903,7 +905,7 @@ def commit_lifecycle_mutation(
     project_state(root, domain, state, work_overrides)
     documents: dict[Path, Any] = dict(work_overrides or {})
     documents[state_path(root, domain)] = state
-    commit_yaml_transaction(documents)
+    commit_yaml_transaction(documents, label="Lifecycle mutation")
 
 
 def has_nonblank_string(values: Any) -> bool:
@@ -4985,7 +4987,7 @@ def audit_apply(args: argparse.Namespace) -> int:
 
     documents: dict[Path, Any] = dict(work_overrides)
     documents[path] = prospective
-    commit_yaml_transaction(documents)
+    commit_yaml_transaction(documents, label="Audit apply")
     applied = prospective
     next_action = applied.get("next_action") or {}
     print(f"audit applied: {args.scope} {args.mode}")
