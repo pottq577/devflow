@@ -1545,14 +1545,8 @@ def integration_verify_errors(
     if unverified:
         errors.append(f"phases are not verified: {', '.join(unverified)}")
 
-    integration_items = [
-        item
-        for path, doc in docs.items()
-        if item_phase(path, doc) == "integration"
-        for item in (doc.get("items", []) or [])
-    ]
     errors.extend(
-        scope_work_completeness_errors(integration_items, "integration WORK")
+        scope_work_completeness_errors(integration_items(docs), "integration WORK")
     )
     unresolved = sorted(
         str(value) for value in state.get("unresolved_decisions", []) or []
@@ -1876,6 +1870,64 @@ def plan_remediation_action(
     }
 
 
+def human_decision(scope: str, phase: Any = None, work_item: Any = None, **extra):
+    """The lifecycle's "a person must decide" projection, including a bare runnable next."""
+    action = {
+        "role": "human",
+        "command": "decision",
+        "scope": scope,
+        "phase": phase,
+        "work_item": work_item,
+    }
+    action.update(extra)
+    return action
+
+
+def audit_action(scope: str, mode: str, phase: Any = None, **extra):
+    return {
+        "role": "auditor",
+        "command": "audit",
+        "scope": scope,
+        "mode": mode,
+        "phase": phase,
+        "work_item": None,
+        **extra,
+    }
+
+
+def run_action(phase: str, item: dict[str, Any]):
+    integration_scope = phase == "integration"
+    return {
+        "role": "executor",
+        "command": "run",
+        "scope": "integration" if integration_scope else "phase",
+        "phase": None if integration_scope else phase,
+        "work_item": item.get("id"),
+        **work_routing_fields(item),
+    }
+
+
+def integration_items(
+    docs: dict[Path, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Every WORK item whose manifest belongs to the integration scope."""
+    return [
+        item
+        for path, doc in docs.items()
+        if item_phase(path, doc) == "integration"
+        for item in (doc.get("items", []) or [])
+    ]
+
+
+def blocked_integration_items(docs: dict[Path, dict[str, Any]]) -> list[str]:
+    """Blocked integration WORK that needs a person. An external evidence wait does not."""
+    return [
+        str(item.get("id"))
+        for item in integration_items(docs)
+        if item.get("status") == "blocked" and work_block_kind(item) != "external"
+    ]
+
+
 def base_next_action(
     root: Path,
     domain: str,
@@ -1897,43 +1949,17 @@ def base_next_action(
     if state.get("unresolved_decisions") and (
         workflow_type == "audit_remediation" or all_verified
     ):
-        return {
-            "role": "human",
-            "command": "decision",
-            "scope": "project",
-            "phase": None,
-            "work_item": None,
-        }
+        return human_decision("project")
     if integration.get("status") == "blocked" and (
         workflow_type == "audit_remediation" or all_verified
     ):
-        return {
-            "role": "human",
-            "command": "decision",
-            "scope": "integration",
-            "phase": None,
-            "work_item": None,
-        }
+        return human_decision("integration")
     if workflow_type == "audit_remediation":
         integration_status = integration.get("status", "audit")
         if integration_status in {"pending", "audit"}:
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "initial",
-                "phase": None,
-                "work_item": None,
-            }
+            return audit_action("integration", "initial")
         if integration_status == "closure":
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "closure",
-                "phase": None,
-                "work_item": None,
-            }
+            return audit_action("integration", "closure")
         if integration_status == "verified":
             return {
                 "role": "none",
@@ -1943,14 +1969,7 @@ def base_next_action(
                 "work_item": None,
             }
         if not work:
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "closure",
-                "phase": None,
-                "work_item": None,
-            }
+            return audit_action("integration", "closure")
     elif not work:
         return {
             "role": "architect",
@@ -1962,13 +1981,7 @@ def base_next_action(
 
     if plan_review.get("required") and plan_review.get("status") != "verified":
         if plan_review.get("status") == "blocked":
-            return {
-                "role": "human",
-                "command": "decision",
-                "scope": "plan",
-                "phase": None,
-                "work_item": None,
-            }
+            return human_decision("plan")
         if (
             plan_review.get("status") in {"pending", "remediation"}
             and remediation_work_ids
@@ -1976,27 +1989,13 @@ def base_next_action(
             return plan_remediation_action(
                 root, domain, state, plan_review, work_overrides
             )
-        return {
-            "role": "auditor",
-            "command": "audit",
-            "scope": "plan",
-            "mode": "initial",
-            "phase": None,
-            "work_item": None,
-        }
+        return audit_action("plan", "initial")
 
     pending_phase_audits = [
         key for key, phase in sorted(phases.items()) if phase.get("status") == "audit"
     ]
     if pending_phase_audits:
-        return {
-            "role": "auditor",
-            "command": "audit",
-            "scope": "phase",
-            "mode": "initial",
-            "phase": pending_phase_audits[0],
-            "work_item": None,
-        }
+        return audit_action("phase", "initial", phase=pending_phase_audits[0])
     recorded_action = state.get("next_action") or {}
     recorded_phase = (
         phase_key(recorded_action.get("phase"))
@@ -2010,14 +2009,7 @@ def base_next_action(
         and recorded_phase in phases
         and phases[recorded_phase].get("status") == "remediation"
     ):
-        return {
-            "role": "auditor",
-            "command": "audit",
-            "scope": "phase",
-            "mode": "closure",
-            "phase": recorded_phase,
-            "work_item": None,
-        }
+        return audit_action("phase", "closure", phase=recorded_phase)
     if (
         recorded_action.get("command") == "audit"
         and recorded_action.get("scope") == "integration"
@@ -2027,49 +2019,17 @@ def base_next_action(
             root, domain, state, "integration", "closure", None, None
         )
     ):
-        return {
-            "role": "auditor",
-            "command": "audit",
-            "scope": "integration",
-            "mode": "closure",
-            "phase": None,
-            "work_item": None,
-        }
-    integration_audit_is_active = all_verified and integration.get("status") in {
-        "audit",
-        "closure",
-    }
-    if integration_audit_is_active:
-        if integration.get("status") in {"pending", "audit"}:
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "initial",
-                "phase": None,
-                "work_item": None,
-            }
-        if integration.get("status") == "closure":
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "closure",
-                "phase": None,
-                "work_item": None,
-            }
+        return audit_action("integration", "closure")
+    # An already-open integration audit outranks any remaining WORK.
+    if all_verified and integration.get("status") == "audit":
+        return audit_action("integration", "initial")
+    if all_verified and integration.get("status") == "closure":
+        return audit_action("integration", "closure")
 
     nxt = choose_next(root, domain, state, {"in_progress"}, work_overrides)
     if nxt:
         phase, _, item = nxt
-        return {
-            "role": "executor",
-            "command": "run",
-            "scope": "integration" if phase == "integration" else "phase",
-            "phase": None if phase == "integration" else phase,
-            "work_item": item.get("id"),
-            **work_routing_fields(item),
-        }
+        return run_action(phase, item)
 
     review_action = work_review_action(root, domain, state, work_overrides)
     if review_action:
@@ -2078,14 +2038,7 @@ def base_next_action(
     nxt = choose_next(root, domain, state, {"ready"}, work_overrides)
     if nxt:
         phase, _, item = nxt
-        return {
-            "role": "executor",
-            "command": "run",
-            "scope": "integration" if phase == "integration" else "phase",
-            "phase": None if phase == "integration" else phase,
-            "work_item": item.get("id"),
-            **work_routing_fields(item),
-        }
+        return run_action(phase, item)
 
     external_wait = external_wait_action(root, domain, state, work_overrides)
     if external_wait:
@@ -2104,122 +2057,40 @@ def base_next_action(
             and work_block_kind(i) != "external"
             for i in items
         ):
-            return {
-                "role": "human",
-                "command": "decision",
-                "scope": "phase",
-                "phase": key,
-                "work_item": None,
-            }
+            return human_decision("phase", phase=key)
         if items and all(i.get("status") in TERMINAL_STATUSES for i in items):
             mode = "closure" if ps.get("status") == "remediation" else "initial"
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "phase",
-                "mode": mode,
-                "phase": key,
-                "work_item": None,
-            }
+            return audit_action("phase", mode, phase=key)
 
     if workflow_type == "audit_remediation":
-        integration_items = [
-            item
-            for path, doc in docs.items()
-            if item_phase(path, doc) == "integration"
-            for item in (doc.get("items", []) or [])
-        ]
-        blocked = [
-            str(item.get("id"))
-            for item in integration_items
-            if item.get("status") == "blocked"
-            and work_block_kind(item) != "external"
-        ]
+        remediation_items = integration_items(docs)
+        blocked = blocked_integration_items(docs)
         if blocked:
-            return {
-                "role": "human",
-                "command": "decision",
-                "scope": "integration",
-                "phase": None,
-                "work_item": blocked[0] if len(blocked) == 1 else None,
-            }
+            return human_decision(
+                "integration", work_item=blocked[0] if len(blocked) == 1 else None
+            )
         if integration.get("status") == "remediation" and all(
             item.get("status") in TERMINAL_STATUSES and review_satisfied(item)
-            for item in integration_items
+            for item in remediation_items
         ):
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "closure",
-                "phase": None,
-                "work_item": None,
-            }
-        return {
-            "role": "human",
-            "command": "decision",
-            "scope": "project",
-            "phase": None,
-            "work_item": None,
-            "reason": "lifecycle is incomplete",
-        }
+            return audit_action("integration", "closure")
+        return human_decision("project", reason="lifecycle is incomplete")
 
-    all_verified = bool(phases) and all(
-        p.get("status") == "verified" for p in phases.values()
-    )
     istatus = integration.get("status", "pending")
     if all_verified:
         # An unresolved project decision must clear before any integration audit/closure.
         if state.get("unresolved_decisions"):
-            return {
-                "role": "human",
-                "command": "decision",
-                "scope": "project",
-                "phase": None,
-                "work_item": None,
-            }
+            return human_decision("project")
         # Blocked integration WORK needs a human decision, never an audit projection.
-        integration_items = [
-            item
-            for path, doc in docs.items()
-            if item_phase(path, doc) == "integration"
-            for item in (doc.get("items", []) or [])
-        ]
-        blocked = [
-            str(item.get("id"))
-            for item in integration_items
-            if item.get("status") == "blocked"
-            and work_block_kind(item) != "external"
-        ]
+        blocked = blocked_integration_items(docs)
         if blocked:
-            action = {
-                "role": "human",
-                "command": "decision",
-                "scope": "integration",
-                "phase": None,
-                "work_item": None,
-            }
-            if len(blocked) == 1:
-                action["work_item"] = blocked[0]
-            return action
+            return human_decision(
+                "integration", work_item=blocked[0] if len(blocked) == 1 else None
+            )
         if istatus in {"pending", "audit"}:
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "initial",
-                "phase": None,
-                "work_item": None,
-            }
+            return audit_action("integration", "initial")
         if istatus == "closure":
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "integration",
-                "mode": "closure",
-                "phase": None,
-                "work_item": None,
-            }
+            return audit_action("integration", "closure")
         if istatus == "verified":
             return {
                 "role": "none",
@@ -2230,21 +2101,8 @@ def base_next_action(
             }
 
     if state.get("unresolved_decisions"):
-        return {
-            "role": "human",
-            "command": "decision",
-            "scope": "project",
-            "phase": None,
-            "work_item": None,
-        }
-    return {
-        "role": "human",
-        "command": "decision",
-        "scope": "project",
-        "phase": None,
-        "work_item": None,
-        "reason": "lifecycle is incomplete",
-    }
+        return human_decision("project")
+    return human_decision("project", reason="lifecycle is incomplete")
 
 
 def compute_next_action(
