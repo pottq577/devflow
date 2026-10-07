@@ -1,7 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.9.3 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.9.4 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -35,6 +35,10 @@ Existing domains keep their PLAN/WORK documents. Run `devflow delivery enable <d
 adopt the new completion requirements; completed WORK is preserved. New domains enable it by
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
+
+## Version 0.9.4 contract and runtime alignment
+
+Version 0.9.4 keeps protocol `1.8.0` and changes no lifecycle status, enum, or transition. It corrects places where the recorded contract had drifted from the runtime: the schemas now declare the STATE fields the runtime writes and the WORK/audit keys it enforces, the model registry enforces the `multi_agent` requirement its schema has always stated, and the release archive now carries both marketplace adapters so an installed zip can resolve `plugins/devflow`. It also splits the three largest runtime functions into named per-concern units, verified byte-identical by differential harnesses over WORK validation, the next-action state machine, and every `work` CLI transition.
 
 ## Version 0.9.3 remediation recovery
 

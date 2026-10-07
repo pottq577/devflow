@@ -292,7 +292,7 @@ PY
 Current baseline:
 
 ```text
-plugin version:   0.9.3
+plugin version:   0.9.4
 protocol version: 1.8.0
 ```
 

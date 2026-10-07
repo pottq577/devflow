@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.4 - 2026-10-07 - Contract/runtime alignment and structure
 
 - Correct `core/protocol/risk-policy.md`, which denied a plan closure audit that `lifecycle.md`, `audit.schema.yaml`, and the runtime all implement. Protocol version stays `1.8.0`; this aligns a stale rule rather than changing behavior.
 - Record `target_sha`, `active_phase`, and the `next_action` shape in `state.schema.yaml`, and the runtime-enforced `phase` and `task` keys in `audit.schema.yaml`. Both were runtime-written but absent from the contract.
@@ -12,7 +12,7 @@
 - Report the calling command, not always `Audit apply`, when a YAML transaction rollback fails.
 - Package both marketplace adapters. `package.sh` previously produced an archive with no adapter, so it could not resolve `plugins/devflow`, and it shipped the `docs/` tree that `.gitignore` excludes.
 - Document the adapter-independent `invoke.py` wrapper as the primary command path in the shared skills. `CLAUDE_PLUGIN_ROOT` is never set under the Codex adapter.
-- Correct the plugin version in `plugins/devflow/README.md` and the AGENTS.md baseline, and list every runtime and test file in the required verification commands.
+- Split `validate_item`, `base_next_action`, and `work_update` into named per-concern and per-subcommand units. Behavior is unchanged: verified by differential harnesses covering WORK validation, the next-action state machine, and every `work` CLI transition, plus the full regression suites.
 
 ## 0.9.3 - 2026-10-02 - Remediation recovery and hosted routing
 

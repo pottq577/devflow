@@ -101,6 +101,8 @@ This is bounded lifecycle context assembly rather than semantic repository RAG. 
 
 ## Autonomous `/goal` routing (0.9.3 / protocol 1.8.0)
 
+Routing policy is unchanged in 0.9.4. The release adds the `multi_agent` enforcement its schema always required and documents `profile_order` and `delegation.recursive`, which the controller already read.
+
 DevFlow has two lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Both consume the same `STATE -> compute_next_action()` result and stop at completion, a human or blocker gate, or an explicit execution boundary.
 
 Inside a Codex host session, `/goal` uses host-native sub-agents. The Goal Supervisor asks `scripts/devflow_host.py` for one deterministic dispatch at a time, then passes the routed model, reasoning effort, and compact repository-recovery message to `spawn_agent`. The child renders the authoritative packet from the repository instead of receiving a copied PRD/PLAN/WORK packet from a nested `codex exec` session.
@@ -279,8 +281,9 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.9.3` ships protocol version `1.8.0`.
+Plugin version `0.9.4` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
+Plugin `0.9.4` keeps protocol `1.8.0` because it changes no lifecycle status, enum, transition, or artifact requirement. It corrects the recorded contract where it had drifted from the runtime and restructures the runtime internals only.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
 It also makes the documented work and plan legacy recovery commands reach an initial audit and lets closed decision findings reference resolved decision records.
