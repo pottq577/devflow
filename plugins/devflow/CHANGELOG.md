@@ -12,6 +12,7 @@
 - Report the calling command, not always `Audit apply`, when a YAML transaction rollback fails.
 - Package both marketplace adapters. `package.sh` previously produced an archive with no adapter, so it could not resolve `plugins/devflow`, and it shipped the `docs/` tree that `.gitignore` excludes.
 - Document the adapter-independent `invoke.py` wrapper as the primary command path in the shared skills. `CLAUDE_PLUGIN_ROOT` is never set under the Codex adapter.
+- Report a non-mapping WORK `risk` as `risk must be a mapping` instead of raising `AttributeError: 'str' object has no attribute 'get'`. `validate` now names the field, and `status` projects the domain instead of failing. Every other reader treats a non-mapping `risk` as undeclared through `risk_level()`.
 - Split `validate_item`, `base_next_action`, and `work_update` into named per-concern and per-subcommand units. Behavior is unchanged: verified by differential harnesses covering WORK validation, the next-action state machine, and every `work` CLI transition, plus the full regression suites.
 
 ## 0.9.3 - 2026-10-02 - Remediation recovery and hosted routing

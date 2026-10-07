@@ -903,13 +903,12 @@ def case_validate_reports_work_item_errors_in_a_fixed_order(root: Path) -> None:
     )
 
 
-def case_non_mapping_risk_is_a_deterministic_failure_not_a_silent_pass(root: Path) -> None:
-    """A string `risk` cannot be read as a mapping. Today that surfaces as a clean refusal.
+def case_non_mapping_risk_is_reported_as_a_validation_error(root: Path) -> None:
+    """A string `risk` cannot be read as a mapping, and must be reported like any other field.
 
-    This does not endorse the crash as correct behavior: a validator should report `risk must be a
-    mapping` the way it reports every other malformed field. It pins the current observable outcome
-    so a refactor cannot quietly turn a refusal into a passing validation, and so the eventual fix
-    has a failing test to change deliberately.
+    `validate` previously raised `AttributeError: 'str' object has no attribute 'get'`, which
+    surfaced as a bare exit 2 with no field named. `risk_level()` now lets every reader treat a
+    non-mapping value as undeclared, and validate names the field.
     """
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -919,11 +918,18 @@ def case_non_mapping_risk_is_a_deterministic_failure_not_a_silent_pass(root: Pat
     dump(d / "work/phase-01.yaml", work("01", broken))
     out = devflow(root, "validate", "billing")
     check(
-        "a non-mapping WORK risk refuses deterministically instead of validating clean",
-        out.returncode == 2
-        and "no attribute 'get'" in out.stderr
-        and "errors=0" not in out.stdout,
+        "a non-mapping WORK risk is reported as a validation error naming the field",
+        out.returncode == 1
+        and "ERROR: P01-I01: risk must be a mapping" in out.stdout
+        and "no attribute 'get'" not in out.stderr
+        and "invalid risk.level" not in out.stdout,
         out.stdout + out.stderr,
+    )
+    status = devflow(root, "status", "billing")
+    check(
+        "status still projects a domain whose WORK risk is not a mapping",
+        status.returncode == 0 and "next.command: run" in status.stdout,
+        status.stdout + status.stderr,
     )
 
 
@@ -9681,7 +9687,7 @@ CASES = [
     case_validate_rejects_orphan_phase_manifest,
     case_validate_rejects_phase_document_mismatch,
     case_validate_reports_work_item_errors_in_a_fixed_order,
-    case_non_mapping_risk_is_a_deterministic_failure_not_a_silent_pass,
+    case_non_mapping_risk_is_reported_as_a_validation_error,
     case_work_refusals_share_one_output_format,
     case_validate_rejects_placeholder_delivery_contract_before_execution,
     case_render_guard_does_not_mutate_artifacts,

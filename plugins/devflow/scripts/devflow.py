@@ -920,6 +920,16 @@ def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def risk_level(item: dict[str, Any]) -> Any:
+    """The declared risk level, or None when `risk` is absent or not a mapping.
+
+    `validate` is the layer that reports a malformed `risk`, so every other reader treats a
+    non-mapping value as undeclared rather than raising while projecting lifecycle state.
+    """
+    raw = item.get("risk")
+    return raw.get("level") if isinstance(raw, dict) else None
+
+
 def work_block_kind(item: dict[str, Any]) -> str | None:
     """Classify blocked WORK while keeping legacy blocked artifacts backward-readable."""
     if item.get("status") != "blocked":
@@ -1286,7 +1296,7 @@ def item_phase(path: Path, doc: dict[str, Any]) -> str:
 def effective_review(item: dict[str, Any]) -> dict[str, Any]:
     """Return policy-defaulted review metadata without changing legacy WORK YAML."""
     raw = item.get("review") if isinstance(item.get("review"), dict) else {}
-    high_risk = (item.get("risk") or {}).get("level") in HIGH_RISK
+    high_risk = risk_level(item) in HIGH_RISK
     implemented = item.get("status") in {"done", "in_progress", "ready"}
     required = high_risk and implemented
     if not high_risk and isinstance(raw.get("required"), bool):
@@ -1487,7 +1497,7 @@ def scope_work_completeness_errors(items: list[dict[str, Any]], label: str) -> l
         str(item.get("id"))
         for item in items
         if item.get("status") == "done"
-        and (item.get("risk") or {}).get("level") in HIGH_RISK
+        and risk_level(item) in HIGH_RISK
         and not review_satisfied(item)
     ]
     if pending_reviews:
@@ -1601,7 +1611,7 @@ def choose_next(
             ):
                 priority = 0 if status == "in_progress" else 1
                 risk = {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(
-                    (item.get("risk") or {}).get("level"), 2
+                    risk_level(item), 2
                 )
                 candidates.append(
                     (
@@ -1622,10 +1632,9 @@ def choose_next(
 
 
 def work_routing_fields(item: dict[str, Any]) -> dict[str, Any]:
-    risk = item.get("risk")
     return {
         "item_kind": item.get("kind"),
-        "item_risk": risk.get("level") if isinstance(risk, dict) else None,
+        "item_risk": risk_level(item),
     }
 
 
@@ -2536,7 +2545,7 @@ def work_apply_done(
         evidence[key].extend(vals)
     if args.commit:
         evidence["commit"] = args.commit
-    if (item.get("risk") or {}).get("level") in HIGH_RISK:
+    if risk_level(item) in HIGH_RISK:
         review = effective_review(item)
         if review["status"] not in {"remediation", "blocked", "verified"}:
             review["status"] = "pending"
@@ -3326,12 +3335,16 @@ def validate_item_identity(
             errors.append(f"{item_id}: missing {field}")
     kind = item.get("kind")
     status = item.get("status")
-    level = (item.get("risk") or {}).get("level")
+    raw_risk = item.get("risk")
+    level = risk_level(item)
     if kind not in KINDS:
         errors.append(f"{item_id}: invalid kind {kind}")
     if status not in WORK_STATUSES:
         errors.append(f"{item_id}: invalid status {status}")
-    if level not in RISK_LEVELS:
+    if raw_risk is not None and not isinstance(raw_risk, dict):
+        # Report the malformed field itself rather than the level it cannot supply.
+        errors.append(f"{item_id}: risk must be a mapping")
+    elif level not in RISK_LEVELS:
         errors.append(f"{item_id}: invalid risk.level {level}")
     origin = item.get("origin") or {}
     findings = origin.get("findings", []) if isinstance(origin, dict) else []
