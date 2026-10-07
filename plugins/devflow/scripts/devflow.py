@@ -2440,6 +2440,313 @@ def next_item(args: argparse.Namespace) -> int:
     return 0
 
 
+def work_apply_start(
+    args: argparse.Namespace,
+    root: Path,
+    state: dict[str, Any],
+    path: Path,
+    doc: dict[str, Any],
+    item: dict[str, Any],
+    index,
+    document_errors: list[str],
+) -> int | None:
+    """`work start`: claim the item and record the delivery checkout provenance."""
+    errors = document_errors + work_start_errors(
+        state, domain_dir(root, args.domain), path, doc, item, index
+    )
+    if errors:
+        return reject_transition(args.item, "start", errors)
+    item["status"] = "in_progress"
+    item["block_reason"] = None
+    if delivery.active(state):
+        evidence = item.setdefault("evidence", {})
+        evidence["start_sha"] = current_sha(root)
+        branch, checkout_mode, branch_start = delivery.delivery_context(
+            root, getattr(args, "branch", None)
+        )
+        delivery_evidence = evidence.get("delivery")
+        if delivery_evidence is None:
+            delivery_evidence = {}
+            evidence["delivery"] = delivery_evidence
+        elif not isinstance(delivery_evidence, dict):
+            return reject_transition(
+                args.item,
+                "start",
+                ["evidence.delivery must be a mapping or null"],
+            )
+        recorded_branch = delivery_evidence.get("branch")
+        if recorded_branch and recorded_branch != branch:
+            return reject_transition(
+                args.item,
+                "start",
+                [
+                    f"evidence.delivery.branch={recorded_branch} disagrees with checkout branch {branch}"
+                ],
+            )
+        delivery_evidence["branch"] = branch
+        if checkout_mode == "detached":
+            delivery_evidence["branch_start_sha"] = branch_start
+    return None
+
+
+def work_apply_done(
+    args: argparse.Namespace,
+    root: Path,
+    state: dict[str, Any],
+    path: Path,
+    doc: dict[str, Any],
+    item: dict[str, Any],
+    index,
+    document_errors: list[str],
+) -> int | None:
+    """`work done`: attach executed evidence and hand the item to review."""
+    if document_errors:
+        return reject_transition(args.item, "done", document_errors)
+    if item.get("status") != "in_progress":
+        return reject_transition(
+            args.item,
+            "done",
+            [f"status=in_progress is required, not {item.get('status')}"],
+        )
+    current_commands = list((item.get("evidence") or {}).get("commands") or [])
+    cli_commands = list(getattr(args, "command", None) or [])
+    if item.get("kind") != "documentation" and not has_nonblank_string(
+        current_commands + cli_commands
+    ):
+        return reject_transition(
+            args.item,
+            "done",
+            [
+                "verification evidence is required. Pass --command '<cmd> -> <result>'."
+            ],
+        )
+    evidence = item.setdefault("evidence", {})
+    for attr, key in [
+        ("changed_file", "changed_files"),
+        ("command", "commands"),
+        ("deviation", "deviations"),
+        ("discovery", "discoveries"),
+    ]:
+        vals = getattr(args, attr, None) or []
+        if key == "commands":
+            vals = [
+                value for value in vals if isinstance(value, str) and value.strip()
+            ]
+        evidence.setdefault(key, [])
+        evidence[key].extend(vals)
+    if args.commit:
+        evidence["commit"] = args.commit
+    if (item.get("risk") or {}).get("level") in HIGH_RISK:
+        review = effective_review(item)
+        if review["status"] not in {"remediation", "blocked", "verified"}:
+            review["status"] = "pending"
+        item["review"] = review
+    item["status"] = "done"
+    item["block_reason"] = None
+    phase = normalized_phases(state).get(item_phase(path, doc), {})
+    delivery.prepare_completion(
+        root,
+        args.domain,
+        state,
+        item,
+        markdown_sections,
+        phase.get("base_ref"),
+        getattr(args, "branch", None),
+    )
+    return None
+
+
+def work_apply_block(
+    args: argparse.Namespace,
+    root: Path,
+    state: dict[str, Any],
+    path: Path,
+    doc: dict[str, Any],
+    item: dict[str, Any],
+    index,
+    document_errors: list[str],
+) -> int | None:
+    """`work block`: a normal execution blocker, resumable through `work unblock`."""
+    if document_errors:
+        return reject_transition(args.item, "block", document_errors)
+    if item.get("status") not in {"ready", "in_progress"}:
+        return reject_transition(
+            args.item, "block", [f"cannot block status {item.get('status')}"]
+        )
+    reason = (args.reason or "").strip()
+    if not reason:
+        return reject_transition(
+            args.item, "block", ["a non-empty reason is required"]
+        )
+    resume_status = str(item.get("status"))
+    record_work_transition(
+        item,
+        "blocked",
+        reason,
+        block_kind="execution",
+    )
+    item["block_kind"] = "execution"
+    item["block_resume_status"] = resume_status
+    item["block_reason"] = reason
+    return None
+
+
+def work_apply_wait_external(
+    args: argparse.Namespace,
+    root: Path,
+    state: dict[str, Any],
+    path: Path,
+    doc: dict[str, Any],
+    item: dict[str, Any],
+    index,
+    document_errors: list[str],
+) -> int | None:
+    """`work wait-external`: a nonterminal evidence wait that never becomes a false answer."""
+    if document_errors:
+        return reject_transition(args.item, "wait for external evidence", document_errors)
+    if item.get("status") not in {"ready", "in_progress", "blocked"}:
+        return reject_transition(
+            args.item,
+            "wait for external evidence",
+            [f"cannot wait from status {item.get('status')}"],
+        )
+    if work_block_kind(item) == "external":
+        return reject_transition(
+            args.item,
+            "wait for external evidence",
+            [
+                "WORK is already waiting for external evidence; "
+                "use work resume after evidence arrives"
+            ],
+        )
+    reason = (args.reason or "").strip()
+    missing = [
+        value.strip()
+        for value in (args.missing_evidence or [])
+        if isinstance(value, str) and value.strip()
+    ]
+    if not reason or not missing:
+        return reject_transition(
+            args.item,
+            "wait for external evidence",
+            ["a non-empty reason and at least one --missing-evidence value are required"],
+        )
+    previous_reason = item.get("block_reason") if item.get("status") == "blocked" else None
+    resume_status = (
+        item.get("block_resume_status")
+        if item.get("status") == "blocked"
+        else item.get("status")
+    )
+    if resume_status not in {"ready", "in_progress"}:
+        resume_status = "ready"
+    record_work_transition(
+        item,
+        "blocked",
+        reason,
+        block_kind="external",
+        prior_block_reason=previous_reason,
+    )
+    item["block_kind"] = "external"
+    item["block_resume_status"] = resume_status
+    item["block_reason"] = reason
+    evidence = item.get("evidence")
+    if evidence is None:
+        evidence = {}
+        item["evidence"] = evidence
+    evidence["external_wait"] = {
+        "status": "unverified",
+        "reason": reason,
+        "checked_at": utc_timestamp(),
+        "missing_evidence": list(dict.fromkeys(missing)),
+    }
+    return None
+
+
+def work_apply_resume(
+    args: argparse.Namespace,
+    root: Path,
+    state: dict[str, Any],
+    path: Path,
+    doc: dict[str, Any],
+    item: dict[str, Any],
+    index,
+    document_errors: list[str],
+) -> int | None:
+    """`work resume`: close the external wait with its resolution provenance."""
+    if document_errors:
+        return reject_transition(args.item, "resume", document_errors)
+    if work_block_kind(item) != "external":
+        return reject_transition(
+            args.item,
+            "resume",
+            ["work resume requires an external evidence wait"],
+        )
+    wait = ((item.get("evidence") or {}).get("external_wait") or {})
+    resume_status = item.get("block_resume_status")
+    if resume_status not in {"ready", "in_progress"}:
+        resume_status = "ready"
+    reason = (args.reason or "").strip()
+    if not reason:
+        return reject_transition(args.item, "resume", ["a non-empty reason is required"])
+    wait["status"] = "resolved"
+    wait["resolved_at"] = utc_timestamp()
+    wait["resolution"] = reason
+    record_work_transition(item, resume_status, reason, block_kind="external")
+    item.pop("block_kind", None)
+    item.pop("block_resume_status", None)
+    item["block_reason"] = None
+    return None
+
+
+def work_apply_unblock(
+    args: argparse.Namespace,
+    root: Path,
+    state: dict[str, Any],
+    path: Path,
+    doc: dict[str, Any],
+    item: dict[str, Any],
+    index,
+    document_errors: list[str],
+) -> int | None:
+    """`work unblock`: restore the recorded status after an execution block clears."""
+    if document_errors:
+        return reject_transition(args.item, "unblock", document_errors)
+    if item.get("status") != "blocked":
+        return reject_transition(args.item, "unblock", ["status=blocked is required"])
+    if work_block_kind(item) == "external":
+        return reject_transition(
+            args.item,
+            "unblock",
+            ["external evidence waits use work resume so evidence provenance is preserved"],
+        )
+    reason = (args.reason or "").strip()
+    if not reason:
+        return reject_transition(args.item, "unblock", ["a non-empty reason is required"])
+    resume_status = item.get("block_resume_status")
+    if resume_status not in {"ready", "in_progress"}:
+        resume_status = "ready"
+    record_work_transition(
+        item,
+        resume_status,
+        reason,
+        prior_block_reason=item.get("block_reason"),
+    )
+    item.pop("block_kind", None)
+    item.pop("block_resume_status", None)
+    item["block_reason"] = None
+    return None
+
+
+WORK_UPDATE_HANDLERS = {
+    "start": work_apply_start,
+    "done": work_apply_done,
+    "block": work_apply_block,
+    "wait-external": work_apply_wait_external,
+    "resume": work_apply_resume,
+    "unblock": work_apply_unblock,
+}
+
+
 def work_update(args: argparse.Namespace) -> int:
     root = repo_root()
     d = domain_dir(root, args.domain)
@@ -2455,223 +2762,10 @@ def work_update(args: argparse.Namespace) -> int:
         str(value) for value in state.get("unresolved_decisions", []) or []
     } | open_decisions
     document_errors, _ = validate_work_file(path, doc, index, unresolved)
-    if args.work_command == "start":
-        errors = document_errors + work_start_errors(state, d, path, doc, item, index)
-        if errors:
-            return reject_transition(args.item, "start", errors)
-        item["status"] = "in_progress"
-        item["block_reason"] = None
-        if delivery.active(state):
-            evidence = item.setdefault("evidence", {})
-            evidence["start_sha"] = current_sha(root)
-            branch, checkout_mode, branch_start = delivery.delivery_context(
-                root, getattr(args, "branch", None)
-            )
-            delivery_evidence = evidence.get("delivery")
-            if delivery_evidence is None:
-                delivery_evidence = {}
-                evidence["delivery"] = delivery_evidence
-            elif not isinstance(delivery_evidence, dict):
-                return reject_transition(
-                    args.item,
-                    "start",
-                    ["evidence.delivery must be a mapping or null"],
-                )
-            recorded_branch = delivery_evidence.get("branch")
-            if recorded_branch and recorded_branch != branch:
-                return reject_transition(
-                    args.item,
-                    "start",
-                    [
-                        f"evidence.delivery.branch={recorded_branch} disagrees with checkout branch {branch}"
-                    ],
-                )
-            delivery_evidence["branch"] = branch
-            if checkout_mode == "detached":
-                delivery_evidence["branch_start_sha"] = branch_start
-    elif args.work_command == "done":
-        if document_errors:
-            return reject_transition(args.item, "done", document_errors)
-        if item.get("status") != "in_progress":
-            return reject_transition(
-                args.item,
-                "done",
-                [f"status=in_progress is required, not {item.get('status')}"],
-            )
-        current_commands = list((item.get("evidence") or {}).get("commands") or [])
-        cli_commands = list(getattr(args, "command", None) or [])
-        if item.get("kind") != "documentation" and not has_nonblank_string(
-            current_commands + cli_commands
-        ):
-            return reject_transition(
-                args.item,
-                "done",
-                [
-                    "verification evidence is required. Pass --command '<cmd> -> <result>'."
-                ],
-            )
-        evidence = item.setdefault("evidence", {})
-        for attr, key in [
-            ("changed_file", "changed_files"),
-            ("command", "commands"),
-            ("deviation", "deviations"),
-            ("discovery", "discoveries"),
-        ]:
-            vals = getattr(args, attr, None) or []
-            if key == "commands":
-                vals = [
-                    value for value in vals if isinstance(value, str) and value.strip()
-                ]
-            evidence.setdefault(key, [])
-            evidence[key].extend(vals)
-        if args.commit:
-            evidence["commit"] = args.commit
-        if (item.get("risk") or {}).get("level") in HIGH_RISK:
-            review = effective_review(item)
-            if review["status"] not in {"remediation", "blocked", "verified"}:
-                review["status"] = "pending"
-            item["review"] = review
-        item["status"] = "done"
-        item["block_reason"] = None
-        phase = normalized_phases(state).get(item_phase(path, doc), {})
-        delivery.prepare_completion(
-            root,
-            args.domain,
-            state,
-            item,
-            markdown_sections,
-            phase.get("base_ref"),
-            getattr(args, "branch", None),
-        )
-    elif args.work_command == "block":
-        if document_errors:
-            return reject_transition(args.item, "block", document_errors)
-        if item.get("status") not in {"ready", "in_progress"}:
-            return reject_transition(
-                args.item, "block", [f"cannot block status {item.get('status')}"]
-            )
-        reason = (args.reason or "").strip()
-        if not reason:
-            return reject_transition(
-                args.item, "block", ["a non-empty reason is required"]
-            )
-        resume_status = str(item.get("status"))
-        record_work_transition(
-            item,
-            "blocked",
-            reason,
-            block_kind="execution",
-        )
-        item["block_kind"] = "execution"
-        item["block_resume_status"] = resume_status
-        item["block_reason"] = reason
-    elif args.work_command == "wait-external":
-        if document_errors:
-            return reject_transition(args.item, "wait for external evidence", document_errors)
-        if item.get("status") not in {"ready", "in_progress", "blocked"}:
-            return reject_transition(
-                args.item,
-                "wait for external evidence",
-                [f"cannot wait from status {item.get('status')}"],
-            )
-        if work_block_kind(item) == "external":
-            return reject_transition(
-                args.item,
-                "wait for external evidence",
-                [
-                    "WORK is already waiting for external evidence; "
-                    "use work resume after evidence arrives"
-                ],
-            )
-        reason = (args.reason or "").strip()
-        missing = [
-            value.strip()
-            for value in (args.missing_evidence or [])
-            if isinstance(value, str) and value.strip()
-        ]
-        if not reason or not missing:
-            return reject_transition(
-                args.item,
-                "wait for external evidence",
-                ["a non-empty reason and at least one --missing-evidence value are required"],
-            )
-        previous_reason = item.get("block_reason") if item.get("status") == "blocked" else None
-        resume_status = (
-            item.get("block_resume_status")
-            if item.get("status") == "blocked"
-            else item.get("status")
-        )
-        if resume_status not in {"ready", "in_progress"}:
-            resume_status = "ready"
-        record_work_transition(
-            item,
-            "blocked",
-            reason,
-            block_kind="external",
-            prior_block_reason=previous_reason,
-        )
-        item["block_kind"] = "external"
-        item["block_resume_status"] = resume_status
-        item["block_reason"] = reason
-        evidence = item.get("evidence")
-        if evidence is None:
-            evidence = {}
-            item["evidence"] = evidence
-        evidence["external_wait"] = {
-            "status": "unverified",
-            "reason": reason,
-            "checked_at": utc_timestamp(),
-            "missing_evidence": list(dict.fromkeys(missing)),
-        }
-    elif args.work_command == "resume":
-        if document_errors:
-            return reject_transition(args.item, "resume", document_errors)
-        if work_block_kind(item) != "external":
-            return reject_transition(
-                args.item,
-                "resume",
-                ["work resume requires an external evidence wait"],
-            )
-        wait = ((item.get("evidence") or {}).get("external_wait") or {})
-        resume_status = item.get("block_resume_status")
-        if resume_status not in {"ready", "in_progress"}:
-            resume_status = "ready"
-        reason = (args.reason or "").strip()
-        if not reason:
-            return reject_transition(args.item, "resume", ["a non-empty reason is required"])
-        wait["status"] = "resolved"
-        wait["resolved_at"] = utc_timestamp()
-        wait["resolution"] = reason
-        record_work_transition(item, resume_status, reason, block_kind="external")
-        item.pop("block_kind", None)
-        item.pop("block_resume_status", None)
-        item["block_reason"] = None
-    elif args.work_command == "unblock":
-        if document_errors:
-            return reject_transition(args.item, "unblock", document_errors)
-        if item.get("status") != "blocked":
-            return reject_transition(args.item, "unblock", ["status=blocked is required"])
-        if work_block_kind(item) == "external":
-            return reject_transition(
-                args.item,
-                "unblock",
-                ["external evidence waits use work resume so evidence provenance is preserved"],
-            )
-        reason = (args.reason or "").strip()
-        if not reason:
-            return reject_transition(args.item, "unblock", ["a non-empty reason is required"])
-        resume_status = item.get("block_resume_status")
-        if resume_status not in {"ready", "in_progress"}:
-            resume_status = "ready"
-        record_work_transition(
-            item,
-            resume_status,
-            reason,
-            prior_block_reason=item.get("block_reason"),
-        )
-        item.pop("block_kind", None)
-        item.pop("block_resume_status", None)
-        item["block_reason"] = None
+    handler = WORK_UPDATE_HANDLERS[args.work_command]
+    refusal = handler(args, root, state, path, doc, item, index, document_errors)
+    if refusal is not None:
+        return refusal
     commit_lifecycle_mutation(root, args.domain, copy.deepcopy(state), {path: doc})
     print(f"{args.item}: {item['status']}")
     return 0
