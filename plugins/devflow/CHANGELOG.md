@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Correct `core/protocol/risk-policy.md`, which denied a plan closure audit that `lifecycle.md`, `audit.schema.yaml`, and the runtime all implement. Protocol version stays `1.8.0`; this aligns a stale rule rather than changing behavior.
+- Record `target_sha`, `active_phase`, and the `next_action` shape in `state.schema.yaml`, and the runtime-enforced `phase` and `task` keys in `audit.schema.yaml`. Both were runtime-written but absent from the contract.
+- Record the detached-checkout `checkout_mode`/`branch_start_sha` delivery branch fields and the WORK `title`, `block_reason`, `risk.axes`, `evidence.commit`, `evidence.changed_files`, `evidence.deviations`, and `evidence.discoveries` fields.
+- Enforce `multi_agent` in `ModelRegistry`, which `model-registry.schema.yaml` has always required. Legacy `routing.yaml` `models:` entries predate the key and default it to `false` so an existing project policy stays loadable.
+- Document `profile_order` and `delegation.recursive` in `routing.schema.yaml`; the controller reads both before selecting a backend.
+- Define the `goal` and `autopilot` skills as execution drivers that own no lifecycle transition. Manual `plan`/`run`/`audit`/`status` behavior is unchanged.
+- Route every `work review` refusal through `reject_transition` and share the WORK completeness block between the phase and integration verify guards. Refusal wording is unchanged.
+- Report the calling command, not always `Audit apply`, when a YAML transaction rollback fails.
+- Package both marketplace adapters. `package.sh` previously produced an archive with no adapter, so it could not resolve `plugins/devflow`, and it shipped the `docs/` tree that `.gitignore` excludes.
+- Document the adapter-independent `invoke.py` wrapper as the primary command path in the shared skills. `CLAUDE_PLUGIN_ROOT` is never set under the Codex adapter.
+- Correct the plugin version in `plugins/devflow/README.md` and the AGENTS.md baseline, and list every runtime and test file in the required verification commands.
+
 ## 0.9.3 - 2026-10-02 - Remediation recovery and hosted routing
 
 - Keep verified mitigation separate from unresolved historical evidence through additive `evidence.mitigation` and `evidence.residual_risks` metadata. A mitigation can be verified while an external evidence WORK remains unresolved.
