@@ -1465,6 +1465,36 @@ def phase_items(
     return list(doc.get("items", []) or [])
 
 
+def scope_work_completeness_errors(items: list[dict[str, Any]], label: str) -> list[str]:
+    """The shared verification block for any WORK set: open, blocked, and unreviewed high-risk.
+
+    `label` names the scope in the refusal text, so phase and integration keep their own wording.
+    """
+    errors = []
+    open_items = [
+        str(item.get("id"))
+        for item in items
+        if item.get("status") not in TERMINAL_STATUSES
+    ]
+    if open_items:
+        errors.append(f"open {label} remains: {', '.join(open_items)}")
+    blocked_items = [
+        str(item.get("id")) for item in items if item.get("status") == "blocked"
+    ]
+    if blocked_items:
+        errors.append(f"blocked {label} remains: {', '.join(blocked_items)}")
+    pending_reviews = [
+        str(item.get("id"))
+        for item in items
+        if item.get("status") == "done"
+        and (item.get("risk") or {}).get("level") in HIGH_RISK
+        and not review_satisfied(item)
+    ]
+    if pending_reviews:
+        errors.append(f"high-risk {label} requires review: {', '.join(pending_reviews)}")
+    return errors
+
+
 def phase_verify_errors(
     root: Path,
     domain: str,
@@ -1482,27 +1512,7 @@ def phase_verify_errors(
     errors = []
     if not items:
         errors.append(f"phase {phase_key_value} has no WORK items")
-    open_items = [
-        str(item.get("id"))
-        for item in items
-        if item.get("status") not in TERMINAL_STATUSES
-    ]
-    if open_items:
-        errors.append(f"open WORK remains: {', '.join(open_items)}")
-    blocked_items = [
-        str(item.get("id")) for item in items if item.get("status") == "blocked"
-    ]
-    if blocked_items:
-        errors.append(f"blocked WORK remains: {', '.join(blocked_items)}")
-    pending_reviews = [
-        str(item.get("id"))
-        for item in items
-        if item.get("status") == "done"
-        and (item.get("risk") or {}).get("level") in HIGH_RISK
-        and not review_satisfied(item)
-    ]
-    if pending_reviews:
-        errors.append(f"high-risk WORK requires review: {', '.join(pending_reviews)}")
+    errors.extend(scope_work_completeness_errors(items, "WORK"))
     unresolved = {str(value) for value in state.get("unresolved_decisions", []) or []}
     decisions = sorted(
         {
@@ -1541,31 +1551,9 @@ def integration_verify_errors(
         if item_phase(path, doc) == "integration"
         for item in (doc.get("items", []) or [])
     ]
-    open_items = [
-        str(item.get("id"))
-        for item in integration_items
-        if item.get("status") not in TERMINAL_STATUSES
-    ]
-    if open_items:
-        errors.append(f"open integration WORK remains: {', '.join(open_items)}")
-    blocked_items = [
-        str(item.get("id"))
-        for item in integration_items
-        if item.get("status") == "blocked"
-    ]
-    if blocked_items:
-        errors.append(f"blocked integration WORK remains: {', '.join(blocked_items)}")
-    pending_reviews = [
-        str(item.get("id"))
-        for item in integration_items
-        if item.get("status") == "done"
-        and (item.get("risk") or {}).get("level") in HIGH_RISK
-        and not review_satisfied(item)
-    ]
-    if pending_reviews:
-        errors.append(
-            f"high-risk integration WORK requires review: {', '.join(pending_reviews)}"
-        )
+    errors.extend(
+        scope_work_completeness_errors(integration_items, "integration WORK")
+    )
     unresolved = sorted(
         str(value) for value in state.get("unresolved_decisions", []) or []
     )
