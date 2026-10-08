@@ -16,7 +16,7 @@ notes:
   - Project routing overrides live in .devflow/routing.yaml; model registry overrides live in .devflow/models.yaml.
   - profile_order ranks capability tiers for retry promotion; retries never downgrade an already stronger risk-selected profile unless a stage explicitly sets replace: true for a cross-family fallback.
   - escalation.kind applies role-specific task-kind overrides before risk overrides.
-  - escalation.risk treats domain risk as a floor and may promote a WORK above that floor through next_action.item_risk.
+  - escalation.risk uses explicit action/WORK risk for worker and work-verifier routing when present; other roles retain domain risk as a floor, and item-scoped roles fall back to domain risk when no explicit risk is declared.
   - escalation.retries.worker_stages is an ordered retry ladder keyed by minimum attempt; legacy retry fields remain readable; a project override using them replaces the bundled staged retry defaults.
   - Retry stages normally respect profile/effort floors; replace: true explicitly switches to an alternative model family after diagnosis.
   - Dispatcher capabilities choose execution backend after a model alias resolves to a concrete model.

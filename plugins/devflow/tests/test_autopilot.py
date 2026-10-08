@@ -331,7 +331,7 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertEqual(spec["effective_risk"], "critical")
         self.assert_route(spec, "fast", "max")
 
-    def test_domain_risk_is_a_floor_for_lower_work_risk(self):
+    def test_explicit_work_risk_overrides_higher_domain_risk_for_worker(self):
         spec = self.router.resolve(
             {
                 "command": "run",
@@ -341,8 +341,28 @@ class AutopilotRoutingTests(unittest.TestCase):
             },
             {"risk_profile": "critical"},
         )
+        self.assertEqual(spec["effective_risk"], "low")
+        self.assert_route(spec, "fast", "high")
+
+    def test_work_verifier_uses_item_risk_over_higher_domain_risk(self):
+        spec = self.router.resolve(
+            {
+                "command": "audit",
+                "scope": "work",
+                "item_kind": "implementation",
+                "item_risk": "high",
+            },
+            {"risk_profile": "critical"},
+        )
+        self.assertEqual(spec["effective_risk"], "high")
+        self.assert_route(spec, "frontier", "xhigh")
+
+    def test_domain_risk_remains_a_floor_for_architect_authority(self):
+        spec = self.router.resolve(
+            {"command": "plan", "scope": "project"}, {"risk_profile": "critical"}
+        )
         self.assertEqual(spec["effective_risk"], "critical")
-        self.assert_route(spec, "fast", "max")
+        self.assert_route(spec, "frontier", "xhigh")
 
     def test_critical_worker_fails_closed_when_luna_is_unavailable(self):
         self.caps.mark_unavailable("fast", "codex_exec", "model unavailable")

@@ -905,15 +905,24 @@ class RouteEngine:
         raise ValueError(f"Action is not dispatchable: {command}")
 
     @staticmethod
-    def _effective_risk(action: dict[str, Any], state: dict[str, Any]) -> str:
+    def _highest_risk(*values: Any) -> str | None:
         order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-        candidates = [
-            state.get("risk_profile"),
-            action.get("risk"),
-            action.get("item_risk"),
-        ]
-        valid = [str(value) for value in candidates if str(value) in order]
-        return max(valid, key=order.__getitem__) if valid else "medium"
+        valid = [str(value) for value in values if str(value) in order]
+        return max(valid, key=order.__getitem__) if valid else None
+
+    @classmethod
+    def _effective_risk(
+        cls, action: dict[str, Any], state: dict[str, Any], role: str
+    ) -> str:
+        domain_risk = state.get("risk_profile")
+        action_risk = action.get("risk")
+        item_risk = action.get("item_risk")
+        if role in {"worker", "verifier"}:
+            explicit_risk = cls._highest_risk(action_risk, item_risk)
+            if explicit_risk:
+                return explicit_risk
+            return cls._highest_risk(domain_risk) or "medium"
+        return cls._highest_risk(domain_risk, action_risk, item_risk) or "medium"
 
     @staticmethod
     def _apply_role_override(
@@ -986,7 +995,7 @@ class RouteEngine:
         kind_over = escalation.get("kind", {}).get(item_kind) or {}
         self._apply_role_override(cfg, kind_over, role)
 
-        risk = self._effective_risk(action, state)
+        risk = self._effective_risk(action, state, role)
         risk_over = escalation.get("risk", {}).get(risk) or {}
         self._apply_role_override(cfg, risk_over, role)
 
