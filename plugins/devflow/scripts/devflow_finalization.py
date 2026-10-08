@@ -573,6 +573,7 @@ def final_errors(
     domain_path: Path,
     *,
     require_receipt: bool = False,
+    require_explanation: bool = True,
 ) -> list[str]:
     if not active(state):
         return []
@@ -586,30 +587,37 @@ def final_errors(
         if item.get("status") not in TERMINAL:
             errors.append(f"whole-work finalization has open WORK: {item_id}")
     explanation = fin.get("explanation")
-    if not isinstance(explanation, dict):
-        errors.append("ELI5 explanation evidence is missing")
-    else:
-        try:
-            sha = inspect_html(root, ctx)
-            if (
-                explanation.get("html_file") != ctx["html_file"]
-                or explanation.get("html_sha256") != sha
-            ):
-                errors.append(
-                    "ELI5 explanation content is stale; regenerate and record explain"
-                )
-            if explanation.get("scope_sha256") != ctx["html_metadata"]["scope_sha256"]:
-                errors.append(
-                    "ELI5 explanation scope is stale after work/artifact/Newman changes"
-                )
-            if explanation.get("skill_name") != "eli5" or not delivery.HASH.fullmatch(
-                str(explanation.get("skill_sha256", ""))
-            ):
-                errors.append("ELI5 explanation requires installed-skill provenance")
-            if not str(explanation.get("invocation") or "").strip():
-                errors.append("ELI5 explanation invocation evidence is missing")
-        except (ValueError, OSError) as exc:
-            errors.append("ELI5 explanation stale or invalid: " + str(exc))
+    if require_explanation:
+        if not isinstance(explanation, dict):
+            errors.append("ELI5 explanation evidence is missing")
+        else:
+            try:
+                sha = inspect_html(root, ctx)
+                if (
+                    explanation.get("html_file") != ctx["html_file"]
+                    or explanation.get("html_sha256") != sha
+                ):
+                    errors.append(
+                        "ELI5 explanation content is stale; regenerate and record explain"
+                    )
+                if (
+                    explanation.get("scope_sha256")
+                    != ctx["html_metadata"]["scope_sha256"]
+                ):
+                    errors.append(
+                        "ELI5 explanation scope is stale after work/artifact/Newman changes"
+                    )
+                if (
+                    explanation.get("skill_name") != "eli5"
+                    or not delivery.HASH.fullmatch(
+                        str(explanation.get("skill_sha256", ""))
+                    )
+                ):
+                    errors.append("ELI5 explanation requires installed-skill provenance")
+                if not str(explanation.get("invocation") or "").strip():
+                    errors.append("ELI5 explanation invocation evidence is missing")
+            except (ValueError, OSError) as exc:
+                errors.append("ELI5 explanation stale or invalid: " + str(exc))
     latest = {run["branch"]: run for run in fin["runs"]}
     branches = state["delivery"].get("branches", {})
     for branch, record in branches.items():
@@ -759,10 +767,15 @@ def final_errors(
                 errors.append(str(exc))
     if require_receipt:
         receipt = fin.get("receipt")
+        explanation_sha = (
+            explanation.get("html_sha256")
+            if isinstance(explanation, dict)
+            else None
+        )
         if (
             not isinstance(receipt, dict)
             or receipt.get("scope_sha256") != ctx["html_metadata"]["scope_sha256"]
-            or receipt.get("html_sha256") != (explanation or {}).get("html_sha256")
+            or receipt.get("html_sha256") != explanation_sha
         ):
             errors.append(
                 "whole-work finalization receipt missing or stale; run delivery finalize"

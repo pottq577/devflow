@@ -250,6 +250,7 @@ class FinalizationTests(DeliveryTests):
 
     def test_explanation_requires_installed_eli5(self):
         self.completed()
+        self.assertEqual(self.run_newman().returncode, 0)
         self.html()
         result = self.cli(
             "delivery",
@@ -265,6 +266,7 @@ class FinalizationTests(DeliveryTests):
 
     def test_explanation_records_scope_and_skill_content_hash(self):
         self.completed()
+        self.assertEqual(self.run_newman().returncode, 0)
         result = self.explain()
         self.assertEqual(result.returncode, 0, result.stderr)
         record = self.read_state()["delivery"]["finalization"]["explanation"]
@@ -273,6 +275,7 @@ class FinalizationTests(DeliveryTests):
 
     def test_explanation_rejects_partial_work_metadata(self):
         self.completed()
+        self.assertEqual(self.run_newman().returncode, 0)
         ctx = self.context()
         ctx["html_metadata"]["work_ids"] = []
         self.html(ctx)
@@ -593,8 +596,20 @@ class FinalizationTests(DeliveryTests):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("receipt", self.read_state()["delivery"]["finalization"])
 
-    def test_newman_run_invalidates_earlier_explanation(self):
+    def test_explanation_requires_current_newman_before_recording(self):
         self.completed()
+        result = self.explain()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("newman", result.stderr.lower())
+        self.assertIsNone(
+            self.read_state()["delivery"]["finalization"]["explanation"]
+        )
+        self.assertEqual(self.run_newman().returncode, 0)
+        self.assertEqual(self.explain().returncode, 0)
+
+    def test_later_newman_run_invalidates_final_explanation(self):
+        self.completed()
+        self.assertEqual(self.run_newman().returncode, 0)
         self.assertEqual(self.explain().returncode, 0)
         self.assertEqual(self.run_newman().returncode, 0)
         result = self.cli("delivery", "finalize", "sample")
@@ -945,7 +960,9 @@ class FinalizationTests(DeliveryTests):
             ctx["html_metadata"]["branches"], ["feature/sample", "feature/second"]
         )
         self.assertEqual(ctx["html_metadata"]["work_ids"], ["P01-I01", "P01-I02"])
-        self.assertEqual(self.explain().returncode, 0)
+        explanation = self.explain()
+        self.assertEqual(explanation.returncode, 2)
+        self.assertIn("feature/second", explanation.stderr)
         result = self.cli("delivery", "finalize", "sample")
         self.assertEqual(result.returncode, 2)
         self.assertIn("feature/second", result.stderr)

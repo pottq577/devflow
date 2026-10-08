@@ -5497,6 +5497,23 @@ def delivery_command(args: argparse.Namespace) -> int:
         )
         return 0
     if action == "explain":
+        errors = delivery.validation_errors(
+            root, args.domain, state, docs, markdown_sections, final=True
+        )
+        errors.extend(
+            finalization.final_errors(
+                root,
+                args.domain,
+                state,
+                docs,
+                d,
+                require_explanation=False,
+            )
+        )
+        if errors:
+            return reject_transition(
+                args.domain, "record final ELI5 explanation", errors
+            )
         ctx = finalization.scope(root, args.domain, state, docs, d)
         finalization.record_explanation(
             root, ctx, state, args.skill_file, args.invocation

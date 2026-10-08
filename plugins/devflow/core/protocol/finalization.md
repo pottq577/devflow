@@ -36,7 +36,9 @@ Never force-add the generated documents or require their initial Git history.
 
 ## Installed ELI5 skill
 
-After branch PR/collections are current, run `devflow delivery context <domain>`.
+Run ELI5 only after Newman evidence is current for every delivery branch.
+Close every failed-run triage and required repair first.
+Then run `devflow delivery context <domain>`.
 Its snapshot includes the complete PRD/PLAN/DECISIONS hashes, every WORK including cancelled or transferred scope, every branch/base/head and its deliverable hashes, and all Newman runs/diagnoses.
 Read all referenced WORK and source changes.
 Use pinned `git show`/diff ranges to inspect other branches without disturbing another session.
@@ -63,8 +65,10 @@ Then record actual invocation evidence:
 devflow delivery explain <domain> --skill-file <actual-eli5-SKILL.md> --invocation '<actual host invocation and context used>'
 ```
 
-The first draft precedes Newman.
-After any Newman attempt, diagnosis, repair, branch artifact update or scope change, obtain fresh context, invoke ELI5 to update the complete explanation, and record `explain` again.
+Do not invoke ELI5 before Newman.
+`delivery explain` rejects recording while Newman evidence is missing or stale, or while triage or repair remains open.
+When verification is current, obtain fresh context, invoke ELI5 once, and record `explain`.
+If a later Newman attempt, diagnosis, repair, branch artifact update or scope change occurs, repeat ELI5 only after verification becomes current again.
 Final HTML must describe the final tested commits and actual test results.
 Runtime verifies scope/content hashes, visible WORK coverage and skill-file provenance.
 Semantic quality and truthful skill invocation remain independent audit responsibilities.
