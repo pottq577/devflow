@@ -7,7 +7,7 @@ profiles:
   alternative:
     candidates: [balanced]
   frontier:
-    candidates: [frontier]
+    candidates: [frontier, balanced]
   hardest:
     candidates: [frontier]
 profile_order: [economy, balanced, alternative, frontier, hardest]

@@ -44,6 +44,9 @@ class AutopilotRoutingTests(unittest.TestCase):
         )
         for model_id in self.models.values():
             self.assertNotIn(model_id, routing_text)
+        self.assertEqual(self.models["fast"], "gpt-6-luna")
+        self.assertEqual(self.models["balanced"], "gpt-5.6-terra")
+        self.assertEqual(self.models["frontier"], "gpt-6.1-sol")
         self.assertEqual(
             self.policy["profiles"]["economy"]["candidates"], ["fast", "balanced"]
         )
@@ -54,7 +57,8 @@ class AutopilotRoutingTests(unittest.TestCase):
             self.policy["profiles"]["alternative"]["candidates"], ["balanced"]
         )
         self.assertEqual(
-            self.policy["profiles"]["frontier"]["candidates"], ["frontier"]
+            self.policy["profiles"]["frontier"]["candidates"],
+            ["frontier", "balanced"],
         )
         self.assertEqual(self.policy["profiles"]["hardest"]["candidates"], ["frontier"])
         self.assertEqual(
@@ -362,12 +366,22 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertEqual(spec["model"]["alias"], "balanced")
         self.assertEqual(spec["execution"]["backend"], "native_agent")
 
-    def test_frontier_authority_does_not_fall_back_to_terra(self):
+    def test_frontier_authority_falls_back_to_terra(self):
         self.caps.mark_unavailable("frontier", "native_agent", "model unavailable")
         self.caps.mark_unavailable("frontier", "codex_exec", "model unavailable")
-        with self.assertRaisesRegex(RuntimeError, "No available model/backend"):
+        spec = self.router.resolve(
+            {"command": "plan", "scope": "project"}, {"risk_profile": "medium"}
+        )
+        self.assert_route(spec, "balanced", "high")
+        self.assertEqual(spec["execution"]["backend"], "native_agent")
+
+    def test_hardest_authority_still_fails_closed_without_frontier(self):
+        self.caps.mark_unavailable("frontier", "native_agent", "model unavailable")
+        self.caps.mark_unavailable("frontier", "codex_exec", "model unavailable")
+        with self.assertRaisesRegex(RuntimeError, "profile=hardest effort=xhigh"):
             self.router.resolve(
-                {"command": "plan", "scope": "project"}, {"risk_profile": "medium"}
+                {"command": "audit", "scope": "integration", "mode": "initial"},
+                {"risk_profile": "critical"},
             )
 
     def test_unavailable_state_records_alias_and_restores_same_model(self):
@@ -1687,7 +1701,7 @@ class AutopilotCliTests(unittest.TestCase):
         self.assertIn("Do not write execution-control options", text)
         self.assertNotIn("turn the user's approved requirements into a PRD", text)
 
-    def test_route_fails_closed_when_persisted_authority_candidate_is_unavailable(self):
+    def test_route_fails_closed_when_all_frontier_profile_candidates_are_unavailable(self):
         import os
         import subprocess
         import sys
@@ -1727,6 +1741,18 @@ class AutopilotCliTests(unittest.TestCase):
                                 "model": self.models["frontier"],
                                 "backend": "codex_exec",
                                 "reason": "model unavailable",
+                            },
+                            {
+                                "alias": "balanced",
+                                "model": self.models["balanced"],
+                                "backend": "native_agent",
+                                "reason": "fallback unavailable",
+                            },
+                            {
+                                "alias": "balanced",
+                                "model": self.models["balanced"],
+                                "backend": "codex_exec",
+                                "reason": "fallback unavailable",
                             },
                         ],
                     }
