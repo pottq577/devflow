@@ -63,15 +63,37 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertEqual(self.policy["profiles"]["hardest"]["candidates"], ["frontier"])
         self.assertEqual(
             self.policy["orchestration"]["scout_before"],
-            [
-                "architect",
-                "verifier",
-                "auditor",
-                "integration_auditor",
-                "diagnostician",
-                "finalizer",
-            ],
+            ["integration_auditor", "diagnostician"],
         )
+        self.assertEqual(
+            self.policy["orchestration"]["scout_on_critical"],
+            ["architect", "verifier"],
+        )
+        self.assertEqual(
+            self.policy["orchestration"]["scout_on_retry"],
+            ["verifier", "auditor", "finalizer"],
+        )
+
+    def test_adaptive_scout_policy_uses_role_risk_and_retry(self):
+        orchestration = self.policy["orchestration"]
+
+        def required(role, *, risk="medium", attempt=0):
+            return self.ap.should_run_scout(
+                {"role": role, "effective_risk": risk},
+                attempt,
+                scout_before=set(orchestration["scout_before"]),
+                scout_on_retry=set(orchestration["scout_on_retry"]),
+                scout_on_critical=set(orchestration["scout_on_critical"]),
+            )
+
+        self.assertFalse(required("architect"))
+        self.assertTrue(required("architect", risk="critical"))
+        self.assertFalse(required("verifier"))
+        self.assertTrue(required("verifier", attempt=1))
+        self.assertTrue(required("integration_auditor"))
+        self.assertTrue(required("diagnostician"))
+        self.assertFalse(required("finalizer"))
+        self.assertTrue(required("finalizer", attempt=1))
 
     def test_routing_and_model_registry_schemas_match_split_sources(self):
         routing_schema = self.ap._load_yaml(

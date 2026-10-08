@@ -1479,6 +1479,25 @@ class ExecutionBoundary:
         raise AssertionError(f"Unhandled execution boundary: {self.value}")
 
 
+def should_run_scout(
+    spec: dict[str, Any],
+    attempt: int,
+    *,
+    scout_before: set[str] | None = None,
+    scout_on_retry: set[str] | None = None,
+    scout_on_critical: set[str] | None = None,
+) -> bool:
+    role = str(spec.get("role") or "")
+    if role in set(scout_before or set()):
+        return True
+    if int(attempt) > 0 and role in set(scout_on_retry or set()):
+        return True
+    return (
+        str(spec.get("effective_risk") or "") == "critical"
+        and role in set(scout_on_critical or set())
+    )
+
+
 class AutopilotController:
     def __init__(
         self,
@@ -1497,6 +1516,8 @@ class AutopilotController:
         capabilities: CapabilityRegistry | None = None,
         budget: TokenBudget | None = None,
         scout_before: set[str] | None = None,
+        scout_on_retry: set[str] | None = None,
+        scout_on_critical: set[str] | None = None,
         scout_max_chars: int = 12000,
         until: str = "complete",
     ):
@@ -1516,6 +1537,8 @@ class AutopilotController:
         self.capabilities = capabilities
         self.budget = budget
         self.scout_before = set(scout_before or set())
+        self.scout_on_retry = set(scout_on_retry or set())
+        self.scout_on_critical = set(scout_on_critical or set())
         self.scout_max_chars = int(scout_max_chars)
         if self.scout_max_chars < 1:
             raise ValueError("orchestration.scout_max_chars must be positive")
@@ -1760,7 +1783,13 @@ class AutopilotController:
 
             if (
                 not timeout_diagnosis
-                and spec.get("role") in self.scout_before
+                and should_run_scout(
+                    spec,
+                    attempt,
+                    scout_before=self.scout_before,
+                    scout_on_retry=self.scout_on_retry,
+                    scout_on_critical=self.scout_on_critical,
+                )
                 and fp not in self.scouts
                 and (
                     self.budget is None

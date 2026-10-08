@@ -87,7 +87,9 @@ concurrency:
   mutating: 1
   read_only: 2
 orchestration:
-  scout_before: [architect, verifier, auditor, integration_auditor, diagnostician, finalizer]
+  scout_before: [integration_auditor, diagnostician]
+  scout_on_critical: [architect, verifier]
+  scout_on_retry: [verifier, auditor, finalizer]
   scout_max_chars: 12000
 budget:
   total_tokens: 1000000

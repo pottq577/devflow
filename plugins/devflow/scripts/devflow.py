@@ -5738,6 +5738,12 @@ def autopilot_command(args: argparse.Namespace) -> int:
         capabilities=capabilities,
         budget=budget,
         scout_before=set(policy.get("orchestration", {}).get("scout_before", [])),
+        scout_on_retry=set(
+            policy.get("orchestration", {}).get("scout_on_retry", [])
+        ),
+        scout_on_critical=set(
+            policy.get("orchestration", {}).get("scout_on_critical", [])
+        ),
         scout_max_chars=int(
             policy.get("orchestration", {}).get("scout_max_chars", 12000)
         ),

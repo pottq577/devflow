@@ -54,7 +54,54 @@ class HostAutopilotUnitTests(unittest.TestCase):
             self.host.HOST_BACKEND,
         )
         self.assertEqual(result["primary"]["fork_turns"], "none")
+        self.assertIsNone(result["scout"])
+        self.assertIn("scout_message", result["primary"])
+
+    def test_critical_architect_gets_scout_backed_specialist_message(self):
+        state = {
+            "risk_profile": "critical",
+            "next_action": {
+                "role": "architect",
+                "command": "plan",
+                "scope": "project",
+            },
+        }
+        result = self.host.dispatch_envelope(
+            Path("/repo"), PLUGIN, self.policy, "sample", state
+        )
         self.assertEqual(result["scout"]["model_alias"], "balanced")
+        self.assertEqual(result["scout"]["reasoning_effort"], "high")
+        self.assertIn(
+            "Do not repeat repository-wide discovery",
+            result["primary"]["scout_message"],
+        )
+        self.assertIn(
+            "Only if material evidence is missing or contradictory",
+            result["primary"]["scout_message"],
+        )
+        self.assertIn(
+            "Render the authoritative action packet", result["primary"]["message"]
+        )
+
+    def test_host_dispatch_adds_scout_only_after_retry_for_auditor(self):
+        state = {
+            "risk_profile": "medium",
+            "next_action": {
+                "role": "auditor",
+                "command": "audit",
+                "scope": "phase",
+                "mode": "initial",
+                "phase": "01",
+            },
+        }
+        first = self.host.dispatch_envelope(
+            Path("/repo"), PLUGIN, self.policy, "sample", state, attempt=0
+        )
+        retry = self.host.dispatch_envelope(
+            Path("/repo"), PLUGIN, self.policy, "sample", state, attempt=1
+        )
+        self.assertIsNone(first["scout"])
+        self.assertEqual(retry["scout"]["model_alias"], "balanced")
 
     def test_host_dispatch_message_recovers_packet_in_child(self):
         state = {

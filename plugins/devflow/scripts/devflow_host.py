@@ -311,6 +311,7 @@ def _host_message(
     spec: dict[str, Any],
     *,
     scout_max_chars: int | None = None,
+    scout_backed: bool = False,
 ) -> str:
     role = str(spec["role"])
     read_only = role in {"scout", "diagnostician"}
@@ -339,30 +340,48 @@ def _host_message(
             "3. Read current lifecycle state with "
             f"`{_status_command(plugin_root, domain)}`."
         ),
-        (
+    ]
+    if scout_backed and role in autopilot.ContextAssembler.COMPACT_PACKET_ROLES:
+        lines.extend(
+            [
+                (
+                    "4. Use the `## Repository scout` capsule appended by the parent "
+                    "as a navigation/evidence index. Do not repeat repository-wide discovery."
+                ),
+                (
+                    "5. Verify the scout's cited files, symbols, tests, and constraints "
+                    "directly. Only if material evidence is missing or contradictory, "
+                    "render the authoritative action packet with "
+                    f"`{_render_command(plugin_root, domain, action)}`."
+                ),
+            ]
+        )
+        action_step = 6
+    else:
+        lines.append(
             "4. Render the authoritative action packet with "
             f"`{_render_command(plugin_root, domain, action)}`."
-        ),
-    ]
+        )
+        action_step = 5
     if read_only:
         lines.extend(
             [
                 (
-                    "5. Perform the routed read-only analysis. Do not mutate source, "
-                    "lifecycle files, or runtime state."
+                    f"{action_step}. Perform the routed read-only analysis. Do not mutate "
+                    "source, lifecycle files, or runtime state."
                 ),
-                "6. Return the requested evidence or diagnosis to the parent agent.",
+                f"{action_step + 1}. Return the requested evidence or diagnosis to the parent agent.",
             ]
         )
     else:
         lines.extend(
             [
                 (
-                    "5. Follow the role contract and rendered packet. Apply every "
-                    "required lifecycle mutation before returning."
+                    f"{action_step}. Follow the role contract and available authoritative "
+                    "evidence. Apply every required lifecycle mutation before returning."
                 ),
                 (
-                    "6. Re-read lifecycle state with "
+                    f"{action_step + 1}. Re-read lifecycle state with "
                     f"`{_status_command(plugin_root, domain)}` and return a "
                     "concise receipt."
                 ),
@@ -389,7 +408,7 @@ def _spawn_payload(
 ) -> dict[str, Any]:
     model = spec.get("model") or {}
     execution = spec.get("execution") or {}
-    return {
+    payload = {
         "task_name": _task_name(domain, spec),
         "role": spec.get("role"),
         "model": model.get("selected"),
@@ -412,6 +431,20 @@ def _spawn_payload(
         ),
         "route": spec,
     }
+    if (
+        message is None
+        and spec.get("role") in autopilot.ContextAssembler.COMPACT_PACKET_ROLES
+    ):
+        payload["scout_message"] = _host_message(
+            root,
+            plugin_root,
+            domain,
+            action,
+            spec,
+            scout_max_chars=scout_max_chars,
+            scout_backed=True,
+        )
+    return payload
 
 
 def dispatch_envelope(
@@ -440,12 +473,15 @@ def dispatch_envelope(
         }
 
     primary_spec = _host_route(policy, action, state, attempt)
-    scout_max_chars = int(
-        (policy.get("orchestration") or {}).get("scout_max_chars", 12000)
-    )
+    orchestration = policy.get("orchestration") or {}
+    scout_max_chars = int(orchestration.get("scout_max_chars", 12000))
     scout_payload = None
-    if primary_spec.get("role") in set(
-        (policy.get("orchestration") or {}).get("scout_before", [])
+    if autopilot.should_run_scout(
+        primary_spec,
+        attempt,
+        scout_before=set(orchestration.get("scout_before", [])),
+        scout_on_retry=set(orchestration.get("scout_on_retry", [])),
+        scout_on_critical=set(orchestration.get("scout_on_critical", [])),
     ):
         scout_action = copy.deepcopy(action)
         scout_action["_role_override"] = "scout"

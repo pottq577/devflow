@@ -45,7 +45,7 @@ Standalone compatibility keeps `autopilot bootstrap` available. Do not use it fr
 
 ## Run the autonomous lifecycle
 
-Keep `attempt`, `fingerprint`, `scout_digest`, and `diagnosis` in supervisor state for the current `/goal` invocation. Start with `attempt=0` and no cached scout or diagnosis.
+Keep `attempt`, `fingerprint`, `scout_digest`, `scout_alias`, and `diagnosis` in supervisor state for the current `/goal` invocation. Start with `attempt=0` and no cached scout or diagnosis.
 
 Prepare one deterministic dispatch at a time:
 
@@ -86,11 +86,11 @@ Use `--candidate-alias` when retrying a payload candidate after a spawn capabili
 
 For `dispatch_required`:
 
-1. Compare the returned `fingerprint` with the previous fingerprint. Clear cached scout and diagnosis when it changes.
-2. If `scout` is present and no scout result is cached for this fingerprint, record telemetry, spawn it first, wait for its final answer, finish telemetry, and cache that answer as `scout_digest`.
-3. Build the primary message from `primary.message`. Append the cached scout under `## Repository scout` when present. Append the cached diagnosis under `## Prior independent diagnosis` when present.
+1. Compare the returned `fingerprint` with the previous fingerprint. Clear cached scout, scout alias, and diagnosis when it changes.
+2. If `scout` is present and no scout result is cached for this fingerprint, record telemetry, spawn it first, wait for its final answer, finish telemetry, and cache the answer as `scout_digest` plus `scout.model_alias` as `scout_alias`.
+3. Build the primary message for the candidate being spawned. When a cached scout exists, `primary.scout_message` is present, and the candidate alias differs from `scout_alias`, start from `primary.scout_message` and append the cached scout under `## Repository scout`. Otherwise start from `primary.message` and do not append the same-model scout. Append the cached diagnosis under `## Prior independent diagnosis` when present.
 4. Record telemetry, spawn `primary` with its routed model, reasoning effort, task name, and `fork_turns`, wait for the agent to finish, then finish telemetry. Do not implement the routed action in the parent session.
-5. Run `host.py dispatch` again with the same attempt. If the fingerprint changed, reset `attempt=0`, clear cached scout and diagnosis, and continue.
+5. Run `host.py dispatch` again with the same attempt. If the fingerprint changed, reset `attempt=0`, clear cached scout, scout alias, and diagnosis, and continue.
 6. If the fingerprint did not change, increment `attempt` by one. When the completed primary role was `diagnostician`, cache its final answer as `diagnosis` before the next worker dispatch.
 7. Stop with a blocker when the unchanged action exceeds `retry.max_no_progress`.
 

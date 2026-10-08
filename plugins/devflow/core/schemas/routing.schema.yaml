@@ -24,7 +24,8 @@ notes:
   - Timeout retries are separate from semantic no-progress retries: timeout_diagnose_at schedules diagnosis without incrementing the no-progress attempt, and max_consecutive_timeouts blocks repeated timeouts for one action.
   - Budget total_tokens is a measured-usage pre-dispatch guard; percentage buckets may borrow only from reserve.
   - dispatch_reserve_tokens and scout_reserve_tokens must fit before a new dispatch starts; one in-flight backend run may report usage above its reservation.
-  - orchestration.scout_before names Sol decision roles that receive one persisted Terra pre-analysis capsule per action when budget permits.
-  - A successful scout capsule replaces the full rendered runtime packet for Sol decision dispatches; the specialist can re-render on demand when evidence is missing or ambiguous.
+  - orchestration.scout_before names roles that always receive one persisted pre-analysis capsule per action when budget permits.
+  - orchestration.scout_on_critical adds scouts only when the routed specialist effective risk is critical; orchestration.scout_on_retry adds scouts only after attempt zero.
+  - A successful scout capsule replaces the full rendered runtime packet for compact specialist roles; the specialist re-renders only when material evidence is missing or contradictory.
   - orchestration.scout_max_chars bounds the persisted/passed pre-analysis capsule; failed or same-model scouts fall back to the full runtime packet.
   - concurrency.mutating is enforced with cross-process domain leases.
