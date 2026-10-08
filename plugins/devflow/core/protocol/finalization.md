@@ -22,6 +22,13 @@ Each ordinary `run` still handles exactly one WORK.
 Finalization aggregates the whole domain and may create a bounded integration remediation WORK, then returns to the ordinary WORK executor.
 It never bypasses an independent review or approves a merge.
 
+An `audit-remediation` workflow with no completed WORK, recorded source changes,
+delivered branch or previous finalization evidence completes after its verified
+integration audit. Do not fabricate Postman/Newman results or an ELI5 explanation
+for a no-change audit. Any completed remediation WORK or existing delivery evidence
+continues through the ordinary whole-work finalization gate. The same condition
+applies to the computed next action and to final validation.
+
 The output set is:
 
 - One cumulative PR and Postman collection for every delivered branch (existing policy).

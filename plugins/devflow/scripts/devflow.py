@@ -2173,6 +2173,46 @@ def base_next_action(
     return human_decision("project", reason="lifecycle is incomplete")
 
 
+def requires_delivery_finalization(
+    state: dict[str, Any], docs: dict[Path, dict[str, Any]]
+) -> bool:
+    """Do not require delivery evidence for a no-change audit-remediation.
+
+    Completed WORK, delivered branches, source evidence or prior finalization
+    evidence must continue to receive the normal whole-work finalization gate.
+    """
+    if effective_workflow_type(state) != "audit_remediation":
+        return True
+    policy = state.get("delivery")
+    if not isinstance(policy, dict):
+        return True
+    branches = policy.get("branches")
+    if (
+        not isinstance(branches, dict)
+        or branches
+        or policy.get("grandfathered_work_ids")
+    ):
+        return True
+    for doc in docs.values():
+        for item in doc.get("items", []) or []:
+            if not isinstance(item, dict) or item.get("status") == "done":
+                return True
+            evidence = item.get("evidence")
+            if isinstance(evidence, dict) and (
+                evidence.get("commit") or evidence.get("changed_files")
+            ):
+                return True
+    final = policy.get("finalization")
+    if not isinstance(final, dict):
+        return True
+    return bool(
+        final.get("runs")
+        or final.get("diagnoses")
+        or final.get("explanation") is not None
+        or final.get("receipt") is not None
+    )
+
+
 def compute_next_action(
     root: Path,
     domain: str,
@@ -2188,6 +2228,8 @@ def compute_next_action(
         raise ValueError("; ".join(problems))
     d = domain_dir(root, domain)
     docs, index, _ = load_work_index(d, work_overrides)
+    if not requires_delivery_finalization(state, docs):
+        return action
     # Only authoritative decision/plan/integration gates outrank registered repair
     # WORK. A human projection caused by one blocked repair must not hide an
     # independent runnable repair or review in the same integration scope.
@@ -4399,7 +4441,10 @@ def collect_validation(
     )
 
     errors.extend(finalization.structural_errors(state))
-    if integration_state.get("status") == "verified":
+    if (
+        integration_state.get("status") == "verified"
+        and requires_delivery_finalization(state, docs)
+    ):
         errors.extend(
             finalization.final_errors(
                 root, domain, state, docs, d, require_receipt=True

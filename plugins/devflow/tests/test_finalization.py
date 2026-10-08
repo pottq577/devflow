@@ -236,6 +236,74 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.assertEqual(self.read_state()["delivery"]["grandfathered_work_ids"], [])
         self.assertIn("finalization", self.read_state()["delivery"])
 
+    def test_audit_only_integration_completes_without_dummy_finalization(self):
+        domain = "audit-only"
+        result = self.cli("init", domain, "--workflow", "audit-remediation")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        d = self.root / "docs/domains" / domain
+        fixtures.fill_audit_remediation_contract(d)
+        initial = fixtures.yaml.safe_load((d / "STATE.yaml").read_text())
+        self.assertEqual(initial["workflow_type"], "audit_remediation")
+        self.assertIn("finalization", initial["delivery"])
+        self.assertEqual(initial["next_action"]["command"], "audit")
+        fixtures.write_audit(d / "audits/integration.md", fixtures.audit_metadata(d))
+        applied = self.cli(
+            "audit", "apply", domain, "--scope", "integration", "--mode", "initial"
+        )
+        self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+        reported = self.cli("status", domain, "--json")
+        self.assertEqual(reported.returncode, 0, reported.stderr)
+        completed = json.loads(reported.stdout)
+        self.assertEqual(completed["integration"]["status"], "verified")
+        self.assertEqual(completed["project_status"], "complete")
+        self.assertEqual(completed["next_action"]["command"], "complete")
+        self.assertEqual(completed["delivery"]["finalization"]["runs"], [])
+        self.assertEqual(
+            completed["delivery"]["finalization"], initial["delivery"]["finalization"]
+        )
+        validated = self.cli("validate", domain)
+        self.assertEqual(validated.returncode, 0, validated.stdout + validated.stderr)
+
+    def test_audit_remediation_with_delivered_work_still_requires_finalization(self):
+        self.completed()
+        state = self.read_state()
+        state["workflow_type"] = "audit_remediation"
+        state["phases"] = {}
+        state["integration"]["status"] = "verified"
+        fixtures.dump(self.state_path, state)
+        reported = self.cli("status", "sample", "--json")
+        self.assertEqual(reported.returncode, 0, reported.stderr)
+        self.assertEqual(
+            json.loads(reported.stdout)["next_action"]["command"], "finalize"
+        )
+
+    def test_audit_remediation_finalization_guard_preserves_evidence(self):
+        state = self.read_state()
+        required = self.runtime.requires_delivery_finalization
+        self.assertTrue(required(state, {}))  # Legacy fixture has no delivery policy.
+        # The delivery test fixture deliberately omits this policy for legacy cases.
+        # Model a newly initialized domain before checking audit-only behavior.
+        state["delivery"] = self.runtime.delivery.default_policy()
+        state["delivery"]["finalization"] = self.runtime.finalization.default_policy()
+        self.assertTrue(required(state, {}))
+        state["workflow_type"] = "audit_remediation"
+        self.assertFalse(required(state, {}))
+        state["delivery"]["branches"]["feature/previous"] = {"work_ids": ["R-01"]}
+        self.assertTrue(required(state, {}))
+        state["delivery"]["branches"].clear()
+        state["delivery"]["finalization"]["runs"] = [{"id": "prior-run"}]
+        self.assertTrue(required(state, {}))
+        state["delivery"]["finalization"]["runs"] = []
+        state["delivery"]["finalization"]["receipt"] = {}
+        self.assertTrue(required(state, {}))
+        state["delivery"]["finalization"]["receipt"] = None
+        done = {self.work_path: {"items": [{"status": "done"}]}}
+        self.assertTrue(required(state, done))
+        source = {self.work_path: {"items": [
+            {"status": "cancelled", "evidence": {"commit": self.base}}
+        ]}}
+        self.assertTrue(required(state, source))
+
     def test_context_covers_all_work_and_branches_not_head_only(self):
         self.completed()
         doc = self.read_work()

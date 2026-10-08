@@ -384,6 +384,10 @@ Read `core/protocol/finalization.md` for the normative procedure.
 Existing completed WORK remains intact after `delivery enable`; the new field is additive.
 Plan/run preflights adopt the stage.
 
+An audit-remediation that only verifies an existing implementation, without completed WORK
+or delivery evidence, can finish directly after its integration audit; recorded delivery
+or remediation remains subject to the normal Newman/ELI5 and receipt gates.
+
 The Executor brings cumulative PR bodies and Postman collections current, then executes installed Newman against the isolated verified server for every delivered branch.
 For failures, retain diagnostics and triage/repair through ordinary WORK, refresh branch artifacts, and rerun affected tests until the required branch evidence is current.
 Only after passing or proven non-HTTP Newman evidence and completed remediation does the Executor invoke installed `$eli5` once to generate the whole-domain HTML with final WORK, branch, repair and test outcomes.
