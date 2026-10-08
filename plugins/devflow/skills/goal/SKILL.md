@@ -62,17 +62,41 @@ Handle the returned status as follows:
 - `paused`: report the human decision immediately
 - `dispatch_required`: run the returned sub-agent work
 
+## Record hosted dispatch telemetry
+
+Record each scout and primary spawn attempt around the host wait. Telemetry measures orchestration cost without changing lifecycle authority.
+
+Before a spawn attempt, run:
+
+```bash
+python3 <this-skill-directory>/scripts/host.py telemetry-start <domain> \
+  --kind <scout|primary> --attempt <attempt> \
+  --until <plan|implementation|complete> [--candidate-alias <alias>]
+```
+
+Keep the returned `dispatch_id`. After the wait finishes, run:
+
+```bash
+python3 <this-skill-directory>/scripts/host.py telemetry-finish <domain> \
+  --dispatch-id <dispatch_id> \
+  --outcome <completed|failed|cancelled|capability_blocked>
+```
+
+Use `--candidate-alias` when retrying a payload candidate after a spawn capability failure. If either command returns `telemetry_unavailable`, continue the lifecycle. Telemetry must never block or change a routed action.
+
 For `dispatch_required`:
 
 1. Compare the returned `fingerprint` with the previous fingerprint. Clear cached scout and diagnosis when it changes.
-2. If `scout` is present and no scout result is cached for this fingerprint, spawn it first. Wait for its final answer and cache that answer as `scout_digest`.
+2. If `scout` is present and no scout result is cached for this fingerprint, record telemetry, spawn it first, wait for its final answer, finish telemetry, and cache that answer as `scout_digest`.
 3. Build the primary message from `primary.message`. Append the cached scout under `## Repository scout` when present. Append the cached diagnosis under `## Prior independent diagnosis` when present.
-4. Spawn `primary` with its routed model, reasoning effort, task name, and `fork_turns`. Wait for the agent to finish. Do not implement the routed action in the parent session.
+4. Record telemetry, spawn `primary` with its routed model, reasoning effort, task name, and `fork_turns`, wait for the agent to finish, then finish telemetry. Do not implement the routed action in the parent session.
 5. Run `host.py dispatch` again with the same attempt. If the fingerprint changed, reset `attempt=0`, clear cached scout and diagnosis, and continue.
 6. If the fingerprint did not change, increment `attempt` by one. When the completed primary role was `diagnostician`, cache its final answer as `diagnosis` before the next worker dispatch.
 7. Stop with a blocker when the unchanged action exceeds `retry.max_no_progress`.
 
 When a routed model cannot spawn, retry only the ordered entries in that payload's `candidates`. Keep the same reasoning effort. Do not cross into a model outside the routed profile.
+
+Finish the failed spawn's telemetry with `capability_blocked` before trying the next routed candidate. Start a new telemetry record with that candidate's alias.
 
 The host wait mechanism owns child runtime and cancellation. Do not add a second DevFlow hard timeout around native sub-agents and do not busy-poll them.
 

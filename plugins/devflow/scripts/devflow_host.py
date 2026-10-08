@@ -4,11 +4,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import re
 import shlex
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +23,9 @@ import devflow
 import devflow_autopilot as autopilot
 
 HOST_BACKEND = "host_native_agent"
+TELEMETRY_FILENAME = "host-dispatch.jsonl"
+TELEMETRY_INFLIGHT_DIR = "host-dispatch-inflight"
+TELEMETRY_COMMANDS = {"telemetry-start", "telemetry-finish"}
 
 
 def _host_capabilities(policy: dict[str, Any]) -> autopilot.CapabilityRegistry:
@@ -146,6 +152,155 @@ def _task_name(domain: str, spec: dict[str, Any]) -> str:
     ).lower()
     value = re.sub(r"[^a-z0-9_]+", "_", raw).strip("_")
     return value[:64] or "devflow_task"
+
+
+def _telemetry_dir(root: Path, domain: str) -> Path:
+    return root / ".devflow" / "runtime" / domain
+
+
+def _telemetry_path(root: Path, domain: str) -> Path:
+    return _telemetry_dir(root, domain) / TELEMETRY_FILENAME
+
+
+def _telemetry_inflight_path(root: Path, domain: str, dispatch_id: str) -> Path:
+    if not re.fullmatch(r"[0-9a-f]{24}", dispatch_id):
+        raise ValueError("Telemetry dispatch id must be 24 lowercase hex characters")
+    return _telemetry_dir(root, domain) / TELEMETRY_INFLIGHT_DIR / f"{dispatch_id}.json"
+
+
+def _utc_timestamp(epoch_seconds: float) -> str:
+    return (
+        datetime.fromtimestamp(epoch_seconds, timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _append_telemetry(root: Path, domain: str, record: dict[str, Any]) -> None:
+    path = _telemetry_path(root, domain)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+        handle.write("\n")
+
+
+def _telemetry_candidate(
+    payload: dict[str, Any], candidate_alias: str | None
+) -> dict[str, Any]:
+    selected = {
+        "alias": payload.get("model_alias"),
+        "model": payload.get("model"),
+        "reasoning_effort": payload.get("reasoning_effort"),
+    }
+    if not candidate_alias or candidate_alias == selected["alias"]:
+        return selected
+    for candidate in payload.get("candidates") or []:
+        if candidate.get("alias") == candidate_alias:
+            return {
+                "alias": candidate.get("alias"),
+                "model": candidate.get("model"),
+                "reasoning_effort": candidate.get("reasoning_effort"),
+            }
+    raise ValueError(
+        f"Telemetry candidate alias is not routed for this dispatch: {candidate_alias}"
+    )
+
+
+def telemetry_start(
+    root: Path,
+    plugin_root: Path,
+    policy: dict[str, Any],
+    domain: str,
+    *,
+    kind: str,
+    attempt: int,
+    until: str,
+    candidate_alias: str | None = None,
+) -> dict[str, Any]:
+    state = _load_state(root, domain)
+    envelope = dispatch_envelope(
+        root,
+        plugin_root,
+        policy,
+        domain,
+        state,
+        attempt=attempt,
+        until=until,
+    )
+    if envelope.get("status") != "dispatch_required":
+        raise ValueError(
+            "Telemetry can start only while the lifecycle requires a hosted dispatch"
+        )
+    payload = envelope.get(kind)
+    if not payload:
+        raise ValueError(f"No {kind} dispatch is routed for the current lifecycle action")
+
+    candidate = _telemetry_candidate(payload, candidate_alias)
+    started_epoch = time.time()
+    dispatch_id = hashlib.sha256(
+        (
+            f"{envelope['fingerprint']}|{attempt}|{kind}|"
+            f"{candidate.get('alias')}|{time.time_ns()}"
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    record = {
+        "schema_version": 1,
+        "dispatch_id": dispatch_id,
+        "fingerprint": envelope["fingerprint"],
+        "dispatch_kind": kind,
+        "attempt": int(attempt),
+        "task_name": payload.get("task_name"),
+        "role": payload.get("role"),
+        "model_alias": candidate.get("alias"),
+        "model": candidate.get("model"),
+        "reasoning_effort": candidate.get("reasoning_effort"),
+        "action": envelope.get("action") or {},
+        "started_at": _utc_timestamp(started_epoch),
+    }
+    inflight = dict(record)
+    inflight["started_epoch"] = started_epoch
+    inflight_path = _telemetry_inflight_path(root, domain, dispatch_id)
+    inflight_path.parent.mkdir(parents=True, exist_ok=True)
+    inflight_path.write_text(
+        json.dumps(inflight, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    _append_telemetry(root, domain, {"event": "start", **record})
+    return {
+        "status": "started",
+        "dispatch_id": dispatch_id,
+        "telemetry_path": str(_telemetry_path(root, domain)),
+    }
+
+
+def telemetry_finish(
+    root: Path,
+    domain: str,
+    *,
+    dispatch_id: str,
+    outcome: str,
+) -> dict[str, Any]:
+    inflight_path = _telemetry_inflight_path(root, domain, dispatch_id)
+    if not inflight_path.is_file():
+        raise ValueError(f"Telemetry dispatch is not inflight: {dispatch_id}")
+    inflight = json.loads(inflight_path.read_text(encoding="utf-8"))
+    started_epoch = float(inflight.pop("started_epoch"))
+    finished_epoch = time.time()
+    record = {
+        **inflight,
+        "event": "finish",
+        "outcome": outcome,
+        "finished_at": _utc_timestamp(finished_epoch),
+        "duration_seconds": round(max(0.0, finished_epoch - started_epoch), 3),
+    }
+    _append_telemetry(root, domain, record)
+    inflight_path.unlink()
+    return {
+        "status": "recorded",
+        "dispatch_id": dispatch_id,
+        "duration_seconds": record["duration_seconds"],
+        "telemetry_path": str(_telemetry_path(root, domain)),
+    }
 
 
 def _host_message(
@@ -447,6 +602,26 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument(
         "--risk", choices=sorted(devflow.RISK_LEVELS), default="medium"
     )
+
+    telemetry_start_parser = sub.add_parser("telemetry-start")
+    telemetry_start_parser.add_argument("domain")
+    telemetry_start_parser.add_argument(
+        "--kind", choices=["scout", "primary"], required=True
+    )
+    telemetry_start_parser.add_argument("--attempt", type=int, default=0)
+    telemetry_start_parser.add_argument(
+        "--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete"
+    )
+    telemetry_start_parser.add_argument("--candidate-alias")
+
+    telemetry_finish_parser = sub.add_parser("telemetry-finish")
+    telemetry_finish_parser.add_argument("domain")
+    telemetry_finish_parser.add_argument("--dispatch-id", required=True)
+    telemetry_finish_parser.add_argument(
+        "--outcome",
+        choices=["completed", "failed", "cancelled", "capability_blocked"],
+        required=True,
+    )
     return parser
 
 
@@ -488,6 +663,24 @@ def main() -> int:
             )
         elif args.command == "bootstrap-finalize":
             result = bootstrap_finalize(root, args.domain, args.risk)
+        elif args.command == "telemetry-start":
+            result = telemetry_start(
+                root,
+                plugin_root,
+                policy,
+                args.domain,
+                kind=args.kind,
+                attempt=args.attempt,
+                until=args.until,
+                candidate_alias=args.candidate_alias,
+            )
+        elif args.command == "telemetry-finish":
+            result = telemetry_finish(
+                root,
+                args.domain,
+                dispatch_id=args.dispatch_id,
+                outcome=args.outcome,
+            )
         else:
             raise AssertionError(f"Unhandled host command: {args.command}")
 
@@ -496,6 +689,15 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
+        if "args" in locals() and getattr(args, "command", None) in TELEMETRY_COMMANDS:
+            print(
+                json.dumps(
+                    {"status": "telemetry_unavailable", "error": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         print(f"DevFlow host error: {exc}", file=sys.stderr)
         return 2
 

@@ -168,6 +168,74 @@ class HostAutopilotCliTests(unittest.TestCase):
             "host_native_agent",
         )
 
+    def test_host_dispatch_telemetry_records_completed_primary(self):
+        root = self.new_repo()
+        initialized = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+
+        started = self.run_host(
+            root,
+            "telemetry-start",
+            "sample",
+            "--kind",
+            "primary",
+            "--attempt",
+            "0",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        start_result = json.loads(started.stdout)
+        self.assertEqual(start_result["status"], "started")
+        dispatch_id = start_result["dispatch_id"]
+        self.assertRegex(dispatch_id, r"^[0-9a-f]{24}$")
+
+        finished = self.run_host(
+            root,
+            "telemetry-finish",
+            "sample",
+            "--dispatch-id",
+            dispatch_id,
+            "--outcome",
+            "completed",
+        )
+        self.assertEqual(finished.returncode, 0, finished.stderr)
+        finish_result = json.loads(finished.stdout)
+        self.assertEqual(finish_result["status"], "recorded")
+        self.assertGreaterEqual(finish_result["duration_seconds"], 0)
+
+        telemetry_path = root / ".devflow/runtime/sample/host-dispatch.jsonl"
+        records = [
+            json.loads(line)
+            for line in telemetry_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual([row["event"] for row in records], ["start", "finish"])
+        self.assertEqual(records[0]["dispatch_id"], dispatch_id)
+        self.assertEqual(records[1]["dispatch_id"], dispatch_id)
+        self.assertEqual(records[1]["outcome"], "completed")
+        self.assertGreaterEqual(records[1]["duration_seconds"], 0)
+        self.assertTrue(records[0]["model_alias"])
+        self.assertTrue(records[0]["model"])
+        self.assertTrue(records[0]["reasoning_effort"])
+
+    def test_telemetry_failure_does_not_block_lifecycle(self):
+        root = self.new_repo()
+        result = self.run_host(
+            root,
+            "telemetry-finish",
+            "sample",
+            "--dispatch-id",
+            "0" * 24,
+            "--outcome",
+            "failed",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "telemetry_unavailable")
+
     def test_bootstrap_is_host_dispatched_then_finalized_locally(self):
         root = self.new_repo()
         requirements = root / "requirements.md"
@@ -244,6 +312,8 @@ None.
         self.assertIn('fork_turns="none"', text)
         self.assertIn("Do not launch a nested `codex exec`", text)
         self.assertIn("autopilot bootstrap", text)
+        self.assertIn("telemetry-start", text)
+        self.assertIn("telemetry-finish", text)
 
 
 if __name__ == "__main__":
