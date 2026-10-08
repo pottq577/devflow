@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0 - 2026-10-08 - Routed execution efficiency
+
+- Record fail-open hosted `/goal` scout and primary dispatch telemetry under `.devflow/runtime/<domain>/host-dispatch.jsonl`, including model, role, attempt, action fingerprint, outcome and elapsed time. Telemetry remains operational evidence, not lifecycle authority.
+- Route `frontier` to GPT-6.1 Sol, retain GPT-6 Luna as `fast` and GPT-5.6 Terra as `balanced`. Allow normal `frontier` to fall back to Terra when Sol cannot spawn; retain Sol-only fail-closed `hardest` for critical authority.
+- Select the explicit action or WORK risk for executor and WORK verifier routing, falling back to domain risk when none is present. Keep the domain risk floor for planning, phase/integration audit, diagnosis and finalization.
+- Make Terra scouting adaptive: run by default for integration audits and diagnosis, on critical architect/WORK verification, and on selected specialist retries. Hosted primary dispatches reuse a successful scout capsule without repeating full packet exploration; missing evidence can still trigger authoritative packet recovery.
+- Omit the whole-work finalization protocol from ordinary plan, run and non-integration audit packets. Include it for finalization, enabled integration audits and traced Newman repair WORK.
+- Execute Newman and its diagnosis/repair/rerun loop before invoking installed ELI5. Refuse premature `delivery explain` until branch test evidence and traced repairs are current. Preserve stale-explanation invalidation after later changes.
+- Synchronize the Claude marketplace, Claude/Codex plugin manifests, current documentation and release regression assertions to `0.10.0`. Retain protocol `1.8.0` with no STATE/WORK schema, status, enum or lifecycle-transition migration.
+
 ## 0.9.4 - 2026-10-07 - Contract/runtime alignment and structure
 
 - Correct `core/protocol/risk-policy.md`, which denied a plan closure audit that `lifecycle.md`, `audit.schema.yaml`, and the runtime all implement. Protocol version stays `1.8.0`; this aligns a stale rule rather than changing behavior.

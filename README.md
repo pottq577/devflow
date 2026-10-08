@@ -1,7 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.9.4 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.10.0 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -35,6 +35,12 @@ Existing domains keep their PLAN/WORK documents. Run `devflow delivery enable <d
 adopt the new completion requirements; completed WORK is preserved. New domains enable it by
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
+
+## Version 0.10.0 routing and finalization efficiency
+
+Version 0.10.0 retains artifact protocol `1.8.0`. Hosted `/goal` records fail-open dispatch telemetry, uses GPT-6.1 Sol for frontier decisions and GPT-6 Luna for routine execution, and limits read-only Terra scouting to integration audits, diagnosis, critical analysis and selected retries. WORK routing now follows explicit item risk rather than always inheriting a higher domain risk.
+
+Rendered packets include finalization instructions only for relevant actions. Newman verification, diagnosis and any committed repairs now precede the final installed-ELI5 explanation, avoiding a mandatory early draft and regeneration cycle.
 
 ## Version 0.9.4 contract and runtime alignment
 

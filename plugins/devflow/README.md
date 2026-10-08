@@ -91,6 +91,7 @@ Skills invoke `scripts/devflow.py` through each skill's `scripts/invoke.py`, whi
 
 `render` emits a complete prompt: the role packet, the runtime context, the relevant protocol documents inline, the resolved domain extension for audits, and the domain's `PITFALLS.md`.
 There is nothing further to open by hand.
+Protocol selection is action-aware: ordinary plan/run and plan/work/phase audit packets omit `finalization.md`; finalization, enabled integration audits and traced Newman repair WORK include it.
 
 Its context is deliberately bounded.
 Plan render includes the full approved PRD.
@@ -99,9 +100,9 @@ Work and phase audit render include scope-linked WORK and origin context.
 Integration render supplies the current PLAN, phase manifest, audit paths, and integration WORK without inlining every phase WORK body.
 This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
 
-## Autonomous `/goal` routing (0.9.3 / protocol 1.8.0)
+## Autonomous `/goal` routing (0.10.0 / protocol 1.8.0)
 
-Routing policy is unchanged in 0.9.4. The release adds the `multi_agent` enforcement its schema always required and documents `profile_order` and `delegation.recursive`, which the controller already read.
+Version 0.10.0 routes `fast` to `gpt-6-luna`, `balanced` to `gpt-5.6-terra`, and `frontier` to `gpt-6.1-sol`. Stable aliases live in `core/routing/default.yaml`; concrete model identifiers and supported efforts live in `core/routing/models.yaml`.
 
 DevFlow has two lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Both consume the same `STATE -> compute_next_action()` result and stop at completion, a human or blocker gate, or an explicit execution boundary.
 
@@ -124,13 +125,14 @@ Use `--until plan` to finish planning, including required plan review and remedi
 
 A reached boundary writes controller status `checkpoint` and exits successfully before route, render, scout, or specialist dispatch for the next stage. Start the next stage with a fresh `autopilot start` so it gets a new run budget and operational state. Use `autopilot resume` for interrupted or blocked runs that must retain their operational telemetry.
 
-All executor WORK stays on Luna by default: documentation, tests, implementation and evidence use `fast/high`; remediation, migration and high-risk WORK use `fast/xhigh`, while critical WORK uses `fast/max`. Routine semantic no-progress follows `fast/high -> fast/xhigh -> fast/max -> frontier/xhigh diagnosis -> fast/max -> balanced/xhigh`, then blocks. Timeout handling is independent: the first timeout schedules a read-only Sol diagnosis without increasing the semantic retry attempt, and a second timeout for the same action blocks with `consecutive_dispatch_timeouts`. Critical mutation stays fail-closed: if Luna cannot execute `max`, DevFlow blocks instead of transferring critical executor authority to Terra or Sol. Existing project overrides that still supply pre-0.9.1 retry keys keep those semantics; policy loading replaces the bundled staged defaults with the legacy retry defaults plus the project override.
+Executor WORK defaults to Luna: implementation, documentation, test and evidence work use `fast/high`; remediation and migration use `fast/xhigh`. Explicit per-WORK high/critical risk raises execution to `xhigh`/`max`, even for a lower-risk domain, while an explicitly low-risk WORK in a critical domain does not inherit the domain-wide maximum. Without item/action risk, execution falls back to domain risk. Retry stages retain `fast/high -> fast/xhigh -> fast/max -> frontier/xhigh diagnosis -> fast/max -> balanced/xhigh`. Timeouts have a separate independent diagnosis path and block on repeated timeout. Critical Luna `max` execution remains fail-closed; project legacy routing overrides remain readable.
 
-Planning, work verification, phase audit and finalization use Sol (`frontier`) at `high`; high/critical specialist reasoning, integration audit and independent diagnosis use `xhigh`. `frontier` and `hardest` are Sol-only so decision authority never silently falls back to Terra. Terra supports `medium/high/xhigh`: `medium` is the normal read/analyze/compress tier, high-risk actions promote pre-analysis to `high`, and `xhigh` is reserved for the final alternative executor path after the Luna ladder is exhausted.
+Planning, WORK verification, phase audit and finalization prefer GPT-6.1 Sol (`frontier`); critical authority and integration audit use Sol-only `hardest`. Standard `frontier` candidates are `[frontier, balanced]`, so Terra can take over a non-hardest specialist when Sol is unavailable at the routed effort. `hardest` remains `[frontier]` and fails closed. Routine low/medium WORK reviews use the WORK risk, while project-level decision roles retain the domain risk floor. Terra supports `medium/high/xhigh` for pre-analysis and compatible fallback.
 
-Before each configured Sol decision role, the controller gives the full rendered packet to the Terra scout and persists a bounded evidence capsule. A successful capsule replaces the full rendered packet in the subsequent Sol dispatch, rather than being appended to it, so the expensive model does not pay again for repository-wide context. The capsule is advisory: Sol must verify cited evidence and can run DevFlow status/re-render through the concrete runtime CLI if anything material is missing or contradictory. If Terra pre-analysis fails, produces no digest, or resolves to the same Sol model after capability fallback, the controller skips compression and sends Sol the full authoritative packet instead. Capsules are bounded by `orchestration.scout_max_chars` (12,000 by default).
+Terra scout dispatch is conditional. `orchestration.scout_before` covers integration auditing and diagnosis; `scout_on_critical` adds architect and WORK verifier when effective risk is critical; `scout_on_retry` adds WORK verifier, phase/plan auditor and finalizer after the initial attempt. A scout is skipped if its model matches the specialist or cannot execute. The capped capsule (`scout_max_chars`, default 12,000) is an evidence index, not lifecycle authority. Standalone Autopilot omits the full packet on successful capsule reuse; hosted `/goal` uses `primary.scout_message` only after an actual successful scout on a different model and otherwise uses `primary.message`. Specialists check cited evidence and render the authoritative packet if evidence is missing or inconsistent.
 
 The controller is foreground, bounded, resumable, and observable. It enforces a persisted measured-token dispatch budget with a pre-dispatch reservation (`25,000` specialist / `8,000` scout by default) and holds a cross-process per-domain mutating lease. Retry counts, timeout counts, pending timeout diagnoses, diagnoses, pre-analysis capsules, unavailable candidates, budget usage, and dispatch receipts survive `resume` under `.devflow/runtime/<domain>/`; they are telemetry rather than lifecycle authority. A fresh `start` discards prior-run transient capability and retry telemetry. Unavailable-candidate checkpoints record both alias and concrete model ID, so a remapped alias does not inherit a stale failure from its previous concrete model. Recursive delegation remains policy-controlled and disabled by default. Use `--token-budget TOKENS` on `autopilot start` or `resume` to override the run budget.
+Hosted dispatch telemetry records scout/primary start and finish events, routed model alias, effort, action, attempt, outcome and elapsed time in `.devflow/runtime/<domain>/host-dispatch.jsonl`. Logging failures are fail-open and do not change lifecycle routing or authority. These events do not establish billed token cost.
 
 Codex CLI compatibility comes from each model registry entry. `autopilot capabilities` keeps the concrete-ID compatibility view under `models` and `codex_exec.model_compatibility`. It exposes alias-oriented data under `model_registry` and `codex_exec.alias_compatibility`.
 
@@ -281,9 +283,9 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.9.4` ships protocol version `1.8.0`.
+Plugin version `0.10.0` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
-Plugin `0.9.4` keeps protocol `1.8.0` because it changes no lifecycle status, enum, transition, or artifact requirement. It corrects the recorded contract where it had drifted from the runtime and restructures the runtime internals only.
+Plugin `0.10.0` preserves the same STATE/WORK schemas, enum values, lifecycle transitions and audit gates. Changes are confined to dispatch telemetry, model/risk/scout routing, rendered protocol selection and finalization execution order; no artifact migration is required.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
 It also makes the documented work and plan legacy recovery commands reach an initial audit and lets closed decision findings reference resolved decision records.
@@ -369,15 +371,16 @@ Run these from the marketplace root.
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
-## Whole-work finalization (0.9.1 / protocol 1.8.0)
+## Whole-work finalization (0.10.0 / protocol 1.8.0)
 
 Read `core/protocol/finalization.md` for the normative procedure.
 Existing completed WORK remains intact after `delivery enable`; the new field is additive.
 Plan/run preflights adopt the stage.
 
-The Executor first writes one whole-domain HTML through the actual installed Codex `$eli5` skill, then invokes installed Newman for every branch collection.
-Its final snapshot includes every WORK, branch, repair and executed result.
-After tests and repairs, refresh PR/collection output and invoke ELI5 again with current context.
+The Executor brings cumulative PR bodies and Postman collections current, then executes installed Newman against the isolated verified server for every delivered branch.
+For failures, retain diagnostics and triage/repair through ordinary WORK, refresh branch artifacts, and rerun affected tests until the required branch evidence is current.
+Only after passing or proven non-HTTP Newman evidence and completed remediation does the Executor invoke installed `$eli5` once to generate the whole-domain HTML with final WORK, branch, repair and test outcomes.
+`delivery explain` refuses to record an explanation before this test/repair gate; later source, collection or Newman changes invalidate the previous explanation and require a fresh final explanation.
 `delivery finalize` validates this handoff and retains independent integration audits.
 All changes remain local until separately authorized publication/push/merge.
 

@@ -1,6 +1,6 @@
 {
   "name": "devflow",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "description": "State-based agent development protocol for repository-grounded planning, one-item execution, independent audits, and deterministic handoffs.",
   "author": {
     "name": "DevFlow Team"
@@ -22,7 +22,7 @@
       "Write"
     ],
     "shortDescription": "Plan, execute, audit, and resume agentic development",
-    "longDescription": "A state-based protocol for approved-PRD delivery and phase-free brownfield audit/remediation. It plans repository-grounded WORK, executes one verified change at a time, and applies machine-readable integration audit outcomes without autonomous orchestration.",
+    "longDescription": "DevFlow supports deterministic manual gates and a foreground /goal supervisor for repository-grounded planning, one-WORK-at-a-time routed execution, independent audits, and verified delivery finalization.",
     "developerName": "DevFlow Team",
     "category": "Productivity",
     "defaultPrompt": [

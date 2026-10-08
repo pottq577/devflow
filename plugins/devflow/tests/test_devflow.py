@@ -7326,8 +7326,14 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
         and entries[0].get("version")
         == manifest.get("version")
         == codex_manifest.get("version")
-        == "0.9.4",
+        == "0.10.0",
         repr(entries) + repr(codex_manifest.get("version")),
+    )
+    check(
+        "plugin release retains protocol 1.8.0 for existing lifecycle artifacts",
+        RUNTIME_PROTOCOL == "1.8.0"
+        and load_runtime_module().PROTOCOL_VERSION == "1.8.0",
+        repr(RUNTIME_PROTOCOL),
     )
 
 
