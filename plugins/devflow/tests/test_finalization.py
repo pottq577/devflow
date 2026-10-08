@@ -11,10 +11,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_delivery import DeliveryTests, fixtures
+from test_delivery import DeliveryFixtureMixin, fixtures
 
 
-class FinalizationTests(DeliveryTests):
+class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
     def cli(self, *args):
         with patch(
             "argparse.ArgumentParser.exit",

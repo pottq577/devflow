@@ -21,7 +21,7 @@ fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)
 
 
-class DeliveryTests(unittest.TestCase):
+class DeliveryFixtureMixin:
     def setUp(self):
         self.root = fixtures.new_repo()
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -204,6 +204,37 @@ class DeliveryTests(unittest.TestCase):
             before, (self.state_path.read_bytes(), self.work_path.read_bytes())
         )
 
+    def finish_phase_audit(self):
+        result = self.cli(
+            "phase",
+            "ref",
+            "sample",
+            "01",
+            "--base",
+            "delivery-base",
+            "--head",
+            "feature/sample",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fixtures.write_audit(
+            self.d / "audits/phase-01.md",
+            fixtures.audit_metadata(self.d, scope="phase"),
+        )
+        result = self.cli(
+            "audit",
+            "apply",
+            "sample",
+            "--scope",
+            "phase",
+            "--phase",
+            "01",
+            "--mode",
+            "initial",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class DeliveryTests(DeliveryFixtureMixin, unittest.TestCase):
     def test_new_domains_enable_delivery_policy(self):
         result = self.cli("init", "new-domain")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -735,35 +766,6 @@ class DeliveryTests(unittest.TestCase):
             text = (plugin / file).read_text()
             self.assertIn("in_progress", text)
             self.assertIn("start_sha", text)
-
-    def finish_phase_audit(self):
-        result = self.cli(
-            "phase",
-            "ref",
-            "sample",
-            "01",
-            "--base",
-            "delivery-base",
-            "--head",
-            "feature/sample",
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        fixtures.write_audit(
-            self.d / "audits/phase-01.md",
-            fixtures.audit_metadata(self.d, scope="phase"),
-        )
-        result = self.cli(
-            "audit",
-            "apply",
-            "sample",
-            "--scope",
-            "phase",
-            "--phase",
-            "01",
-            "--mode",
-            "initial",
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_enabled_delivery_completes_full_audit_lifecycle(self):
         # Preserve this 0.7 compatibility scenario; 0.8 finalization has its own full audit test.

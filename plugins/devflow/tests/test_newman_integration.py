@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_delivery import DeliveryTests
+from test_delivery import DeliveryFixtureMixin
 
 NEWMAN = shutil.which("newman")
 
@@ -21,7 +21,7 @@ NEWMAN = shutil.which("newman")
 @unittest.skipUnless(
     NEWMAN, "Real Newman executable is not installed; fixture tests are separate."
 )
-class RealNewmanTests(DeliveryTests):
+class RealNewmanTests(DeliveryFixtureMixin, unittest.TestCase):
     def setup_collection(self, expected=200, server_mode="normal"):
         self.start_and_commit()
         self.write_artifacts()

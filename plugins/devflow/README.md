@@ -362,12 +362,19 @@ New source changes require ordinary WORK. See `core/protocol/delivery-artifacts.
 
 ### Delivery regression checks
 
+Run the single discovered regression suite from the marketplace root:
+
 ```bash
-python3 plugins/devflow/tests/test_devflow.py
-python3 plugins/devflow/tests/test_delivery.py
+python3 -m unittest discover -s plugins/devflow/tests -p 'test_*.py'
 ```
 
-Run these from the marketplace root.
+This includes the 171 existing `case_*` lifecycle scenarios, delivery, routing, hosted,
+finalization and the optional real-Newman smoke tests exactly once each. The real-Newman
+tests are explicitly skipped if `newman` is not installed. For backward compatibility,
+`python3 plugins/devflow/tests/test_devflow.py` still runs the original lifecycle cases
+and each `test_*.py` file remains directly executable. `run_framework_suite.py` remains
+available for parallel execution of the original lifecycle cases.
+
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
