@@ -6832,6 +6832,56 @@ def case_phase_ref(root: Path) -> None:
     )
 
 
+def case_prompt_protocols_are_action_aware(root: Path) -> None:
+    runtime = load_runtime_module()
+    active = {
+        "delivery": {
+            "finalization": runtime.finalization.default_policy(),
+        }
+    }
+    repair = copy.deepcopy(active)
+    repair["delivery"]["finalization"]["diagnoses"] = {
+        "run-1": {
+            "classification": "code",
+            "work_id": "INT-R01",
+        }
+    }
+
+    check(
+        "prompt protocols omit finalization from ordinary planning",
+        "finalization" not in runtime.prompt_protocols("plan", active),
+    )
+    check(
+        "prompt protocols omit finalization from ordinary WORK",
+        "finalization"
+        not in runtime.prompt_protocols("run", active, work_item="P01-I01"),
+    )
+    check(
+        "prompt protocols omit finalization from phase audit",
+        "finalization"
+        not in runtime.prompt_protocols("audit", active, scope="phase"),
+    )
+    check(
+        "prompt protocols include finalization for integration audit",
+        "finalization"
+        in runtime.prompt_protocols("audit", active, scope="integration"),
+    )
+    check(
+        "prompt protocols include finalization for Newman repair WORK",
+        "finalization"
+        in runtime.prompt_protocols("run", repair, work_item="INT-R01"),
+    )
+    check(
+        "prompt protocols keep finalization on the finalize action",
+        "finalization" in runtime.prompt_protocols("finalize", active),
+    )
+    check(
+        "legacy integration audit does not gain finalization protocol",
+        "finalization"
+        not in runtime.prompt_protocols("audit", {}, scope="integration"),
+    )
+
+
 def case_render_assembles_prompt(root: Path) -> None:
     devflow(root, "init", "billing")
     d = root / "docs/domains/billing"
@@ -6854,6 +6904,11 @@ def case_render_assembles_prompt(root: Path) -> None:
     check("render run inlines PITFALLS", "UNIQUE_PITFALL_MARKER" in out, out[:600])
     check(
         "render run does not inline the audit core", "AUDIT core" not in out, out[:600]
+    )
+    check(
+        "render run omits whole-work finalization protocol",
+        "Whole-work explanation and executed API verification" not in out,
+        out[:1200],
     )
 
     dump(
@@ -9780,6 +9835,7 @@ CASES = [
     case_lifecycle_consistency,
     case_validate_core_rules,
     case_phase_ref,
+    case_prompt_protocols_are_action_aware,
     case_render_assembles_prompt,
     case_render_context_assembler,
     case_render_context_marks_missing_ids,

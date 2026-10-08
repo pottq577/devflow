@@ -83,14 +83,12 @@ PROMPT_PROTOCOLS = {
         "work-item-contract",
         "decision-policy",
         "delivery-artifacts",
-        "finalization",
     ],
     "run": [
         "authority",
         "work-item-contract",
         "risk-policy",
         "delivery-artifacts",
-        "finalization",
     ],
     "audit": [
         "authority",
@@ -99,9 +97,29 @@ PROMPT_PROTOCOLS = {
         "risk-policy",
         "decision-policy",
         "delivery-artifacts",
-        "finalization",
     ],
 }
+
+
+def prompt_protocols(
+    role: str,
+    state: dict[str, Any],
+    *,
+    scope: str | None = None,
+    work_item: str | None = None,
+) -> list[str]:
+    protocols = list(PROMPT_PROTOCOLS[role])
+    if "finalization" in protocols or not finalization.active(state):
+        return protocols
+    if role == "audit" and scope == "integration":
+        protocols.append("finalization")
+    elif (
+        role == "run"
+        and work_item
+        and str(work_item) in finalization.repair_ids(state)
+    ):
+        protocols.append("finalization")
+    return protocols
 
 
 def plugin_root() -> Path:
@@ -5405,7 +5423,13 @@ def render(args: argparse.Namespace) -> int:
         for work_path, work_doc in docs.items():
             render_yaml_context(str(work_path.relative_to(root)), work_doc)
 
-    for name in PROMPT_PROTOCOLS[role]:
+    for name in prompt_protocols(
+        role,
+        state,
+        scope=getattr(args, "scope", None),
+        work_item=getattr(args, "task", None)
+        or (state.get("next_action") or {}).get("work_item"),
+    ):
         print_section(f"protocol/{name}.md", read_protocol(name))
 
     if role == "audit":
