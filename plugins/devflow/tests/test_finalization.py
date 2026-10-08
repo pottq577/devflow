@@ -976,6 +976,67 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("mapping", result.stderr)
 
+    def test_registered_newman_repairs_defer_blockers_until_other_actions_finish(self):
+        self.completed()
+        self.run_newman(failure=True)
+        self.run_newman(failure=True)
+        self.finish_phase_audit()
+        state = self.read_state()
+        runs = state["delivery"]["finalization"]["runs"][-2:]
+        for run, work_id in zip(runs, ("F-I01", "F-I02")):
+            state["delivery"]["finalization"]["diagnoses"][run["id"]] = {
+                "classification": "code",
+                "reason": "API assertion evidence identifies a reproducible contract failure.",
+                "work_id": work_id,
+            }
+        fixtures.dump(self.state_path, state)
+        blocked = fixtures.v2_item("F-I01")
+        blocked.update(
+            kind="remediation", status="blocked", block_kind="external",
+            block_reason="Historical test evidence is not available locally.",
+        )
+        blocked["evidence"]["external_wait"] = {
+            "reason": "An operator must supply historical test evidence."
+        }
+        independent = fixtures.v2_item("F-I02")
+        independent["kind"] = "remediation"
+        repair_path = self.d / "work/integration.yaml"
+
+        def action():
+            result = self.cli("status", "sample", "--json")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)["next_action"]
+
+        fixtures.dump(repair_path, {"version": 2, "phase": "integration", "items": [blocked, independent]})
+        selected = action()
+        self.assertEqual((selected["command"], selected["work_item"]), ("run", "F-I02"))
+
+        # A blocked WORK review must not conceal the next independent repair.
+        blocked.update(status="done", risk={"level": "high", "axes": []})
+        blocked["review"] = {"required": True, "status": "blocked"}
+        fixtures.dump(repair_path, {"version": 2, "phase": "integration", "items": [blocked, independent]})
+        selected = action()
+        self.assertEqual((selected["command"], selected["work_item"]), ("run", "F-I02"))
+
+        # After execution, the pending WORK audit remains actionable.
+        blocked.update(status="blocked", risk={"level": "medium", "axes": []})
+        blocked.pop("review")
+        independent.update(status="done", risk={"level": "high", "axes": []})
+        independent["review"] = {"required": True, "status": "pending"}
+        fixtures.dump(repair_path, {"version": 2, "phase": "integration", "items": [blocked, independent]})
+        selected = action()
+        self.assertEqual(
+            (selected["command"], selected["scope"], selected["work_item"]),
+            ("audit", "work", "F-I02"),
+        )
+
+        # Once no independent action remains, the external wait is surfaced.
+        independent.update(status="blocked", block_kind="execution", block_reason="Blocked in fixture")
+        independent.pop("review")
+        fixtures.dump(repair_path, {"version": 2, "phase": "integration", "items": [blocked, independent]})
+        selected = action()
+        self.assertEqual((selected["command"], selected["work_item"]), ("provide-evidence", "F-I01"))
+
     def test_registered_newman_repair_cannot_bypass_required_plan_review(self):
         self.completed()
         self.run_newman(failure=True)

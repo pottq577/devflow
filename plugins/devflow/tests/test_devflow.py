@@ -5265,6 +5265,89 @@ def case_legacy_closure_without_provenance(root: Path) -> None:
     )
 
 
+def case_plan_remediation_defers_external_wait_until_independent_actions_finish(root: Path) -> None:
+    devflow(root, "init", "billing", "--risk", "high")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    state_doc["plan_review"].update(
+        status="remediation", remediation_work_ids=["P01-R01", "P01-R02", "P01-R03"]
+    )
+    dump(d / "STATE.yaml", state_doc)
+    external = item(
+        "P01-R01", kind="evidence", status="blocked", block_kind="external",
+        block_reason="Historical deployment history requires external evidence.",
+    )
+    external["evidence"]["external_wait"] = {
+        "reason": "Deployment history must be confirmed by the operator."
+    }
+    ready = item("P01-R02", kind="documentation")
+    audited = item(
+        "P01-R03", kind="remediation", risk_level="high", status="done",
+        review={"required": True, "status": "pending"},
+    )
+    work_path = d / "work/phase-01.yaml"
+
+    def projected_action():
+        result = devflow(root, "status", "billing", "--json")
+        check("plan remediation status is readable", result.returncode == 0, result.stderr)
+        return json.loads(result.stdout)["next_action"]
+
+    dump(work_path, work("01", external, ready, audited))
+    selected = projected_action()
+    check(
+        "independent ready plan repair outranks earlier external wait",
+        (selected.get("command"), selected.get("work_item")) == ("run", "P01-R02"),
+        repr(selected),
+    )
+    ready.update(status="blocked", block_kind="execution", block_reason="Blocked in fixture")
+    dump(work_path, work("01", external, ready, audited))
+    selected = projected_action()
+    check(
+        "pending plan repair WORK audit outranks external wait",
+        (selected.get("command"), selected.get("scope"), selected.get("work_item"))
+        == ("audit", "work", "P01-R03"),
+        repr(selected),
+    )
+    audited["review"]["status"] = "verified"
+    dump(work_path, work("01", external, ready, audited))
+    selected = projected_action()
+    check(
+        "exhausted plan repair offers external evidence rather than generic decision",
+        (selected.get("command"), selected.get("work_item"))
+        == ("provide-evidence", "P01-R01"),
+        repr(selected),
+    )
+
+
+def case_plan_remediation_blocked_review_does_not_hide_another_audit(root: Path) -> None:
+    devflow(root, "init", "billing", "--risk", "high")
+    d = root / "docs/domains/billing"
+    state_doc = yaml.safe_load((d / "STATE.yaml").read_text(encoding="utf-8"))
+    state_doc["phases"] = {"01": phase("executing", "01")}
+    state_doc["plan_review"].update(
+        status="remediation", remediation_work_ids=["P01-R01", "P01-R02"]
+    )
+    dump(d / "STATE.yaml", state_doc)
+    blocked = item(
+        "P01-R01", kind="remediation", status="done", risk_level="high",
+        review={"required": True, "status": "blocked"},
+    )
+    pending = item(
+        "P01-R02", kind="remediation", status="done", risk_level="high",
+        review={"required": True, "status": "pending"},
+    )
+    dump(d / "work/phase-01.yaml", work("01", blocked, pending))
+    result = devflow(root, "status", "billing", "--json")
+    check("blocked plan review projection is readable", result.returncode == 0, result.stderr)
+    action = json.loads(result.stdout)["next_action"]
+    check(
+        "later pending plan remediation audit is not hidden by blocked review",
+        (action.get("command"), action.get("work_item")) == ("audit", "P01-R02"),
+        repr(action),
+    )
+
+
 def case_plan_audit_remediation_reaches_closure(root: Path) -> None:
     devflow(root, "init", "billing", "--risk", "high")
     d = root / "docs/domains/billing"
@@ -9811,6 +9894,8 @@ CASES = [
     case_audit_provenance_validation_basis_is_structural,
     case_provenance_write_failure_is_atomic,
     case_legacy_closure_without_provenance,
+    case_plan_remediation_defers_external_wait_until_independent_actions_finish,
+    case_plan_remediation_blocked_review_does_not_hide_another_audit,
     case_plan_audit_remediation_reaches_closure,
     case_audit_apply_requires_schema_files,
     case_audit_apply_rejects_corrupt_schema_contracts,

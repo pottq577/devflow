@@ -1661,14 +1661,23 @@ def work_review_action(
     domain: str,
     state: dict[str, Any],
     work_overrides: dict[Path, dict[str, Any]] | None = None,
+    *,
+    allowed_item_ids: set[str] | None = None,
+    defer_blocked: bool = False,
 ) -> dict[str, Any] | None:
-    """Return the unresolved high-risk review action before normal ready WORK."""
+    """Return an actionable WORK review, optionally deferring human-only blockers.
+
+    A remediation scheduler can use the same review/closure rules without letting
+    one blocked review hide a different runnable remediation or pending audit.
+    """
     d = domain_dir(root, domain)
     docs, index, _ = load_work_index(d, work_overrides)
     unresolved = {str(x) for x in state.get("unresolved_decisions", []) or []}
     reviews = []
     for path, doc in docs.items():
         for item in doc.get("items", []) or []:
+            if allowed_item_ids is not None and str(item.get("id")) not in allowed_item_ids:
+                continue
             review = effective_review(item)
             if (
                 item.get("status") == "done"
@@ -1692,7 +1701,7 @@ def work_review_action(
                 "work_item": item_id,
                 **work_routing_fields(item),
             }
-        if review["status"] == "blocked":
+        if review["status"] == "blocked" and not defer_blocked:
             return {
                 "role": "human",
                 "command": "decision",
@@ -1812,6 +1821,34 @@ def external_wait_action(
     }
 
 
+def remediation_blocked_action(
+    item: dict[str, Any], phase: str, *, blocked_reason: str = "remediation WORK is blocked"
+) -> dict[str, Any]:
+    """Project a blocked repair only after its independent runnable siblings are exhausted."""
+    item_id = str(item.get("id"))
+    scoped_phase = None if phase == "integration" else phase
+    if work_block_kind(item) == "external":
+        evidence = item.get("evidence")
+        wait = evidence.get("external_wait") if isinstance(evidence, dict) else {}
+        wait = wait if isinstance(wait, dict) else {}
+        return {
+            "role": "human",
+            "command": "provide-evidence",
+            "scope": "work",
+            "phase": scoped_phase,
+            "work_item": item_id,
+            "reason": wait.get("reason")
+            or item.get("block_reason")
+            or "external evidence required",
+        }
+    return human_decision(
+        "integration" if phase == "integration" else "work",
+        phase=scoped_phase,
+        work_item=item_id,
+        reason=blocked_reason,
+    )
+
+
 def plan_remediation_action(
     root: Path,
     domain: str,
@@ -1847,33 +1884,22 @@ def plan_remediation_action(
                     "work_item": item.get("id"),
                     **work_routing_fields(item),
                 }
-    for target in targets:
-        if not target or target[1].get("status") != "done":
-            continue
-        path, item = target
-        item_review = effective_review(item)
-        phase = item_phase(path, docs[path])
-        if item_review["required"] and item_review["status"] == "pending":
-            return {
-                "role": "auditor",
-                "command": "audit",
-                "scope": "work",
-                "mode": "initial",
-                "phase": None if phase == "integration" else phase,
-                "work_item": item.get("id"),
-                **work_routing_fields(item),
-            }
-        if item_review["required"] and item_review["status"] != "verified":
-            action = work_review_action(root, domain, state, work_overrides)
-            if action and action.get("work_item") == item.get("id"):
-                return action
-            return {
-                "role": "human",
-                "command": "decision",
-                "scope": "work",
-                "phase": None if phase == "integration" else phase,
-                "work_item": item.get("id"),
-            }
+    remediation_ids = {str(item_id) for item_id in review.get("remediation_work_ids", [])}
+    actionable_review = work_review_action(
+        root,
+        domain,
+        state,
+        work_overrides,
+        allowed_item_ids=remediation_ids,
+        defer_blocked=True,
+    )
+    # A work-review remediation can suggest a child WORK; the plan gate allows only
+    # registered plan remediation IDs to start before the plan has been verified.
+    if actionable_review and (
+        actionable_review.get("command") != "run"
+        or str(actionable_review.get("work_item")) in remediation_ids
+    ):
+        return actionable_review
     if targets and all(
         target
         and target[1].get("status") in TERMINAL_STATUSES
@@ -1888,13 +1914,28 @@ def plan_remediation_action(
             "phase": None,
             "work_item": None,
         }
-    return {
-        "role": "human",
-        "command": "decision",
-        "scope": "plan",
-        "phase": None,
-        "work_item": None,
-    }
+    # A blocked target is a final handoff, not a reason to stop auditing other
+    # completed remediation WORK or running independent siblings.
+    for target in targets:
+        if not target or target[1].get("status") != "blocked":
+            continue
+        path, item = target
+        if work_block_kind(item) == "external":
+            return remediation_blocked_action(item, item_phase(path, docs[path]))
+    for target in targets:
+        if not target:
+            continue
+        path, item = target
+        phase = item_phase(path, docs[path])
+        if item.get("status") == "blocked":
+            return remediation_blocked_action(item, phase)
+        if item.get("status") == "done" and not review_satisfied(item):
+            return human_decision(
+                "work",
+                phase=None if phase == "integration" else phase,
+                work_item=item.get("id"),
+            )
+    return human_decision("plan")
 
 
 def human_decision(scope: str, phase: Any = None, work_item: Any = None, **extra):
@@ -2147,8 +2188,18 @@ def compute_next_action(
         raise ValueError("; ".join(problems))
     d = domain_dir(root, domain)
     docs, index, _ = load_work_index(d, work_overrides)
-    # Global decisions and required plan review always outrank a newly registered repair.
-    if action.get("role") in {"human", "architect"} or action.get("scope") == "plan":
+    # Only authoritative decision/plan/integration gates outrank registered repair
+    # WORK. A human projection caused by one blocked repair must not hide an
+    # independent runnable repair or review in the same integration scope.
+    plan_review = effective_plan_review(state)
+    integration_status = (state.get("integration") or {}).get("status")
+    if (
+        action.get("role") == "architect"
+        or action.get("scope") == "plan"
+        or state.get("unresolved_decisions")
+        or (plan_review.get("required") and plan_review.get("status") != "verified")
+        or integration_status == "blocked"
+    ):
         return action
     repairs = finalization.repair_ids(state)
     phases = normalized_phases(state)
@@ -2162,54 +2213,47 @@ def compute_next_action(
         and (state.get("integration") or {}).get("status")
         not in {"blocked", "verified"}
     ):
-        review = work_review_action(root, domain, state, work_overrides)
+        review = work_review_action(
+            root, domain, state, work_overrides, defer_blocked=True
+        )
         if review:
             return review
+        # Prefer in-progress work, then ready work, irrespective of the order in
+        # which failed Newman runs registered their repair IDs.
+        for status in ("in_progress", "ready"):
+            for item_id in repairs:
+                target = index.get(item_id)
+                if not target:
+                    continue
+                _path, item = target
+                if (
+                    item.get("status") == status
+                    and deps_satisfied(item, index)
+                    and decision_satisfied(item, set())
+                ):
+                    return run_action("integration", item)
+        external_wait = None
+        blocked_work = None
         for item_id in repairs:
             target = index.get(item_id)
-            if not target:
+            if not target or target[1].get("status") != "blocked":
                 continue
-            _path, item = target
-            if (
-                item.get("status") in {"ready", "in_progress"}
-                and deps_satisfied(item, index)
-                and decision_satisfied(item, set())
-            ):
-                return {
-                    "role": "executor",
-                    "command": "run",
-                    "scope": "integration",
-                    "phase": None,
-                    "work_item": item_id,
-                    **work_routing_fields(item),
-                }
-            if item.get("status") == "blocked":
-                if work_block_kind(item) == "external":
-                    evidence = item.get("evidence")
-                    wait = (
-                        evidence.get("external_wait")
-                        if isinstance(evidence, dict)
-                        else {}
-                    )
-                    wait = wait if isinstance(wait, dict) else {}
-                    return {
-                        "role": "human",
-                        "command": "provide-evidence",
-                        "scope": "work",
-                        "phase": None,
-                        "work_item": item_id,
-                        "reason": wait.get("reason")
-                        or item.get("block_reason")
-                        or "external evidence required",
-                    }
-                return {
-                    "role": "human",
-                    "command": "decision",
-                    "scope": "integration",
-                    "phase": None,
-                    "work_item": item_id,
-                    "reason": "Newman repair WORK is blocked",
-                }
+            candidate = remediation_blocked_action(
+                target[1], "integration", blocked_reason="Newman repair WORK is blocked"
+            )
+            if candidate["command"] == "provide-evidence":
+                external_wait = external_wait or candidate
+            else:
+                blocked_work = blocked_work or candidate
+        if external_wait:
+            return external_wait
+        if blocked_work:
+            return blocked_work
+        # A blocked review is also a human-only handoff. Defer it until no
+        # runnable repair, audit or external-evidence handoff remains.
+        blocked_review = work_review_action(root, domain, state, work_overrides)
+        if blocked_review:
+            return blocked_review
     at_integration = action.get("command") == "complete" or (
         action.get("command") == "audit" and action.get("scope") == "integration"
     )
