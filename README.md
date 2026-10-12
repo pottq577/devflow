@@ -1,7 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.10.0 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.10.1 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -35,6 +35,10 @@ Existing domains keep their PLAN/WORK documents. Run `devflow delivery enable <d
 adopt the new completion requirements; completed WORK is preserved. New domains enable it by
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
+
+## Version 0.10.1 hosted retry correction
+
+Version 0.10.1 aligns hosted no-progress retry limits with standalone Autopilot. The final configured alternative-model retry can execute before the guard stops an unchanged action. It also publishes the hosted execution and test-gate safeguards added after 0.10.0 without changing protocol `1.8.0`.
 
 ## Version 0.10.0 routing and finalization efficiency
 

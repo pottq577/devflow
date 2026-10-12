@@ -131,6 +131,28 @@ class HostAutopilotUnitTests(unittest.TestCase):
             [row["alias"] for row in primary["candidates"]], ["fast", "balanced"]
         )
 
+    def test_final_worker_retry_routes_to_alternative_model(self):
+        state = {
+            "risk_profile": "medium",
+            "next_action": {
+                "role": "executor",
+                "command": "run",
+                "scope": "phase",
+                "phase": "01",
+                "work_item": "P01-I01",
+                "item_kind": "implementation",
+                "item_risk": "medium",
+            },
+        }
+        envelope = self.host.dispatch_envelope(
+            Path("/repo"), PLUGIN, self.policy, "sample", state, attempt=5
+        )
+        self.assertEqual(envelope["attempt"], 5)
+        self.assertEqual(envelope["primary"]["model_alias"], "balanced")
+        self.assertEqual(envelope["primary"]["model"], "gpt-5.6-terra")
+        self.assertEqual(envelope["primary"]["reasoning_effort"], "xhigh")
+        self.assertIsNone(envelope["scout"])
+
     def test_plan_boundary_stops_before_worker_dispatch(self):
         state = {
             "risk_profile": "medium",

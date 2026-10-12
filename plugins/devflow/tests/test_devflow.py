@@ -7409,7 +7409,7 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
         and entries[0].get("version")
         == manifest.get("version")
         == codex_manifest.get("version")
-        == "0.10.0",
+        == "0.10.1",
         repr(entries) + repr(codex_manifest.get("version")),
     )
     check(

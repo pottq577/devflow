@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.1 - 2026-10-12 - Hosted execution and release guards
+
+- Permit the final configured no-progress retry index in hosted `/goal`, matching standalone Autopilot. With the default limit of five, attempt 5 reaches the alternative-model worker route and a further non-progressing attempt is blocked.
+- Serialize hosted Goal and standalone Autopilot per domain. Persist hosted session ownership, step reservations, retry bounds and cycle detection across supervisor restarts.
+- Validate scout capsules before compact specialist dispatch. Bind optional host telemetry to reserved steps, keep telemetry failures fail-open and preserve Newman preflight diagnostics.
+- Keep no-change audit-remediation completion outside unnecessary delivery finalization. Route model/effort capability failures without weakening critical WORK policy.
+- Consolidate test discovery into one suite and add fresh full-suite merge/release gates with Newman execution evidence and stable-source checks.
+- Synchronize marketplace/plugin manifests and release assertions to `0.10.1`. Keep protocol `1.8.0`: STATE/WORK artifacts, statuses, audit contracts and lifecycle transitions are unchanged.
+
 ## 0.10.0 - 2026-10-08 - Routed execution efficiency
 
 - Record fail-open hosted `/goal` scout and primary dispatch telemetry under `.devflow/runtime/<domain>/host-dispatch.jsonl`, including model, role, attempt, action fingerprint, outcome and elapsed time. Telemetry remains operational evidence, not lifecycle authority.

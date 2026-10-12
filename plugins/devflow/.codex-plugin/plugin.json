@@ -1,6 +1,6 @@
 {
   "name": "devflow",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "State-based agent development protocol for repository-grounded planning, one-item execution, independent audits, and deterministic handoffs.",
   "author": {
     "name": "DevFlow Team"
@@ -17,10 +17,7 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "DevFlow",
-    "capabilities": [
-      "Read",
-      "Write"
-    ],
+    "capabilities": ["Read", "Write"],
     "shortDescription": "Plan, execute, audit, and resume agentic development",
     "longDescription": "DevFlow supports deterministic manual gates and a foreground /goal supervisor for repository-grounded planning, one-WORK-at-a-time routed execution, independent audits, and verified delivery finalization.",
     "developerName": "DevFlow Team",

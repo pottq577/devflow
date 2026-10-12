@@ -117,7 +117,8 @@ def _projection(
             reason = None  # A completed/paused/checkpointed lifecycle can always be reported.
         elif candidate["steps"] >= bounds["max_steps"]:
             reason = "hosted_max_steps_exhausted"
-        elif candidate["attempt"] >= bounds["max_no_progress"]:
+        # Attempts start at zero. The final configured retry index is executable.
+        elif candidate["attempt"] > bounds["max_no_progress"]:
             reason = "hosted_no_progress_retries_exhausted"
         elif candidate["visits"][fingerprint] > bounds["max_visits"]:
             reason = "hosted_action_cycle_detected"

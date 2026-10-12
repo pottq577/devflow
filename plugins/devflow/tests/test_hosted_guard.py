@@ -68,9 +68,35 @@ class HostedExecutionGuardTests(unittest.TestCase):
         self.assertEqual(self.preview()["attempt"], 1)
         second = self.start()
         self.assertEqual(self.finish(second)["attempt"], 2)
+        self.assertEqual(self.preview()["status"], "ready")
+        final = self.start(attempt=2)
+        self.assertEqual(self.finish(final)["attempt"], 3)
         self.assertEqual(self.preview()["reason"], "hosted_no_progress_retries_exhausted")
-        with self.assertRaises(guard.GuardBlocked):
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_no_progress_retries_exhausted"):
             self.start()
+
+    def test_default_worker_fallback_attempt_five_is_executable(self):
+        self.policy["escalation"]["retries"]["max_no_progress"] = 5
+        self.policy["orchestration"]["hosted"]["max_steps"] = 7
+        for attempt in range(5):
+            record = self.start(attempt=attempt)
+            self.assertEqual(self.finish(record)["attempt"], attempt + 1)
+        self.assertEqual(self.preview()["attempt"], 5)
+        self.assertEqual(self.preview()["status"], "ready")
+        last = self.start(attempt=5)
+        self.assertEqual(self.finish(last)["attempt"], 6)
+        self.assertEqual(self.preview()["reason"], "hosted_no_progress_retries_exhausted")
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_no_progress_retries_exhausted"):
+            self.start(attempt=6)
+
+    def test_final_permitted_attempt_can_advance_lifecycle(self):
+        for attempt in range(2):
+            self.finish(self.start(attempt=attempt))
+        last = self.start(attempt=2)
+        result = self.finish(last, "action-b")
+        self.assertTrue(result["progressed"])
+        self.assertEqual(self.preview("action-b")["attempt"], 0)
+        self.assertEqual(self.preview("action-b")["status"], "ready")
 
     def test_scout_and_capability_fallback_count_steps_not_semantic_attempt(self):
         scout = self.start(kind="scout")
