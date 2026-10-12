@@ -230,29 +230,46 @@ class HostAutopilotCliTests(unittest.TestCase):
         )
         self.assertEqual(initialized.returncode, 0, initialized.stderr)
 
+        acquired = self.run_host(root, "session-start", "sample")
+        self.assertEqual(acquired.returncode, 0, acquired.stderr)
+        owner = json.loads(acquired.stdout)["session_id"]
+        envelope = json.loads(self.run_host(
+            root, "dispatch", "sample", "--session-id", owner
+        ).stdout)
+        reserved = self.run_host(
+            root, "step-start", "sample", "--session-id", owner,
+            "--kind", "primary", "--fingerprint", envelope["fingerprint"],
+            "--candidate-alias", envelope["primary"]["model_alias"],
+            "--attempt", "0",
+        )
+        self.assertEqual(reserved.returncode, 0, reserved.stderr)
+        step_id = json.loads(reserved.stdout)["step_id"]
         started = self.run_host(
-            root,
-            "telemetry-start",
-            "sample",
-            "--kind",
-            "primary",
-            "--attempt",
-            "0",
+            root, "telemetry-start", "sample", "--kind", "primary",
+            "--attempt", "0", "--session-id", owner, "--step-id", step_id,
         )
         self.assertEqual(started.returncode, 0, started.stderr)
         start_result = json.loads(started.stdout)
         self.assertEqual(start_result["status"], "started")
         dispatch_id = start_result["dispatch_id"]
         self.assertRegex(dispatch_id, r"^[0-9a-f]{24}$")
+        unauthorized = self.run_host(
+            root, "telemetry-start", "sample", "--kind", "primary",
+            "--session-id", owner, "--step-id", "wrong",
+        )
+        self.assertEqual(unauthorized.returncode, 0, unauthorized.stderr)
+        self.assertEqual(json.loads(unauthorized.stdout)["status"], "telemetry_unavailable")
+        # Rejected telemetry must not append a second start event.
+        telemetry = root / ".devflow/runtime/sample/host-dispatch.jsonl"
+        self.assertEqual(len(telemetry.read_text(encoding="utf-8").splitlines()), 1)
 
         finished = self.run_host(
             root,
             "telemetry-finish",
             "sample",
-            "--dispatch-id",
-            dispatch_id,
-            "--outcome",
-            "completed",
+            "--dispatch-id", dispatch_id, "--session-id", owner,
+            "--step-id", step_id,
+            "--outcome", "completed",
         )
         self.assertEqual(finished.returncode, 0, finished.stderr)
         finish_result = json.loads(finished.stdout)
@@ -268,7 +285,15 @@ class HostAutopilotCliTests(unittest.TestCase):
         self.assertEqual(records[0]["dispatch_id"], dispatch_id)
         self.assertEqual(records[1]["dispatch_id"], dispatch_id)
         self.assertEqual(records[1]["outcome"], "completed")
+        self.assertEqual(records[0]["step_id"], step_id)
+        self.assertEqual(records[1]["step_id"], step_id)
+        self.assertEqual(records[0]["schema_version"], 2)
         self.assertGreaterEqual(records[1]["duration_seconds"], 0)
+        ack = self.run_host(
+            root, "step-finish", "sample", "--session-id", owner,
+            "--step-id", step_id, "--outcome", "completed",
+        )
+        self.assertEqual(ack.returncode, 0, ack.stderr)
         self.assertTrue(records[0]["model_alias"])
         self.assertTrue(records[0]["model"])
         self.assertTrue(records[0]["reasoning_effort"])
@@ -459,6 +484,33 @@ None.
             self.run_host(root, "session-end", "sample", "--session-id", owner).returncode,
             0,
         )
+
+    def test_scout_validation_is_fingerprint_bound_and_read_only(self):
+        root = self.new_repo()
+        init = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=root, capture_output=True, text=True,
+        )
+        self.assertEqual(init.returncode, 0, init.stderr)
+        acquired = self.run_host(root, "session-start", "sample")
+        owner = json.loads(acquired.stdout)["session_id"]
+        envelope = json.loads(self.run_host(root, "dispatch", "sample", "--session-id", owner).stdout)
+        folder = root / ".devflow/runtime/sample/scout-capsules"
+        folder.mkdir(parents=True)
+        path = folder / "scout.txt"
+        path.write_text("bad narrative", encoding="utf-8")
+        invalid = self.run_host(
+            root, "scout-validate", "sample", "--session-id", owner,
+            "--fingerprint", envelope["fingerprint"], "--capsule-file", str(path),
+        )
+        self.assertEqual(invalid.returncode, 0, invalid.stderr)
+        self.assertEqual(json.loads(invalid.stdout)["status"], "invalid")
+        stale = self.run_host(
+            root, "scout-validate", "sample", "--session-id", owner,
+            "--fingerprint", "wrong", "--capsule-file", str(path),
+        )
+        self.assertEqual(stale.returncode, 1, stale.stderr)
+        self.assertEqual(json.loads(stale.stdout)["reason"], "hosted_stale_fingerprint")
 
     def test_goal_skill_prefers_host_native_subagents(self):
         text = (PLUGIN / "skills" / "goal" / "SKILL.md").read_text(encoding="utf-8")

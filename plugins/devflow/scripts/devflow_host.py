@@ -23,6 +23,7 @@ import devflow
 import devflow_autopilot as autopilot
 import devflow_session as session
 import devflow_host_guard as guard
+import devflow_scout as scout_contract
 
 HOST_BACKEND = "host_native_agent"
 TELEMETRY_FILENAME = "host-dispatch.jsonl"
@@ -218,6 +219,8 @@ def telemetry_start(
     attempt: int,
     until: str,
     candidate_alias: str | None = None,
+    session_id: str | None = None,
+    step_id: str | None = None,
 ) -> dict[str, Any]:
     state = _load_state(root, domain)
     envelope = dispatch_envelope(
@@ -238,6 +241,11 @@ def telemetry_start(
         raise ValueError(f"No {kind} dispatch is routed for the current lifecycle action")
 
     candidate = _telemetry_candidate(payload, candidate_alias)
+    guard.require_reserved_step(
+        _telemetry_dir(root, domain), session_id, step_id,
+        fingerprint=envelope["fingerprint"], kind=kind, attempt=attempt,
+        candidate_alias=candidate["alias"],
+    )
     started_epoch = time.time()
     dispatch_id = hashlib.sha256(
         (
@@ -246,8 +254,9 @@ def telemetry_start(
         ).encode("utf-8")
     ).hexdigest()[:24]
     record = {
-        "schema_version": 1,
+        "schema_version": 2,
         "dispatch_id": dispatch_id,
+        "step_id": step_id,
         "fingerprint": envelope["fingerprint"],
         "dispatch_kind": kind,
         "attempt": int(attempt),
@@ -281,11 +290,20 @@ def telemetry_finish(
     *,
     dispatch_id: str,
     outcome: str,
+    session_id: str | None = None,
+    step_id: str | None = None,
 ) -> dict[str, Any]:
     inflight_path = _telemetry_inflight_path(root, domain, dispatch_id)
     if not inflight_path.is_file():
         raise ValueError(f"Telemetry dispatch is not inflight: {dispatch_id}")
     inflight = json.loads(inflight_path.read_text(encoding="utf-8"))
+    if inflight.get("step_id") != step_id or not step_id:
+        raise ValueError("Telemetry step id does not match the start record")
+    guard.require_reserved_step(
+        _telemetry_dir(root, domain), session_id, step_id,
+        fingerprint=inflight["fingerprint"], kind=inflight["dispatch_kind"],
+        attempt=inflight["attempt"], candidate_alias=inflight["model_alias"],
+    )
     started_epoch = float(inflight.pop("started_epoch"))
     finished_epoch = time.time()
     record = {
@@ -391,8 +409,9 @@ def _host_message(
         )
     if role == "scout" and scout_max_chars:
         lines.append(
-            f"Keep the evidence capsule under {int(scout_max_chars)} characters "
-            "so the parent can pass it to the specialist."
+            f"Keep the complete six-section evidence capsule within {int(scout_max_chars)} "
+            "characters. Include exact file paths under `## Evidence map`. "
+            "The parent rejects malformed or oversized capsules instead of truncating them."
         )
     return "\n".join(lines) + "\n"
 
@@ -707,15 +726,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete"
     )
     telemetry_start_parser.add_argument("--candidate-alias")
+    telemetry_start_parser.add_argument("--session-id")
+    telemetry_start_parser.add_argument("--step-id")
 
     telemetry_finish_parser = sub.add_parser("telemetry-finish")
     telemetry_finish_parser.add_argument("domain")
     telemetry_finish_parser.add_argument("--dispatch-id", required=True)
+    telemetry_finish_parser.add_argument("--session-id")
+    telemetry_finish_parser.add_argument("--step-id")
     telemetry_finish_parser.add_argument(
         "--outcome",
         choices=["completed", "failed", "cancelled", "capability_blocked"],
         required=True,
     )
+    scout_check = sub.add_parser("scout-validate")
+    scout_check.add_argument("domain")
+    scout_check.add_argument("--session-id", required=True)
+    scout_check.add_argument("--fingerprint", required=True)
+    scout_check.add_argument("--capsule-file", required=True)
     return parser
 
 
@@ -728,7 +756,7 @@ def main() -> int:
         policy = autopilot.load_policy(plugin_root, root)
 
         runtime_dir = _telemetry_dir(root, args.domain)
-        if args.command in {"dispatch", "bootstrap", "bootstrap-finalize", "step-start", "step-finish", "guard-status"}:
+        if args.command in {"dispatch", "bootstrap", "bootstrap-finalize", "step-start", "step-finish", "guard-status", "scout-validate"}:
             session.require(runtime_dir, args.session_id)
 
         if args.command == "session-start":
@@ -815,6 +843,22 @@ def main() -> int:
                 runtime_dir, args.session_id, args.step_id, fingerprint, policy,
                 outcome=args.outcome,
             )
+        elif args.command == "scout-validate":
+            _state, fingerprint, _safety = _guard_view(
+                root, args.domain, args.session_id, policy, "complete"
+            )
+            if args.fingerprint != fingerprint:
+                raise guard.GuardBlocked("hosted_stale_fingerprint")
+            allowed = (runtime_dir / "scout-capsules").resolve()
+            file_path = Path(args.capsule_file).resolve()
+            if not file_path.is_relative_to(allowed):
+                raise ValueError("Scout capsule must be under the domain scout-capsules directory")
+            cap = int((policy.get("orchestration") or {}).get("scout_max_chars", 12000))
+            # Read at most cap+1 chars; oversized or malformed capsules fail validation.
+            with file_path.open(encoding="utf-8") as source:
+                text = source.read(cap + 1)
+            valid = scout_contract.validated_capsule(text, cap)
+            result = {"status": "valid" if valid else "invalid", "chars": len(valid or "")}
         elif args.command == "telemetry-start":
             result = telemetry_start(
                 root,
@@ -825,6 +869,8 @@ def main() -> int:
                 attempt=args.attempt,
                 until=args.until,
                 candidate_alias=args.candidate_alias,
+                session_id=args.session_id,
+                step_id=args.step_id,
             )
         elif args.command == "telemetry-finish":
             result = telemetry_finish(
@@ -832,6 +878,8 @@ def main() -> int:
                 args.domain,
                 dispatch_id=args.dispatch_id,
                 outcome=args.outcome,
+                session_id=args.session_id,
+                step_id=args.step_id,
             )
         else:
             raise AssertionError(f"Unhandled host command: {args.command}")
@@ -841,6 +889,15 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except guard.GuardBlocked as exc:
+        if "args" in locals() and getattr(args, "command", None) in TELEMETRY_COMMANDS:
+            print(
+                json.dumps(
+                    {"status": "telemetry_unavailable", "error": exc.reason},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         print(json.dumps({"status": "blocked", "reason": exc.reason}))
         return 1
     except Exception as exc:
