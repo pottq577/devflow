@@ -144,8 +144,9 @@ readiness, environment configuration or Newman are never `not_applicable`.
 
 Return codes: 0 = passed or proven no-HTTP N/A, 1 = Newman completed with API/assertion failure,
 2 = startup, readiness, environment, Newman-tool or cleanup blocker.
-**Attempted Newman execution persists its result despite a nonzero return.**
-Rejected preflight leaves run history unchanged because no test was attempted.
+**Attempted server/Newman execution persists its result despite a nonzero return.**
+Rejected preflight (target/source authorization, timeouts, server argv, readiness URL, local environment, bounded script profile, private staging) returns exit 2 with `failure_stage: preflight` and `recorded: false`. It neither appends a Newman run nor invalidates successful-run or final-explanation provenance. No server or Newman process is started.
+Every recorded run includes `failure_stage`, `failure_kind` and `retry_policy`: `api` failures require evidence-based triage before repair; `tool` and `report` failures require runner/report inspection; `environment` failures require environment repair; `provenance` requires refreshing source and rerunning. There are no automatic blind retries. Historical runs without these fields remain readable. A preflight blocker has no run ID eligible for `delivery triage` and cannot create code/collection repair WORK.
 Sanitized summaries contain counts, classifications' source ids and hashes, never resolved credentials, response bodies or arbitrary exception messages.
 Read sensitive raw JSON and stdout only locally.
 Raw files are mode 0600 beneath private mode-0700 directories; their hashes support local revalidation, and `.git/info/exclude` protects ordinary staging.

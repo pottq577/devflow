@@ -283,6 +283,14 @@ def structural_errors(state: dict[str, Any]) -> list[str]:
             ):
                 if not isinstance(run.get(key), str) or not run[key]:
                     raise ValueError(f"finalization run requires {key}")
+            fields = ("failure_stage", "failure_kind", "retry_policy")
+            if any(field in run for field in fields):
+                if not all(field in run for field in fields):
+                    raise ValueError("finalization Newman failure metadata is incomplete")
+                if (run["failure_stage"] not in {"none", "execution"}
+                        or run["failure_kind"] not in {"none", "environment", "tool", "report", "api", "provenance"}
+                        or run["retry_policy"] not in {"not_required", "fix_environment", "fix_tool", "inspect_report", "triage_and_rerun", "refresh_and_rerun"}):
+                    raise ValueError("finalization Newman failure metadata is invalid")
         for field in ("explanation", "receipt"):
             if fin.get(field) is not None and not isinstance(fin[field], dict):
                 raise ValueError(f"finalization {field} must be a mapping or null")
@@ -683,6 +691,9 @@ def final_errors(
                 "reason_codes",
                 "server_lifecycle",
                 "no_http_evidence",
+                "failure_stage",
+                "failure_kind",
+                "retry_policy",
             ):
                 if summary.get(key) != run.get(key):
                     errors.append(

@@ -257,6 +257,34 @@ def summarize(
     return "passed", counts, []
 
 
+def classify_outcome(
+    status: str, reason_codes: list[str], *, preflight: bool = False
+) -> dict[str, str]:
+    """Return sanitized, deterministic failure provenance and retry guidance."""
+    codes = set(reason_codes)
+    if preflight:
+        stage, kind, retry = "preflight", "configuration", "fix_configuration"
+    elif status in {"passed", "not_applicable"}:
+        stage, kind, retry = "none", "none", "not_required"
+    elif status == "failed":
+        stage, kind, retry = "execution", "api", "triage_and_rerun"
+    elif "source_or_collection_changed_during_run" in codes:
+        stage, kind, retry = "execution", "provenance", "refresh_and_rerun"
+    elif codes.intersection({"cleanup_failed", "readiness_failed", "server_start_failed", "owned_server_exited"}):
+        stage, kind, retry = "execution", "environment", "fix_environment"
+    elif codes.intersection({"newman_tool_failed", "newman_tool_unavailable"}):
+        stage, kind, retry = "execution", "tool", "fix_tool"
+    elif codes.intersection({
+        "report_unavailable", "invalid_stats", "missing_executions", "request_coverage_mismatch",
+        "missing_assertions", "missing_response", "request_without_assertion",
+        "invalid_execution", "invalid_assertion", "skipped_assertions",
+    }):
+        stage, kind, retry = "execution", "report", "inspect_report"
+    else:
+        stage, kind, retry = "execution", "environment", "fix_environment"
+    return {"failure_stage": stage, "failure_kind": kind, "retry_policy": retry}
+
+
 def lifecycle(status: str = "not_run") -> dict[str, Any]:
     return {
         "command_sha256": None,
@@ -396,6 +424,7 @@ def persist_result(
     )
     target = delivery.inside(root, relative)
     target.parent.mkdir(parents=True, exist_ok=True)
+    result.update(classify_outcome(result["status"], result["reason_codes"]))
     payload = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     target.write_text(payload, encoding="utf-8")
     result.update(
@@ -434,7 +463,7 @@ def execute(
         "exit_code": 0,
         "status": "not_applicable",
         "counts": {
-            "expected_requests": 0,
+            "expected_requests": len(requests),
             "requests": 0,
             "request_failures": 0,
             "assertions": 0,
@@ -451,10 +480,14 @@ def execute(
     }
 
     def preflight_block(reason: str) -> dict[str, Any]:
+        # No server/Newman invocation occurred: keep run history and finalization scope intact.
         result["status"] = "blocked"
         result["exit_code"] = 2
         result["reason_codes"] = [reason]
-        return persist_result(root, domain, state, result)
+        result.update(id=None, recorded_at=None, server_sha=None, raw_file=None,
+                      raw_sha256=None, server_lifecycle=lifecycle())
+        result.update(classify_outcome("blocked", [reason], preflight=True))
+        return result
 
     if not requests:
         declared = list(record.get("api_endpoints") or [])
@@ -467,9 +500,7 @@ def execute(
             "api_note": record.get("api_note"),
         }
         if declared:
-            result["status"] = "blocked"
-            result["exit_code"] = 2
-            result["reason_codes"] = ["http_surface_assessment_mismatch"]
+            return preflight_block("http_surface_assessment_mismatch")
         return persist_result(root, domain, state, result)
     if not 1 <= args.timeout <= 3600 or not 1 <= args.request_timeout <= args.timeout:
         return preflight_block("newman_tool_config_invalid")
@@ -505,14 +536,36 @@ def execute(
     for source in scripts(collection):
         if SKIP_OR_EXTRA_REQUEST.search(source) or BASE_MUTATION.search(source):
             return preflight_block("bounded_profile_rejected")
-
-    private = prepare_private_dir(root, run_id)
+    # Validate every deterministic input before creating a private run or starting a server.
+    try:
+        server_argv = parse_server_command(args.server_command)
+    except ValueError:
+        return preflight_block(
+            "server_command_required" if not args.server_command else "server_command_invalid"
+        )
+    if type(args.readiness_timeout) is not int or not 1 <= args.readiness_timeout <= 600:
+        return preflight_block("readiness_config_invalid")
+    try:
+        readiness_url = check_target(args.readiness_url, args.allow_host, args.safety_note)
+        environment = environment_values(args.environment, base_url)
+    except (OSError, ValueError):
+        return preflight_block("environment_setup_failed")
+    try:
+        private = prepare_private_dir(root, run_id)
+    except (OSError, ValueError):
+        return preflight_block("private_storage_unavailable")
     raw_file = private / "report.json"
     output_file = private / "output.log"
     snapshot_file = private / "collection.json"
     env_file = private / "environment.json"
     server_log = private / "server.log"
-    write_private(server_log, "")
+    try:
+        write_private(server_log, "")
+        write_private(env_file, json.dumps(environment))
+        write_private(snapshot_file, text)
+    except (OSError, ValueError):
+        shutil.rmtree(private, ignore_errors=True)
+        return preflight_block("private_storage_unavailable")
     lifecycle_record = result["server_lifecycle"]
     lifecycle_record["readiness_url"] = None
     lifecycle_record["log_file"] = str(server_log.relative_to(root))
@@ -536,42 +589,10 @@ def execute(
         result["exit_code"] = 2
         result["reason_codes"] = sorted(set(result["reason_codes"] + [reason]))
 
-    def block(reason: str) -> dict[str, Any]:
-        mark_blocked(reason)
-        lifecycle_record["log_sha256"] = file_hash(server_log)
-        env_file.unlink(missing_ok=True)
-        return persist_result(root, domain, state, result)
-
-    try:
-        server_argv = parse_server_command(args.server_command)
-    except ValueError:
-        reason = (
-            "server_command_required"
-            if not args.server_command
-            else "server_command_invalid"
-        )
-        return block(reason)
-    if (
-        type(args.readiness_timeout) is not int
-        or not 1 <= args.readiness_timeout <= 600
-    ):
-        return block("readiness_config_invalid")
-    try:
-        readiness_url = check_target(
-            args.readiness_url, args.allow_host, args.safety_note
-        )
-    except ValueError:
-        return block("environment_setup_failed")
     lifecycle_record["command_sha256"] = hashlib.sha256(
         json.dumps(server_argv, ensure_ascii=False, separators=(",", ":")).encode()
     ).hexdigest()
     lifecycle_record["readiness_url"] = readiness_url
-    try:
-        env = environment_values(args.environment, base_url)
-        write_private(env_file, json.dumps(env))
-        write_private(snapshot_file, text)
-    except (OSError, ValueError):
-        return block("environment_setup_failed")
     server_process: subprocess.Popen[Any] | None = None
     cleanup_ok = True
     try:

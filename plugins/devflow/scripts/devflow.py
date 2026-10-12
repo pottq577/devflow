@@ -5612,20 +5612,16 @@ def delivery_command(args: argparse.Namespace) -> int:
         return 0
     if action == "newman":
         result = newman.execute(root, args.domain, state, args, markdown_sections)
-        commit_lifecycle_mutation(root, args.domain, state)
+        if result.get("summary_file"):
+            commit_lifecycle_mutation(root, args.domain, state)
         print(
             json.dumps(
                 {
-                    key: result[key]
-                    for key in (
-                        "id",
-                        "branch",
-                        "status",
-                        "exit_code",
-                        "counts",
-                        "reason_codes",
-                        "summary_file",
-                    )
+                    **{key: result.get(key) for key in (
+                        "id", "branch", "status", "exit_code", "counts", "reason_codes",
+                        "summary_file", "failure_stage", "failure_kind", "retry_policy",
+                    )},
+                    "recorded": bool(result.get("summary_file")),
                 },
                 indent=2,
             )

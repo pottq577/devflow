@@ -73,7 +73,7 @@ A mismatch exits before a packet or lifecycle mutation is produced.
 
 Every lifecycle mutation command (`work start|done|block|unblock|wait-external|resume|review`, `phase set|ref`, `plan-review set`, `integration set`, `decision add|resolve`) projects its prospective state on copies and commits the changed STATE and WORK together in one transaction.
 A rejected lifecycle mutation writes nothing.
-Explicit `delivery newman` executions persist attempt evidence on success, assertion failure and execution blockers, including nonzero exits.
+Explicit `delivery newman` executions persist attempt evidence on success, assertion failure and execution blockers, including nonzero exits. Rejected preflight returns structured exit-2 diagnostics without appending a Newman run or changing STATE.
 `validate` reports structural defects; it never rewrites STATE to normalize them.
 
 The legacy `plan-review set`, `work review`, `phase set`, and `integration set` commands remain available for protocol 1.2 and older artifacts.
@@ -418,6 +418,7 @@ For an ignored collection, commit its reproducible regression fixture/test or ge
 Execution profiles deliberately use explicit ordered requests, inline data, local credentials and complete assertions.
 Startup, readiness, environment, Newman-tool and cleanup failures are blocked. A Newman API/assertion
 failure is failed. Code/collection triage requires the completed failed run and its lifecycle evidence.
+Preflight refusal is explicitly `failure_stage: preflight` with `recorded: false`; recorded attempts include `failure_kind` and `retry_policy` for evidence-based repair or environment/tool inspection.
 Only a collection with no HTTP request items and an empty declared endpoint list may record explicit
 N/A, with matching collection and declaration evidence.
 Reading ELI5 or structurally validating JSON alone proves no actual execution.

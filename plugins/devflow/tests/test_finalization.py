@@ -399,9 +399,12 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.completed()
         result = self.run_newman(owned=False)
         self.assertEqual(result.returncode, 2, result.stderr)
-        run = self.read_state()["delivery"]["finalization"]["runs"][-1]
-        self.assertEqual(run["status"], "blocked")
-        self.assertIn("server_command_required", run["reason_codes"])
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["failure_stage"], "preflight")
+        self.assertIn("server_command_required", payload["reason_codes"])
+        self.assertFalse(payload["recorded"])
+        self.assertIsNone(payload["id"])
+        self.assertEqual(self.read_state()["delivery"]["finalization"]["runs"], [])
         self.assertFalse((self.root / "newman-invoked").exists())
 
     def test_startup_failure_is_blocked_and_persisted(self):
@@ -467,6 +470,8 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         run = self.read_state()["delivery"]["finalization"]["runs"][-1]
         self.assertEqual(run["status"], "failed")
+        self.assertEqual((run["failure_stage"], run["failure_kind"], run["retry_policy"]),
+                         ("execution", "api", "triage_and_rerun"))
         self.assertEqual(run["server_lifecycle"]["newman"]["status"], "failed")
         self.assertEqual(run["server_lifecycle"]["cleanup"]["status"], "passed")
 
@@ -477,6 +482,7 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         run = self.read_state()["delivery"]["finalization"]["runs"][-1]
         self.assertEqual(run["status"], "blocked")
         self.assertIn("newman_tool_failed", run["reason_codes"])
+        self.assertEqual((run["failure_kind"], run["retry_policy"]), ("tool", "fix_tool"))
 
     def test_cleanup_failure_after_newman_pass_is_blocked(self):
         self.completed()
@@ -528,10 +534,12 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.completed()
         result = self.run_newman("--environment", str(self.root / "missing-env.json"))
         self.assertEqual(result.returncode, 2, result.stderr)
-        run = self.read_state()["delivery"]["finalization"]["runs"][-1]
-        self.assertEqual(run["status"], "blocked")
-        self.assertIn("environment_setup_failed", run["reason_codes"])
-        self.assertNotEqual(run["status"], "not_applicable")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["failure_stage"], "preflight")
+        self.assertIn("environment_setup_failed", payload["reason_codes"])
+        self.assertFalse(payload["recorded"])
+        self.assertEqual(self.read_state()["delivery"]["finalization"]["runs"], [])
 
     def test_no_http_run_records_matching_evidence(self):
         self.completed(empty=True)
@@ -574,7 +582,7 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
 
     def test_code_collection_triage_rejects_blocked_run(self):
         self.completed()
-        self.run_newman(owned=False)
+        self.run_newman(tool_failure=True)
         run = self.read_state()["delivery"]["finalization"]["runs"][-1]
         result = self.cli(
             "delivery",
@@ -630,9 +638,11 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.completed()
         result = self.run_newman("--base-url", "https://api.example.com")
         self.assertEqual(result.returncode, 2)
-        run = self.read_state()["delivery"]["finalization"]["runs"][-1]
-        self.assertEqual(run["status"], "blocked")
-        self.assertIn("environment_setup_failed", run["reason_codes"])
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["failure_stage"], "preflight")
+        self.assertIn("environment_setup_failed", payload["reason_codes"])
+        self.assertFalse(payload["recorded"])
+        self.assertEqual(self.read_state()["delivery"]["finalization"]["runs"], [])
 
     def test_server_commit_must_cover_collection_source(self):
         self.completed()
@@ -820,9 +830,31 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.completed()
         result = self.run_newman("--timeout", "0")
         self.assertEqual(result.returncode, 2)
-        run = self.read_state()["delivery"]["finalization"]["runs"][-1]
-        self.assertEqual(run["status"], "blocked")
-        self.assertIn("newman_tool_config_invalid", run["reason_codes"])
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["failure_stage"], "preflight")
+        self.assertIn("newman_tool_config_invalid", payload["reason_codes"])
+        self.assertFalse(payload["recorded"])
+        self.assertEqual(self.read_state()["delivery"]["finalization"]["runs"], [])
+
+    def test_preflight_rejection_preserves_existing_success_and_explanation(self):
+        self.completed()
+        self.assertEqual(self.run_newman().returncode, 0)
+        self.assertEqual(self.explain().returncode, 0)
+        previous = self.read_state()
+        result = self.run_newman("--timeout", "0")
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(json.loads(result.stdout)["recorded"])
+        self.assertEqual(self.read_state(), previous)
+
+    def test_invalid_readiness_config_is_preflight_without_server_launch(self):
+        self.completed()
+        result = self.run_newman("--readiness-timeout", "0")
+        self.assertEqual(result.returncode, 2)
+        payload = json.loads(result.stdout)
+        self.assertIn("readiness_config_invalid", payload["reason_codes"])
+        self.assertFalse(payload["recorded"])
+        self.assertEqual(self.read_state()["delivery"]["finalization"]["runs"], [])
+        self.assertFalse((self.root / "newman-invoked").exists())
 
     def test_unknown_classification_preserves_final_block(self):
         self.completed()
