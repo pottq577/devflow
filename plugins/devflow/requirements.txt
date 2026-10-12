@@ -1,1 +1,2 @@
 PyYAML>=6.0,<7
+typing_extensions>=4.6,<5  # Self on Python 3.10

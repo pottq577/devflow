@@ -626,6 +626,76 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assert_route(fallback, "balanced", "xhigh")
 
 
+    def test_noncritical_max_retry_falls_back_to_xhigh_without_poisoning_model(self):
+        self.caps.mark_effort_unavailable(
+            "fast", "codex_exec", "max", "unsupported reasoning effort"
+        )
+        action = {"command": "run", "scope": "phase", "item_kind": "implementation"}
+        state = {"risk_profile": "medium"}
+        fallback = self.router.resolve(action, state, attempt=2)
+        self.assert_route(fallback, "fast", "xhigh")
+        self.assertEqual(fallback["model"]["requested_reasoning_effort"], "max")
+        self.assertEqual(fallback["model"]["capability_fallback"], "max_to_xhigh")
+        self.assert_route(self.router.resolve(action, state), "fast", "high")
+        self.assert_route(self.router.resolve(action, state, attempt=5), "balanced", "xhigh")
+
+    def test_critical_max_route_never_downgrades_effort(self):
+        self.caps.mark_effort_unavailable(
+            "fast", "codex_exec", "max", "unsupported reasoning effort"
+        )
+        action = {
+            "command": "run", "scope": "phase", "item_kind": "implementation",
+            "item_risk": "critical",
+        }
+        for attempt in (0, 2, 4, 5):
+            with self.subTest(attempt=attempt):
+                with self.assertRaisesRegex(RuntimeError, "profile=economy effort=max"):
+                    self.router.resolve(action, {"risk_profile": "medium"}, attempt)
+
+    def test_effort_unavailability_is_backend_specific_and_survives_resume(self):
+        caps = self.ap.CapabilityRegistry.assumed(
+            self.policy, native_models={self.models["fast"]}, exec_available=True
+        )
+        caps.mark_effort_unavailable("fast", "native_agent", "max", "not supported")
+        action = {"command": "run", "scope": "phase", "item_risk": "critical"}
+        spec = self.ap.RouteEngine(self.policy, caps).resolve(
+            action, {"risk_profile": "medium"}
+        )
+        self.assert_route(spec, "fast", "max")
+        self.assertEqual(spec["execution"]["backend"], "codex_exec")
+        rows = caps.unavailable_rows()
+        self.assertEqual(rows[0]["effort"], "max")
+        restored = self.ap.CapabilityRegistry.assumed(
+            self.policy, native_models={self.models["fast"]}, exec_available=True
+        )
+        restored.restore_unavailable(rows)
+        self.assertEqual(
+            self.ap.RouteEngine(self.policy, restored).resolve(
+                action, {"risk_profile": "medium"}
+            )["execution"]["backend"],
+            "codex_exec",
+        )
+        self.assertEqual(
+            restored.backend_for("fast", ["native_agent"], "high"), "native_agent"
+        )
+
+    def test_declared_effort_capabilities_are_respected_before_retry_fallback(self):
+        policy = self.ap.copy.deepcopy(self.policy)
+        policy["model_registry"]["models"]["fast"]["efforts"] = ["high", "xhigh"]
+        caps = self.ap.CapabilityRegistry.assumed(policy, exec_available=True)
+        router = self.ap.RouteEngine(policy, caps)
+        action = {"command": "run", "scope": "phase", "item_kind": "implementation"}
+        spec = router.resolve(action, {"risk_profile": "medium"}, attempt=2)
+        self.assert_route(spec, "fast", "xhigh")
+        self.assertEqual(spec["model"]["requested_reasoning_effort"], "max")
+        critical = {**action, "item_risk": "critical"}
+        with self.assertRaisesRegex(RuntimeError, "profile=economy effort=max"):
+            router.resolve(critical, {"risk_profile": "medium"}, attempt=5)
+
+    def test_python310_self_backport_is_declared(self):
+        requirements = (PLUGIN / "requirements.txt").read_text()
+        self.assertIn("typing_extensions>=4.6,<5", requirements)
+
 class AutopilotRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.ap = load_module()
@@ -1504,6 +1574,65 @@ class AutopilotRuntimeTests(unittest.TestCase):
         self.assertEqual(selected, ["fast", "balanced"])
         self.assertEqual(controller.attempts, {})
 
+    def test_runtime_retries_unsupported_max_at_xhigh_without_consuming_attempt(self):
+        policy = self.ap.load_policy(PLUGIN, None)
+        caps = self.ap.CapabilityRegistry.assumed(policy, exec_available=True)
+        router = self.ap.RouteEngine(policy, caps)
+        action = {
+            "command": "run", "role": "executor", "scope": "phase",
+            "work_item": "P01-I01", "item_kind": "implementation",
+        }
+        state = {"risk_profile": "medium", "next_action": action}
+        fp = self.ap.AutopilotController.fingerprint(action)
+        selected = []
+
+        def dispatch(spec, _prompt):
+            selected.append(spec["model"]["reasoning_effort"])
+            if len(selected) == 1:
+                return {
+                    "status": "failed", "exit_code": 1,
+                    "stderr": "Model does not support reasoning effort max",
+                }
+            state["next_action"] = {"command": "complete", "role": "none", "scope": "project"}
+            return {"status": "success", "exit_code": 0}
+
+        controller = self.ap.AutopilotController(
+            lambda: state, lambda _action: "packet", router.resolve, dispatch,
+            None, 4, capabilities=caps, resume_state={"attempts": {fp: 2}},
+        )
+        result = controller.run()
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(selected, ["max", "xhigh"])
+        self.assertEqual(caps.unavailable_rows()[0]["effort"], "max")
+        self.assertIsNotNone(caps.backend_for("fast", ["codex_exec"], "xhigh"))
+
+    def test_critical_effort_failure_blocks_without_silent_downgrade(self):
+        policy = self.ap.load_policy(PLUGIN, None)
+        caps = self.ap.CapabilityRegistry.assumed(policy, exec_available=True)
+        router = self.ap.RouteEngine(policy, caps)
+        action = {
+            "command": "run", "role": "executor", "scope": "phase",
+            "work_item": "P01-I01", "item_kind": "implementation", "item_risk": "critical",
+        }
+        state = {"risk_profile": "medium", "next_action": action}
+        selected = []
+
+        def dispatch(spec, _prompt):
+            selected.append(spec["model"]["reasoning_effort"])
+            return {
+                "status": "failed", "exit_code": 1,
+                "stderr": "Unsupported reasoning effort: max",
+            }
+
+        controller = self.ap.AutopilotController(
+            lambda: state, lambda _action: "packet", router.resolve, dispatch,
+            None, 3, capabilities=caps,
+        )
+        result = controller.run()
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "route_unavailable")
+        self.assertEqual(selected, ["max"])
+
     def test_capacity_failure_is_classified_for_model_fallback(self):
         receipt = self.ap.classify_receipt(
             {
@@ -1513,6 +1642,29 @@ class AutopilotRuntimeTests(unittest.TestCase):
             }
         )
         self.assertEqual(receipt["failure_kind"], "capability_unavailable")
+
+    def test_effort_rejection_classification_is_distinct_from_model_unavailability(self):
+        for message in (
+            "Unsupported reasoning effort: max",
+            "Model does not support reasoning effort max",
+            "Invalid value 'max' for model_reasoning_effort",
+        ):
+            with self.subTest(message=message):
+                result = self.ap.classify_receipt(
+                    {"status": "failed", "exit_code": 1, "stderr": message}
+                )
+                self.assertEqual(result["failure_kind"], "effort_unavailable")
+        result = self.ap.classify_receipt(
+            {"status": "failed", "exit_code": 1, "stderr": "model unavailable"}
+        )
+        self.assertEqual(result["failure_kind"], "capability_unavailable")
+
+        result = self.ap.classify_receipt(
+            {"status": "failed", "exit_code": 1,
+             "stderr": "Unsupported reasoning effort: max",
+             "failure_kind": "capability_unavailable"}
+        )
+        self.assertEqual(result["failure_kind"], "effort_unavailable")
 
     def test_infrastructure_failures_are_not_classified_as_model_capability(self):
         cases = [

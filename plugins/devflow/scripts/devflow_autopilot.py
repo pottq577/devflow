@@ -24,6 +24,14 @@ MODEL_CAPABILITY_FAILURE = re.compile(
     r"selected model is at capacity",
     re.IGNORECASE,
 )
+# Effort failures must not poison an otherwise usable model/backend pair.
+EFFORT_CAPABILITY_FAILURE = re.compile(
+    r"(?:\b(?:model[_-])?reasoning[\s._-]*effort\b|\beffort\b).{0,120}"
+    r"\b(?:unsupported|not supported|does not support|invalid|unknown|unavailable|not available)\b|"
+    r"\b(?:unsupported|not supported|does not support|invalid|unknown|unavailable|not available)"
+    r".{0,120}(?:\b(?:model[_-])?reasoning[\s._-]*effort\b|\beffort\b)",
+    re.IGNORECASE | re.DOTALL,
+)
 NETWORK_FAILURE = re.compile(
     r"network access.*blocked|domain is not on the allowlist|blocked-by-allowlist|"
     r"could not resolve host|name or service not known|temporary failure in name resolution|"
@@ -632,6 +640,7 @@ class CapabilityRegistry:
         self.codex_launch_error = codex_launch_error
         self.codex_openai_base_url = codex_openai_base_url
         self.unavailable: dict[tuple[str, str], str] = {}
+        self.unavailable_efforts: dict[tuple[str, str, str], str] = {}
 
     @classmethod
     def assumed(
@@ -718,6 +727,13 @@ class CapabilityRegistry:
             reason.strip() or "unavailable"
         )
 
+    def mark_effort_unavailable(
+        self, model: str, backend: str, effort: str, reason: str
+    ) -> None:
+        self.unavailable_efforts[(self.model_id(model), backend, effort)] = (
+            reason.strip() or "reasoning effort unavailable"
+        )
+
     def codex_compatible(self, model: str) -> bool:
         minimum = self.model_registry.codex_min_version(model)
         if not minimum:
@@ -750,13 +766,18 @@ class CapabilityRegistry:
             current_model = self.model_id(reference)
             if model and current_model != model:
                 continue
-            self.mark_unavailable(
-                reference, backend, str(row.get("reason") or "unavailable")
-            )
+            reason = str(row.get("reason") or "unavailable")
+            if "effort" in row:
+                effort = str(row.get("effort") or "").strip()
+                # Discard stale effort reports after a model registry override.
+                if effort in (self.model_meta(reference).get("efforts") or []):
+                    self.mark_effort_unavailable(reference, backend, effort, reason)
+            else:
+                self.mark_unavailable(reference, backend, reason)
 
     def unavailable_rows(self) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = []
-        for (model, backend), reason in sorted(self.unavailable.items()):
+        for (model, backend), reason in self.unavailable.items():
             rows.append(
                 {
                     "alias": self.model_registry.alias_for(model),
@@ -765,12 +786,28 @@ class CapabilityRegistry:
                     "reason": reason,
                 }
             )
-        return rows
+        for (model, backend, effort), reason in self.unavailable_efforts.items():
+            rows.append(
+                {
+                    "alias": self.model_registry.alias_for(model),
+                    "model": model,
+                    "backend": backend,
+                    "effort": effort,
+                    "reason": reason,
+                }
+            )
+        return sorted(
+            rows, key=lambda row: (row["model"], row["backend"], row.get("effort", ""))
+        )
 
-    def backend_for(self, model: str, preference: list[str]) -> str | None:
+    def backend_for(
+        self, model: str, preference: list[str], effort: str | None = None
+    ) -> str | None:
         concrete = self.model_id(model)
         for backend in preference:
             if (concrete, backend) in self.unavailable:
+                continue
+            if effort is not None and (concrete, backend, effort) in self.unavailable_efforts:
                 continue
             if backend == "native_agent" and concrete in self.native_models:
                 return backend
@@ -831,17 +868,35 @@ class ModelResolver:
         )
         recursive = bool((self.policy.get("delegation") or {}).get("recursive", False))
         context = self.policy.get("context") or {}
+        requested_effort = str(decision["effort"])
+        efforts = [requested_effort]
+        # A noncritical Worker retry may preserve its xhigh risk floor if max
+        # cannot be dispatched. Critical WORK and initial routing fail closed.
+        if (
+            decision["role"] == "worker"
+            and attempt > 0
+            and decision["effective_risk"] != "critical"
+            and requested_effort == "max"
+        ):
+            efforts.append("xhigh")
         selected_ref = backend = None
-        for model_ref in profile.get("candidates", []):
-            if not self.capabilities.supports_effort(model_ref, decision["effort"]):
-                continue
-            if not self.capabilities.supports_recursive_delegation(
-                model_ref, recursive
-            ):
-                continue
-            candidate_backend = self.capabilities.backend_for(model_ref, preference)
-            if candidate_backend:
-                selected_ref, backend = str(model_ref), candidate_backend
+        selected_effort = requested_effort
+        for effort in efforts:
+            for model_ref in profile.get("candidates", []):
+                if not self.capabilities.supports_effort(model_ref, effort):
+                    continue
+                if not self.capabilities.supports_recursive_delegation(
+                    model_ref, recursive
+                ):
+                    continue
+                candidate_backend = self.capabilities.backend_for(
+                    model_ref, preference, effort
+                )
+                if candidate_backend:
+                    selected_ref, backend = str(model_ref), candidate_backend
+                    selected_effort = effort
+                    break
+            if selected_ref:
                 break
         if not selected_ref:
             raise RuntimeError(
@@ -850,18 +905,22 @@ class ModelResolver:
         alias = self.capabilities.model_registry.alias_for(selected_ref)
         selected = self.capabilities.model_id(selected_ref)
         model_meta = self.capabilities.model_meta(selected_ref)
+        model_choice = {
+            "profile": decision["profile"],
+            "alias": alias,
+            "selected": selected,
+            "reasoning_effort": selected_effort,
+        }
+        if selected_effort != requested_effort:
+            model_choice["requested_reasoning_effort"] = requested_effort
+            model_choice["capability_fallback"] = "max_to_xhigh"
         return {
             "dispatch_id": f"dsp_{uuid.uuid4().hex[:12]}",
             "role": decision["role"],
             "task_id": action.get("work_item"),
             "action": copy.deepcopy(action),
             "effective_risk": decision["effective_risk"],
-            "model": {
-                "profile": decision["profile"],
-                "alias": alias,
-                "selected": selected,
-                "reasoning_effort": decision["effort"],
-            },
+            "model": model_choice,
             "execution": {
                 "backend": backend,
                 "permissions": decision["permissions"],
@@ -1005,8 +1064,10 @@ class RouteEngine:
                 stage = self._worker_retry_stage(retries, attempt)
                 if stage:
                     if stage.get("replace"):
-                        cfg["profile"] = str(stage.get("profile") or cfg["profile"])
-                        cfg["effort"] = str(stage.get("effort") or cfg["effort"])
+                        # Cross-family fallback may not weaken a critical WORK route.
+                        if risk != "critical":
+                            cfg["profile"] = str(stage.get("profile") or cfg["profile"])
+                            cfg["effort"] = str(stage.get("effort") or cfg["effort"])
                     else:
                         cfg["profile"] = self._stronger_profile(
                             cfg["profile"], stage.get("profile")
@@ -1368,10 +1429,17 @@ def classify_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
     if out.get("status") == "success":
         out.pop("failure_kind", None)
         return out
-    if out.get("failure_kind"):
-        return out
     text = _failure_text(out)
-    if MODEL_CAPABILITY_FAILURE.search(text):
+    if out.get("failure_kind"):
+        if (
+            out["failure_kind"] == "capability_unavailable"
+            and EFFORT_CAPABILITY_FAILURE.search(text)
+        ):
+            out["failure_kind"] = "effort_unavailable"
+        return out
+    if EFFORT_CAPABILITY_FAILURE.search(text):
+        failure_kind = "effort_unavailable"
+    elif MODEL_CAPABILITY_FAILURE.search(text):
         failure_kind = "capability_unavailable"
     elif NETWORK_FAILURE.search(text):
         failure_kind = "network_unavailable"
@@ -1668,17 +1736,24 @@ class AutopilotController:
     def _mark_capability_failure(
         self, spec: dict[str, Any], receipt: dict[str, Any]
     ) -> bool:
+        kind = receipt.get("failure_kind")
         if (
-            receipt.get("failure_kind") != "capability_unavailable"
+            kind not in {"capability_unavailable", "effort_unavailable"}
             or not self.capabilities
         ):
             return False
-        model = str((spec.get("model") or {}).get("selected") or "")
+        model_info = spec.get("model") or {}
+        model = str(model_info.get("selected") or "")
         backend = str((spec.get("execution") or {}).get("backend") or "")
         if model and backend:
-            self.capabilities.mark_unavailable(
-                model, backend, _failure_text(receipt) or "capability unavailable"
-            )
+            reason = _failure_text(receipt) or "capability unavailable"
+            if kind == "effort_unavailable":
+                effort = str(model_info.get("reasoning_effort") or "")
+                if not effort:
+                    return False
+                self.capabilities.mark_effort_unavailable(model, backend, effort, reason)
+            else:
+                self.capabilities.mark_unavailable(model, backend, reason)
             return True
         return False
 
