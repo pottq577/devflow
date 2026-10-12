@@ -29,3 +29,7 @@ notes:
   - A successful scout capsule replaces the full rendered runtime packet for compact specialist roles; the specialist re-renders only when material evidence is missing or contradictory.
   - orchestration.scout_max_chars bounds the persisted/passed pre-analysis capsule; failed or same-model scouts fall back to the full runtime packet.
   - concurrency.mutating is enforced with cross-process domain leases.
+  - orchestration.hosted.max_steps bounds all reserved hosted child spawns, including scouts and capability fallbacks; hosted previews do not consume steps.
+  - orchestration.hosted.max_action_visits blocks repeated lifecycle action cycles across real progress, independent of semantic no-progress retries.
+  - Hosted attempt, visit, and in-flight state is persisted per session and fenced by the shared SQLite coordinator; resumed supervisors must acknowledge pending steps rather than re-spawn them.
+  - Hosted native child token usage is unmeasured: standalone measured token-budget rules are not claimed or simulated for hosted runs.

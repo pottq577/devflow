@@ -14,11 +14,10 @@ This skill explicitly authorizes sub-agent delegation for DevFlow lifecycle work
 ```bash
 python3 <this-skill-directory>/scripts/host.py session-start <domain>
 python3 <this-skill-directory>/scripts/host.py dispatch <domain> \
-  --session-id <session_id> --attempt <attempt> \
-  --until <plan|implementation|complete>
+  --session-id <session_id> --until <plan|implementation|complete>
 ```
 
-The command returns the exact lifecycle action, routed model and reasoning effort, a bounded child message, retry limits, and an optional scout dispatch. Spawn those agents with the host tools and `fork_turns` from the envelope. The child recovers the full runtime packet from the repository, so the parent does not copy PRD, PLAN, WORK, or protocol text into a nested model prompt. Keep using the same `--session-id` throughout the run, renew it before expiry, and run `host.py session-end <domain> --session-id <session_id>` only after all children finish or are cancelled. Restart only with the original id; do not steal another hosted or standalone controller's lease.
+The command returns the routed action, model, reasoning effort, and a compact repository-recovery message. **Before each scout or primary spawn**, use `host.py step-start` with the envelope's fingerprint, attempt and candidate alias. After its host wait, acknowledge the step with `host.py step-finish`. The durable guard bounds total spawns, semantic retries and repeated-action cycles; `dispatch` alone does not consume a step. Use `host.py guard-status --session-id <session_id>` when resuming the original session. Never repeat a pending spawn or release a session with an unacknowledged child. The child renders the authoritative packet; the supervisor does not copy PRD, PLAN or WORK. See `skills/goal/SKILL.md` for the required bootstrap and failure procedure. Keep the same session id, renew it before expiry, and run `host.py session-end` only after all children finish. Never take over another owner's lease.
 
 Do not run `codex exec` from this host-native path. Do not silently inherit the parent model when the host cannot honor the routed model or reasoning effort. Report that condition as a capability blocker. Use `devflow status <domain> --json` for hosted lifecycle state; `devflow autopilot status` is standalone-controller telemetry.
 

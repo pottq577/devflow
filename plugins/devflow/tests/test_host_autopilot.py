@@ -407,6 +407,59 @@ None.
         released = self.run_host(root, "session-end", "sample", "--session-id", owner)
         self.assertEqual(released.returncode, 0, released.stderr)
 
+    def test_cli_guard_requires_reserved_and_acknowledged_primary(self):
+        root = self.new_repo()
+        initialized = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        acquired = self.run_host(root, "session-start", "sample")
+        self.assertEqual(acquired.returncode, 0, acquired.stderr)
+        owner = json.loads(acquired.stdout)["session_id"]
+
+        preview = self.run_host(root, "dispatch", "sample", "--session-id", owner)
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        envelope = json.loads(preview.stdout)
+        self.assertEqual(envelope["safety"]["steps_completed"], 0)
+        self.assertEqual(envelope["attempt"], 0)
+        second_preview = self.run_host(root, "dispatch", "sample", "--session-id", owner)
+        self.assertEqual(json.loads(second_preview.stdout)["safety"]["steps_completed"], 0)
+
+        started = self.run_host(
+            root, "step-start", "sample", "--session-id", owner,
+            "--kind", "primary", "--fingerprint", envelope["fingerprint"],
+            "--candidate-alias", envelope["primary"]["model_alias"],
+            "--attempt", "0",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        step = json.loads(started.stdout)
+        self.assertEqual(step["steps_completed"], 1)
+        blocked = self.run_host(root, "dispatch", "sample", "--session-id", owner)
+        self.assertEqual(blocked.returncode, 1, blocked.stderr)
+        self.assertEqual(json.loads(blocked.stdout)["reason"], "hosted_step_inflight")
+        premature = self.run_host(root, "session-end", "sample", "--session-id", owner)
+        self.assertEqual(premature.returncode, 1, premature.stderr)
+
+        finished = self.run_host(
+            root, "step-finish", "sample", "--session-id", owner,
+            "--step-id", step["step_id"], "--outcome", "completed",
+        )
+        self.assertEqual(finished.returncode, 0, finished.stderr)
+        self.assertFalse(json.loads(finished.stdout)["progressed"])
+        resumed = self.run_host(root, "session-start", "sample", "--session-id", owner)
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        after = self.run_host(root, "dispatch", "sample", "--session-id", owner)
+        self.assertEqual(after.returncode, 0, after.stderr)
+        self.assertEqual(json.loads(after.stdout)["attempt"], 1)
+        stale = self.run_host(root, "dispatch", "sample", "--session-id", owner, "--attempt", "0")
+        self.assertEqual(stale.returncode, 1, stale.stderr)
+        self.assertEqual(json.loads(stale.stdout)["reason"], "hosted_stale_attempt")
+        self.assertEqual(
+            self.run_host(root, "session-end", "sample", "--session-id", owner).returncode,
+            0,
+        )
+
     def test_goal_skill_prefers_host_native_subagents(self):
         text = (PLUGIN / "skills" / "goal" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("session-start", text)

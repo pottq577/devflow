@@ -22,6 +22,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import devflow
 import devflow_autopilot as autopilot
 import devflow_session as session
+import devflow_host_guard as guard
 
 HOST_BACKEND = "host_native_agent"
 TELEMETRY_FILENAME = "host-dispatch.jsonl"
@@ -576,6 +577,8 @@ def bootstrap_envelope(
     return {
         "status": "dispatch_required",
         "bootstrap": True,
+        "fingerprint": autopilot.AutopilotController.fingerprint(action),
+        "attempt": 0,
         "target": str(target),
         "primary": payload,
     }
@@ -610,6 +613,26 @@ def _load_state(root: Path, domain: str) -> dict[str, Any]:
     return devflow.project_state(root, domain, copy.deepcopy(raw))
 
 
+def _guard_view(
+    root: Path, domain: str, owner: str, policy: dict[str, Any], until: str,
+) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
+    state = _load_state(root, domain) if devflow.state_path(root, domain).exists() else None
+    action = (state or {}).get("next_action") or {"command": "bootstrap", "scope": "project"}
+    fingerprint = autopilot.AutopilotController.fingerprint(action)
+    if state is not None and until != "complete" and devflow.effective_workflow_type(state) != "delivery":
+        raise ValueError("Staged execution boundaries are supported only for delivery workflows")
+    terminal = bool(state is not None and (
+        action.get("command") == "complete"
+        or action.get("role") == "human"
+        or action.get("command") == "decision"
+        or autopilot.ExecutionBoundary(until).reached(state, action)
+    ))
+    safety = guard.inspect(
+        _telemetry_dir(root, domain), owner, fingerprint, policy, terminal=terminal
+    )
+    return state, fingerprint, safety
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="devflow-host",
@@ -632,7 +655,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch = sub.add_parser("dispatch")
     dispatch.add_argument("domain")
     dispatch.add_argument("--session-id", required=True)
-    dispatch.add_argument("--attempt", type=int, default=0)
+    dispatch.add_argument("--attempt", type=int)  # optional assertion, never a reset
     dispatch.add_argument(
         "--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete"
     )
@@ -651,6 +674,28 @@ def build_parser() -> argparse.ArgumentParser:
     finalize.add_argument(
         "--risk", choices=sorted(devflow.RISK_LEVELS), default="medium"
     )
+
+    step_start = sub.add_parser("step-start")
+    step_start.add_argument("domain")
+    step_start.add_argument("--session-id", required=True)
+    step_start.add_argument("--kind", choices=["bootstrap", "scout", "primary"], required=True)
+    step_start.add_argument("--fingerprint", required=True)
+    step_start.add_argument("--candidate-alias", required=True)
+    step_start.add_argument("--attempt", type=int, required=True)
+    step_start.add_argument("--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete")
+    step_start.add_argument("--risk", choices=sorted(devflow.RISK_LEVELS), default="medium")
+
+    step_finish = sub.add_parser("step-finish")
+    step_finish.add_argument("domain")
+    step_finish.add_argument("--session-id", required=True)
+    step_finish.add_argument("--step-id", required=True)
+    step_finish.add_argument("--outcome", choices=["completed", "failed", "cancelled", "capability_blocked"], required=True)
+    step_finish.add_argument("--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete")
+
+    guard_status = sub.add_parser("guard-status")
+    guard_status.add_argument("domain")
+    guard_status.add_argument("--session-id", required=True)
+    guard_status.add_argument("--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete")
 
     telemetry_start_parser = sub.add_parser("telemetry-start")
     telemetry_start_parser.add_argument("domain")
@@ -683,45 +728,93 @@ def main() -> int:
         policy = autopilot.load_policy(plugin_root, root)
 
         runtime_dir = _telemetry_dir(root, args.domain)
-        if args.command in {"dispatch", "bootstrap", "bootstrap-finalize"}:
+        if args.command in {"dispatch", "bootstrap", "bootstrap-finalize", "step-start", "step-finish", "guard-status"}:
             session.require(runtime_dir, args.session_id)
 
         if args.command == "session-start":
             result = session.start(runtime_dir, session_id=args.session_id)
         elif args.command == "session-end":
+            guard.assert_idle(runtime_dir, args.session_id)
             result = session.end(runtime_dir, args.session_id)
         elif args.command == "session-status":
             result = session.status(runtime_dir)
         elif args.command == "dispatch":
-            state = _load_state(root, args.domain)
-            if (
-                args.until != "complete"
-                and devflow.effective_workflow_type(state) != "delivery"
-            ):
-                raise ValueError(
-                    "Staged execution boundaries are supported only for delivery "
-                    "workflows"
+            state, fingerprint, safety = _guard_view(
+                root, args.domain, args.session_id, policy, args.until
+            )
+            if state is None:
+                raise ValueError("Domain not initialized; use bootstrap first")
+            if safety["status"] == "blocked":
+                result = {"status": "blocked", "reason": safety["reason"], "safety": safety}
+            elif args.attempt is not None and args.attempt != safety["attempt"]:
+                result = {"status": "blocked", "reason": "hosted_stale_attempt", "safety": safety}
+            else:
+                result = dispatch_envelope(
+                    root, plugin_root, policy, args.domain, state,
+                    attempt=safety["attempt"], until=args.until,
                 )
-            result = dispatch_envelope(
-                root,
-                plugin_root,
-                policy,
-                args.domain,
-                state,
-                attempt=args.attempt,
-                until=args.until,
-            )
+                result["safety"] = safety
         elif args.command == "bootstrap":
-            result = bootstrap_envelope(
-                root,
-                plugin_root,
-                policy,
-                args.domain,
-                Path(args.requirements_file).resolve(),
-                args.risk,
+            state, fingerprint, safety = _guard_view(
+                root, args.domain, args.session_id, policy, "complete"
             )
+            if state is not None:
+                raise ValueError("Domain already initialized")
+            if safety["status"] == "blocked":
+                result = {"status": "blocked", "reason": safety["reason"], "safety": safety}
+            else:
+                result = bootstrap_envelope(
+                    root, plugin_root, policy, args.domain,
+                    Path(args.requirements_file).resolve(), args.risk,
+                )
+                result["safety"] = safety
         elif args.command == "bootstrap-finalize":
             result = bootstrap_finalize(root, args.domain, args.risk)
+        elif args.command == "guard-status":
+            _state, _fingerprint, result = _guard_view(
+                root, args.domain, args.session_id, policy, args.until
+            )
+        elif args.command == "step-start":
+            state, fingerprint, safety = _guard_view(
+                root, args.domain, args.session_id, policy, args.until
+            )
+            if args.fingerprint != fingerprint:
+                raise guard.GuardBlocked("hosted_stale_fingerprint")
+            if args.kind == "bootstrap":
+                if state is not None:
+                    raise guard.GuardBlocked("hosted_bootstrap_already_initialized")
+                bootstrap_action = {"command": "bootstrap", "scope": "project"}
+                spec = _host_route(policy, bootstrap_action, {"risk_profile": args.risk}, 0)
+                candidates = _candidate_rows(policy, spec)
+                candidates.append({"alias": spec["model"]["alias"]})
+            else:
+                if state is None:
+                    raise guard.GuardBlocked("hosted_domain_not_initialized")
+                envelope = dispatch_envelope(
+                    root, plugin_root, policy, args.domain, state,
+                    attempt=safety["attempt"], until=args.until,
+                )
+                payload = envelope.get(args.kind)
+                if envelope["status"] != "dispatch_required" or not payload:
+                    raise guard.GuardBlocked("hosted_step_not_routed")
+                candidates = payload.get("candidates") or []
+                candidates = [*candidates, {"alias": payload["model_alias"]}]
+            if args.candidate_alias not in {row["alias"] for row in candidates}:
+                raise guard.GuardBlocked("hosted_candidate_not_routed")
+            result = guard.begin(
+                runtime_dir, args.session_id, fingerprint, policy,
+                kind=args.kind, expected_attempt=args.attempt,
+                candidate_alias=args.candidate_alias,
+            )
+        elif args.command == "step-finish":
+            _state, fingerprint, _safety = _guard_view(
+                root, args.domain, args.session_id, policy, args.until
+            )
+            # The ordinary preview is blocked by the pending step; only finish may clear it.
+            result = guard.finish(
+                runtime_dir, args.session_id, args.step_id, fingerprint, policy,
+                outcome=args.outcome,
+            )
         elif args.command == "telemetry-start":
             result = telemetry_start(
                 root,
@@ -747,6 +840,9 @@ def main() -> int:
         return 1 if result.get("status") == "blocked" else 0
     except KeyboardInterrupt:
         return 130
+    except guard.GuardBlocked as exc:
+        print(json.dumps({"status": "blocked", "reason": exc.reason}))
+        return 1
     except Exception as exc:
         if "args" in locals() and getattr(args, "command", None) in TELEMETRY_COMMANDS:
             print(

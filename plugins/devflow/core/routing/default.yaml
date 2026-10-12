@@ -91,6 +91,9 @@ orchestration:
   scout_on_critical: [architect, verifier]
   scout_on_retry: [verifier, auditor, finalizer]
   scout_max_chars: 12000
+  hosted:
+    max_steps: 100
+    max_action_visits: 4
 budget:
   total_tokens: 1000000
   planning_percent: 15
