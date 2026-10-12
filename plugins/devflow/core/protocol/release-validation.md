@@ -1,0 +1,73 @@
+# Regression and release verification
+
+The regression suite is a test gate, not lifecycle authority and not evidence of a
+production deployment. It never edits PRD, PLAN, WORK, audit evidence or domain STATE.
+
+## One fresh suite per decision
+
+From the repository root, after applying the proposed change and before merging:
+
+```bash
+python3 plugins/devflow/tests/release_gate.py --mode merge \
+  --report /tmp/devflow-merge-verdict.json
+```
+
+After committing the change, use the stricter release check in an environment with
+Newman installed and permission to bind the disposable loopback test server:
+
+```bash
+python3 plugins/devflow/tests/release_gate.py --mode release \
+  --report /tmp/devflow-release-verdict.json
+```
+
+Both commands launch `run_suite.py --profile full` themselves. Do not present a
+previous, filtered, list-only or manually edited suite report as fresh release evidence.
+Each command generates two atomic JSON files: the named verdict and a sibling
+`*.suite.json` report. The verdict includes a SHA-256 of the suite report and the
+SHA-256 of the plugin source/contracts snapshot. Keep reports outside the repo.
+Exit 0 means the chosen gate passed; exit 1 means it is blocked; exit 2 means
+the gate could not run or persist its evidence.
+
+The optional `run_suite.py --profile focused|legacy|newman` modes support development
+feedback only. A filtered `--profile full --match ...` is also partial.
+
+## Required checks
+
+- Full, unfiltered discovery and test execution, with no duplicate, missing or
+  unexpected test IDs. Every test's outcome must reconcile with the JSON summary.
+- At least the original 171 lifecycle cases, all three real-Newman cases and the
+  required regression test modules must remain discoverable. The legacy entry point
+  `test_devflow.py` is executed through the unittest lifecycle adapter, not twice.
+- Every non-Newman skipped test, test failure, error, expected failure or unexpected
+  success is a blocker. A nonzero full suite exit code is always a blocker, even if
+  its JSON summary appears successful.
+- The Python plugin and test source must parse using the declared Python 3.10
+  syntax contract, and the source snapshot must not change during the test run.
+- Git HEAD must be available for provenance. Merge mode allows uncommitted plugin
+  changes so that the candidate patch can be tested before committing.
+- Merge mode can pass **with an explicit warning** when real-Newman smoke tests are
+  skipped. This does **not** claim that real HTTP tests passed. Release mode requires
+  all real-Newman smoke tests to run and pass, with no skipped tests, and a clean
+  plugin working tree after the suite.
+
+The gate does not infer billed tokens, certify a production endpoint or substitute
+for required independent audits, application acceptance testing, or a human release
+decision. Missing system dependencies and sandbox denial remain visible blockers
+for the strict release gate rather than fabricated execution evidence.
+
+## Regression areas protected
+
+| Improvement | Regression coverage |
+| --- | --- |
+| Test collection and standalone compatibility | `test_test_infrastructure.py`, `test_suite_runner.py`, `test_lifecycle_cases.py` |
+| Remediation scheduling and lifecycle corrections | Legacy `case_*` scenarios, `test_finalization.py` |
+| Capability-aware routing | `test_autopilot.py` |
+| Hosted domain ownership and bounded execution | `test_hosted_session.py`, `test_hosted_guard.py`, `test_host_autopilot.py` |
+| Scout capsule and dispatch contracts | `test_scout_contract.py`, `test_host_autopilot.py` |
+| Newman failure semantics | `test_newman_classification.py`, `test_finalization.py`, `test_newman_integration.py` |
+| Suite and gate contracts | `test_suite_runner.py`, `test_release_gate.py` |
+
+A partial profile is useful during development but cannot replace this complete
+cross-module regression gate. Inspect the verdict's `blockers`, `warnings` and
+`coverage`, plus the standalone suite JSON, before deciding whether to merge or
+release.

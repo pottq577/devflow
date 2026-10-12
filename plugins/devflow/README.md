@@ -404,6 +404,26 @@ For backward compatibility, `python3 plugins/devflow/tests/test_devflow.py` stil
 runs the original lifecycle cases and each `test_*.py` file remains directly
 executable. `run_framework_suite.py` remains an optional parallel legacy runner.
 
+### Merge and release gate
+
+The separate release gate **runs a fresh full suite** and verifies its JSON evidence,
+complete discovery, original 171 lifecycle tests, required regression modules,
+Python 3.10 parsing and source stability during execution:
+
+```bash
+python3 plugins/devflow/tests/release_gate.py --mode merge \
+  --report /tmp/devflow-merge-verdict.json
+python3 plugins/devflow/tests/release_gate.py --mode release \
+  --report /tmp/devflow-release-verdict.json
+```
+
+`merge` accepts skipped optional real-Newman smoke tests **with a visible warning**.
+`release` requires those real HTTP smoke tests to execute and pass, all other tests
+to pass without skips, and a clean plugin working tree. A failed/partial/stale suite
+report cannot pass either gate. Verdict and full-suite JSON evidence are written to
+separate files; no private Newman response data is copied into either report.
+See `core/protocol/release-validation.md` for the complete acceptance contract.
+
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
