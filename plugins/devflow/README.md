@@ -366,18 +366,43 @@ New source changes require ordinary WORK. See `core/protocol/delivery-artifacts.
 
 ### Delivery regression checks
 
-Run the single discovered regression suite from the marketplace root:
+Run one full, single-discovery regression suite from the marketplace root:
+
+```bash
+python3 plugins/devflow/tests/run_suite.py --profile full
+```
+
+`full` is the only complete release gate: it includes all 171 unchanged `case_*`
+lifecycle scenarios, delivery, routing, hosted and finalization tests, plus optional
+real-Newman smoke tests. The latter are explicitly skipped if `newman` is absent.
+The runner rejects duplicate test IDs and empty selections before running anything.
+For targeted development feedback, explicitly select a partial profile:
+
+```bash
+python3 plugins/devflow/tests/run_suite.py --profile focused
+python3 plugins/devflow/tests/run_suite.py --profile focused --match HostAutopilotCliTests
+python3 plugins/devflow/tests/run_suite.py --profile legacy
+python3 plugins/devflow/tests/run_suite.py --profile newman
+python3 plugins/devflow/tests/run_suite.py --profile full --report /tmp/devflow-suite.json
+```
+
+`focused` excludes legacy lifecycle scenarios and real-Newman smoke tests; `legacy`
+runs only the original scenarios, while `newman` runs only the optional smoke tests.
+A `newman`-only selection where all tests are skipped exits nonzero instead of
+pretending execution passed. A `--match` selection is also **partial**, even under
+`--profile full`. JSON reports
+include selection completeness, discovered/selected counts, outcomes and per-test
+elapsed time, but no captured stdout or private test payloads. Do not run a partial
+profile as a merge/release gate or run both entry points and count them as separate
+coverage. The equivalent raw unittest discovery command remains supported:
 
 ```bash
 python3 -m unittest discover -s plugins/devflow/tests -p 'test_*.py'
 ```
 
-This includes the 171 existing `case_*` lifecycle scenarios, delivery, routing, hosted,
-finalization and the optional real-Newman smoke tests exactly once each. The real-Newman
-tests are explicitly skipped if `newman` is not installed. For backward compatibility,
-`python3 plugins/devflow/tests/test_devflow.py` still runs the original lifecycle cases
-and each `test_*.py` file remains directly executable. `run_framework_suite.py` remains
-available for parallel execution of the original lifecycle cases.
+For backward compatibility, `python3 plugins/devflow/tests/test_devflow.py` still
+runs the original lifecycle cases and each `test_*.py` file remains directly
+executable. `run_framework_suite.py` remains an optional parallel legacy runner.
 
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.

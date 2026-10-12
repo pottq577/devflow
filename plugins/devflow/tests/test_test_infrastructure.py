@@ -4,28 +4,14 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
+import run_suite
 import test_devflow as legacy
-
-
-def _flatten(suite):
-    for entry in suite:
-        if isinstance(entry, unittest.TestSuite):
-            yield from _flatten(entry)
-        else:
-            yield entry
 
 
 class TestDiscoveryContract(unittest.TestCase):
     def test_no_duplicate_or_inherited_cases_and_all_legacy_cases_are_discovered(self):
-        tests = list(
-            _flatten(
-                unittest.TestLoader().discover(
-                    str(Path(__file__).resolve().parent), pattern="test_*.py"
-                )
-            )
-        )
+        tests = run_suite.collect_cases()
         test_ids = [test.id() for test in tests]
         self.assertEqual(len(test_ids), len(set(test_ids)), "duplicate unittest IDs")
 
@@ -53,6 +39,18 @@ class TestDiscoveryContract(unittest.TestCase):
                     cls.__dict__,
                     f"{cls.__name__} inherited a test rather than only fixtures",
                 )
+
+    def test_partial_profiles_partition_full_discovery_exactly_once(self):
+        all_cases = run_suite.collect_cases()
+        complete = run_suite.select_cases(all_cases, "full")
+        partials = [
+            run_suite.select_cases(all_cases, profile)
+            for profile in ("focused", "legacy", "newman")
+        ]
+        identifiers = [test.id() for tests in partials for test in tests]
+        self.assertEqual(len(identifiers), len(set(identifiers)))
+        self.assertEqual(set(identifiers), {test.id() for test in complete})
+        self.assertEqual(len(identifiers), len(complete))
 
 
 if __name__ == "__main__":
