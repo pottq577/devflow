@@ -15,6 +15,27 @@ Do not launch a nested `codex exec` session from a Codex-hosted `/goal` run. Do 
 
 If the host does not expose model or reasoning-effort overrides required by the dispatch envelope, report a capability blocker. Do not silently inherit the parent model because that bypasses DevFlow routing policy.
 
+## Own the domain before any hosted work
+
+Before writing goal requirements, bootstrapping, or dispatching, acquire the domain lease from the repository root:
+
+```bash
+python3 <this-skill-directory>/scripts/host.py session-start <domain>
+```
+
+Keep the returned `session_id` private to the active Goal Supervisor and pass it as `--session-id <session_id>` to **every** `bootstrap`, `bootstrap-finalize`, and `dispatch` call. A second hosted Goal or standalone Autopilot cannot acquire the same domain while this lease is live. A restarted supervisor may resume only with the same id using `session-start <domain> --session-id <session_id>`; never create a replacement session while another owner's session is active. No session id may be inferred from telemetry.
+
+The durable lease is renewed by those host commands and expires after 24 hours without renewal. An expired owner must stop; do not continue operating on a prior dispatch or release another owner's lease. If a sub-agent may remain active longer than the lease, refresh the lease with the same `session-start --session-id` during the wait; do not let it expire while children are running.
+
+After every child has finished or been cancelled, release ownership on `complete`, `checkpoint`, `paused`, or a terminal blocker:
+
+```bash
+python3 <this-skill-directory>/scripts/host.py session-end <domain> \
+  --session-id <session_id>
+```
+
+Never release a lease while a child is still changing repository artifacts. A failed/crashed session's stale lease is reclaimable after expiry, but first ensure no prior child agent is still active. `session-status <domain>` reports whether the domain remains occupied.
+
 ## Bootstrap a new domain
 
 1. Resolve the repository root and domain slug from the request and existing DevFlow domains.
@@ -27,6 +48,7 @@ If the host does not expose model or reasoning-effort overrides required by the 
 
 ```bash
 python3 <this-skill-directory>/scripts/host.py bootstrap <domain> \
+  --session-id <session_id> \
   --requirements-file .devflow/runtime/<domain>/goal-requirements.md \
   --risk <low|medium|high|critical>
 ```
@@ -36,6 +58,7 @@ python3 <this-skill-directory>/scripts/host.py bootstrap <domain> \
 
 ```bash
 python3 <this-skill-directory>/scripts/host.py bootstrap-finalize <domain> \
+  --session-id <session_id> \
   --risk <low|medium|high|critical>
 ```
 
@@ -51,7 +74,7 @@ Prepare one deterministic dispatch at a time:
 
 ```bash
 python3 <this-skill-directory>/scripts/host.py dispatch <domain> \
-  --attempt <attempt> \
+  --session-id <session_id> --attempt <attempt> \
   --until <plan|implementation|complete>
 ```
 
@@ -113,6 +136,7 @@ For a hosted Goal, inspect lifecycle authority with:
 ```bash
 devflow status <domain> --json
 python3 <this-skill-directory>/scripts/host.py dispatch <domain> \
+  --session-id <session_id> \
   --attempt <attempt> --until <plan|implementation|complete>
 ```
 

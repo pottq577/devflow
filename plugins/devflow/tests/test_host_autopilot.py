@@ -206,7 +206,12 @@ class HostAutopilotCliTests(unittest.TestCase):
         env["DEVFLOW_CODEX_BIN"] = str(root / "missing-codex")
         env.pop("DEVFLOW_NATIVE_AGENT_RUNNER", None)
         env.pop("DEVFLOW_NATIVE_AGENT_MODELS", None)
-        dispatched = self.run_host(root, "dispatch", "sample", env=env)
+        session_result = self.run_host(root, "session-start", "sample")
+        self.assertEqual(session_result.returncode, 0, session_result.stderr)
+        owner = json.loads(session_result.stdout)["session_id"]
+        dispatched = self.run_host(
+            root, "dispatch", "sample", "--session-id", owner, env=env
+        )
         self.assertEqual(dispatched.returncode, 0, dispatched.stderr)
         result = json.loads(dispatched.stdout)
         self.assertEqual(result["status"], "dispatch_required")
@@ -290,10 +295,15 @@ class HostAutopilotCliTests(unittest.TestCase):
             "Build a routed autonomous workflow.\n", encoding="utf-8"
         )
 
+        session_result = self.run_host(root, "session-start", "sample")
+        self.assertEqual(session_result.returncode, 0, session_result.stderr)
+        owner = json.loads(session_result.stdout)["session_id"]
         prepared = self.run_host(
             root,
             "bootstrap",
             "sample",
+            "--session-id",
+            owner,
             "--requirements-file",
             str(requirements),
         )
@@ -346,14 +356,62 @@ None.
 """,
             encoding="utf-8",
         )
-        finalized = self.run_host(root, "bootstrap-finalize", "sample")
+        finalized = self.run_host(
+            root, "bootstrap-finalize", "sample", "--session-id", owner
+        )
         self.assertEqual(finalized.returncode, 0, finalized.stderr + finalized.stdout)
         result = json.loads(finalized.stdout)
         self.assertEqual(result["status"], "initialized")
         self.assertTrue((root / "docs/domains/sample/STATE.yaml").exists())
 
+    def test_cli_session_prevents_unauthorized_dispatch_and_standalone_start(self):
+        root = self.new_repo()
+        initialized = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        self.assertEqual(self.run_host(root, "dispatch", "sample").returncode, 2)
+        acquired = self.run_host(root, "session-start", "sample")
+        self.assertEqual(acquired.returncode, 0, acquired.stderr)
+        owner = json.loads(acquired.stdout)["session_id"]
+        self.assertEqual(self.run_host(root, "session-start", "sample").returncode, 2)
+        self.assertEqual(self.run_host(root, "dispatch", "sample", "--session-id", "wrong").returncode, 2)
+        permitted = self.run_host(root, "dispatch", "sample", "--session-id", owner)
+        self.assertEqual(permitted.returncode, 0, permitted.stderr)
+        blocked = subprocess.run(
+            [sys.executable, str(CLI), "autopilot", "start", "sample", "--max-steps", "1"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(blocked.returncode, 1, blocked.stderr)
+        self.assertEqual(json.loads(blocked.stdout)["reason"], "hosted_goal_session_active")
+        released = self.run_host(root, "session-end", "sample", "--session-id", owner)
+        self.assertEqual(released.returncode, 0, released.stderr)
+        self.assertEqual(json.loads(released.stdout)["status"], "released")
+
+    def test_hosted_session_blocks_standalone_bootstrap_before_init(self):
+        root = self.new_repo()
+        requirements = root / "requirements.md"
+        requirements.write_text("A new hosted domain must be exclusive.\n")
+        acquired = self.run_host(root, "session-start", "sample")
+        self.assertEqual(acquired.returncode, 0, acquired.stderr)
+        owner = json.loads(acquired.stdout)["session_id"]
+        blocked = subprocess.run(
+            [sys.executable, str(CLI), "autopilot", "bootstrap", "sample",
+             "--requirements-file", str(requirements)],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(blocked.returncode, 1, blocked.stderr)
+        self.assertEqual(json.loads(blocked.stdout)["reason"], "hosted_goal_session_active")
+        self.assertFalse((root / "docs/domains/sample/STATE.yaml").exists())
+        released = self.run_host(root, "session-end", "sample", "--session-id", owner)
+        self.assertEqual(released.returncode, 0, released.stderr)
+
     def test_goal_skill_prefers_host_native_subagents(self):
         text = (PLUGIN / "skills" / "goal" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("session-start", text)
+        self.assertIn("session-end", text)
+        self.assertIn("--session-id", text)
         self.assertIn("spawn_agent", text)
         self.assertIn("host.py dispatch", text)
         self.assertIn('fork_turns="none"', text)

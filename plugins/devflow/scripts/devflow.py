@@ -5708,64 +5708,77 @@ def autopilot_command(args: argparse.Namespace) -> int:
 
     d = domain_dir(root, args.domain)
     if args.autopilot_command == "bootstrap":
-        if state_path(root, args.domain).exists():
-            raise ValueError(f"Domain already initialized: {args.domain}")
-        requirements = Path(args.requirements_file).resolve()
-        if not requirements.is_file():
-            raise ValueError(f"Requirements file not found: {requirements}")
-        target = d / "PRD.md"
-        action = {"command": "bootstrap", "scope": "project"}
-        spec = autopilot.RouteEngine(policy, capabilities).resolve(
-            action, {"risk_profile": args.risk}
-        )
-        packet = (
-            "Target PRD path: "
-            + str(target)
-            + "\n\n## Approved requirements\n"
-            + requirements.read_text(encoding="utf-8")
-        )
-        prompt = autopilot.ContextAssembler(plugin_root()).build(spec, packet)
-        receipt = autopilot.DispatchBroker(root, capabilities).execute(
-            spec, prompt, args.timeout
-        )
-        if receipt.get("status") != "success":
-            print(
-                json.dumps(
-                    {"status": "blocked", "route": spec, "receipt": receipt},
-                    ensure_ascii=False,
-                    indent=2,
+        try:
+            with autopilot.DomainLease(
+                root / ".devflow" / "runtime" / args.domain,
+                int(policy["concurrency"]["mutating"]),
+            ):
+                if state_path(root, args.domain).exists():
+                    raise ValueError(f"Domain already initialized: {args.domain}")
+                requirements = Path(args.requirements_file).resolve()
+                if not requirements.is_file():
+                    raise ValueError(f"Requirements file not found: {requirements}")
+                target = d / "PRD.md"
+                action = {"command": "bootstrap", "scope": "project"}
+                spec = autopilot.RouteEngine(policy, capabilities).resolve(
+                    action, {"risk_profile": args.risk}
                 )
-            )
+                packet = (
+                    "Target PRD path: "
+                    + str(target)
+                    + "\n\n## Approved requirements\n"
+                    + requirements.read_text(encoding="utf-8")
+                )
+                prompt = autopilot.ContextAssembler(plugin_root()).build(spec, packet)
+                receipt = autopilot.DispatchBroker(root, capabilities).execute(
+                    spec, prompt, args.timeout
+                )
+                if receipt.get("status") != "success":
+                    print(
+                        json.dumps(
+                            {"status": "blocked", "route": spec, "receipt": receipt},
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                    return 1
+                errors = required_markdown_section_errors(target, "PRD.md")
+                if errors:
+                    print(
+                        json.dumps(
+                            {"status": "blocked", "route": spec, "errors": errors},
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                    return 1
+                with contextlib.redirect_stdout(io.StringIO()):
+                    init_domain(
+                        argparse.Namespace(
+                            domain=args.domain,
+                            risk=args.risk,
+                            workflow="delivery",
+                            extension="default",
+                            prd=None,
+                            force=False,
+                        )
+                    )
+                print(
+                    json.dumps(
+                        {"status": "initialized", "route": spec, "receipt": receipt},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
+        except autopilot.session.SessionConflict:
+            print(json.dumps({"status": "blocked", "reason": "hosted_goal_session_active"}))
             return 1
-        errors = required_markdown_section_errors(target, "PRD.md")
-        if errors:
-            print(
-                json.dumps(
-                    {"status": "blocked", "route": spec, "errors": errors},
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
+        except RuntimeError as exc:
+            if "concurrency limit" not in str(exc):
+                raise
+            print(json.dumps({"status": "blocked", "reason": "mutating_concurrency_limit"}))
             return 1
-        with contextlib.redirect_stdout(io.StringIO()):
-            init_domain(
-                argparse.Namespace(
-                    domain=args.domain,
-                    risk=args.risk,
-                    workflow="delivery",
-                    extension="default",
-                    prd=None,
-                    force=False,
-                )
-            )
-        print(
-            json.dumps(
-                {"status": "initialized", "route": spec, "receipt": receipt},
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return 0
 
     if not state_path(root, args.domain).exists():
         raise ValueError(f"Domain not initialized: {args.domain}")
@@ -5884,6 +5897,8 @@ def autopilot_command(args: argparse.Namespace) -> int:
             controller_dir, int(policy["concurrency"]["mutating"])
         ):
             result = controller.run()
+    except autopilot.session.SessionConflict:
+        result = {"status": "blocked", "reason": "hosted_goal_session_active"}
     except RuntimeError as exc:
         if "concurrency limit" not in str(exc):
             raise

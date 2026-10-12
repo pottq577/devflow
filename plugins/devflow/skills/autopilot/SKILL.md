@@ -9,15 +9,16 @@ Use DevFlow's deterministic lifecycle state and routing policy. Choose the execu
 
 ## Use the host-native driver inside Codex
 
-This skill explicitly authorizes sub-agent delegation for DevFlow lifecycle work. In a Codex session with `spawn_agent`, prepare child dispatches with the host wrapper:
+This skill explicitly authorizes sub-agent delegation for DevFlow lifecycle work. In a Codex session with `spawn_agent`, first acquire the hosted domain lease and retain its returned session id. Then prepare child dispatches with the host wrapper:
 
 ```bash
+python3 <this-skill-directory>/scripts/host.py session-start <domain>
 python3 <this-skill-directory>/scripts/host.py dispatch <domain> \
-  --attempt <attempt> \
+  --session-id <session_id> --attempt <attempt> \
   --until <plan|implementation|complete>
 ```
 
-The command returns the exact lifecycle action, routed model and reasoning effort, a bounded child message, retry limits, and an optional scout dispatch. Spawn those agents with the host tools and `fork_turns` from the envelope. The child recovers the full runtime packet from the repository, so the parent does not copy PRD, PLAN, WORK, or protocol text into a nested model prompt.
+The command returns the exact lifecycle action, routed model and reasoning effort, a bounded child message, retry limits, and an optional scout dispatch. Spawn those agents with the host tools and `fork_turns` from the envelope. The child recovers the full runtime packet from the repository, so the parent does not copy PRD, PLAN, WORK, or protocol text into a nested model prompt. Keep using the same `--session-id` throughout the run, renew it before expiry, and run `host.py session-end <domain> --session-id <session_id>` only after all children finish or are cancelled. Restart only with the original id; do not steal another hosted or standalone controller's lease.
 
 Do not run `codex exec` from this host-native path. Do not silently inherit the parent model when the host cannot honor the routed model or reasoning effort. Report that condition as a capability blocker. Use `devflow status <domain> --json` for hosted lifecycle state; `devflow autopilot status` is standalone-controller telemetry.
 

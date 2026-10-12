@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -17,6 +18,13 @@ from urllib.parse import urlsplit
 
 import yaml
 from typing_extensions import Self
+
+# Tests also load this file directly via importlib.spec_from_file_location.
+# Resolve its sibling modules independently of the current working directory.
+SCRIPT_DIRECTORY = str(Path(__file__).resolve().parent)
+if SCRIPT_DIRECTORY not in sys.path:
+    sys.path.insert(0, SCRIPT_DIRECTORY)
+import devflow_session as session
 
 MODEL_CAPABILITY_FAILURE = re.compile(
     r"(?:unknown|unsupported|invalid|unavailable|not available|not found|no access|access denied).*model|"
@@ -418,29 +426,34 @@ class DomainLease:
             return self
         if self.limit < 1:
             raise RuntimeError("Autopilot concurrency.mutating must be at least 1")
-        self.lock_dir.mkdir(parents=True, exist_ok=True)
-        for slot in range(self.limit):
-            if self._try_slot(self.lock_dir / f"mutating-{slot}.lock"):
-                return self
+        # Serialize with hosted session-start, including the occupancy check.
+        with session.coordinator(self.runtime_dir) as connection:
+            if session.hosted_active(connection):
+                raise session.SessionConflict("hosted Goal session owns this domain")
+            for slot in range(self.limit):
+                if self._try_slot(self.lock_dir / f"mutating-{slot}.lock"):
+                    return self
         raise RuntimeError(
             f"Autopilot mutating concurrency limit reached ({self.limit})"
         )
 
     def release(self) -> None:
         path = self.path
-        self.path = None
-        self.acquired = False
         if path is None:
             return
-        try:
-            current = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            current = {}
-        if current.get("owner") in {None, self.owner}:
+        # A hosted owner may acquire only after the standalone slot is removed.
+        with session.coordinator(self.runtime_dir):
             try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
+                current = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                current = {}
+            if current.get("owner") in {None, self.owner}:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+        self.path = None
+        self.acquired = False
 
     def __enter__(self) -> Self:
         return self.acquire()
@@ -807,7 +820,10 @@ class CapabilityRegistry:
         for backend in preference:
             if (concrete, backend) in self.unavailable:
                 continue
-            if effort is not None and (concrete, backend, effort) in self.unavailable_efforts:
+            if (
+                effort is not None
+                and (concrete, backend, effort) in self.unavailable_efforts
+            ):
                 continue
             if backend == "native_agent" and concrete in self.native_models:
                 return backend
@@ -1431,10 +1447,9 @@ def classify_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
         return out
     text = _failure_text(out)
     if out.get("failure_kind"):
-        if (
-            out["failure_kind"] == "capability_unavailable"
-            and EFFORT_CAPABILITY_FAILURE.search(text)
-        ):
+        if out[
+            "failure_kind"
+        ] == "capability_unavailable" and EFFORT_CAPABILITY_FAILURE.search(text):
             out["failure_kind"] = "effort_unavailable"
         return out
     if EFFORT_CAPABILITY_FAILURE.search(text):
@@ -1560,9 +1575,8 @@ def should_run_scout(
         return True
     if int(attempt) > 0 and role in set(scout_on_retry or set()):
         return True
-    return (
-        str(spec.get("effective_risk") or "") == "critical"
-        and role in set(scout_on_critical or set())
+    return str(spec.get("effective_risk") or "") == "critical" and role in set(
+        scout_on_critical or set()
     )
 
 
@@ -1751,7 +1765,9 @@ class AutopilotController:
                 effort = str(model_info.get("reasoning_effort") or "")
                 if not effort:
                     return False
-                self.capabilities.mark_effort_unavailable(model, backend, effort, reason)
+                self.capabilities.mark_effort_unavailable(
+                    model, backend, effort, reason
+                )
             else:
                 self.capabilities.mark_unavailable(model, backend, reason)
             return True

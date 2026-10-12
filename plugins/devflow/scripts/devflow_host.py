@@ -21,6 +21,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import devflow
 import devflow_autopilot as autopilot
+import devflow_session as session
 
 HOST_BACKEND = "host_native_agent"
 TELEMETRY_FILENAME = "host-dispatch.jsonl"
@@ -619,8 +620,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    session_start = sub.add_parser("session-start")
+    session_start.add_argument("domain")
+    session_start.add_argument("--session-id")  # resume existing owner only
+    session_end = sub.add_parser("session-end")
+    session_end.add_argument("domain")
+    session_end.add_argument("--session-id", required=True)
+    session_status = sub.add_parser("session-status")
+    session_status.add_argument("domain")
+
     dispatch = sub.add_parser("dispatch")
     dispatch.add_argument("domain")
+    dispatch.add_argument("--session-id", required=True)
     dispatch.add_argument("--attempt", type=int, default=0)
     dispatch.add_argument(
         "--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete"
@@ -628,6 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bootstrap = sub.add_parser("bootstrap")
     bootstrap.add_argument("domain")
+    bootstrap.add_argument("--session-id", required=True)
     bootstrap.add_argument("--requirements-file", required=True)
     bootstrap.add_argument(
         "--risk", choices=sorted(devflow.RISK_LEVELS), default="medium"
@@ -635,6 +647,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     finalize = sub.add_parser("bootstrap-finalize")
     finalize.add_argument("domain")
+    finalize.add_argument("--session-id", required=True)
     finalize.add_argument(
         "--risk", choices=sorted(devflow.RISK_LEVELS), default="medium"
     )
@@ -669,7 +682,17 @@ def main() -> int:
         plugin_root = devflow.plugin_root()
         policy = autopilot.load_policy(plugin_root, root)
 
-        if args.command == "dispatch":
+        runtime_dir = _telemetry_dir(root, args.domain)
+        if args.command in {"dispatch", "bootstrap", "bootstrap-finalize"}:
+            session.require(runtime_dir, args.session_id)
+
+        if args.command == "session-start":
+            result = session.start(runtime_dir, session_id=args.session_id)
+        elif args.command == "session-end":
+            result = session.end(runtime_dir, args.session_id)
+        elif args.command == "session-status":
+            result = session.status(runtime_dir)
+        elif args.command == "dispatch":
             state = _load_state(root, args.domain)
             if (
                 args.until != "complete"

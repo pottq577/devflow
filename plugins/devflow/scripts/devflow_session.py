@@ -1,0 +1,155 @@
+"""Cross-process coordinator for hosted Goal and standalone Autopilot leases.
+
+Hosted sessions outlive one host.py subprocess. SQLite serializes their creation with
+standalone PID-owned mutating slots; neither surface can claim a domain between the
+other surface's occupancy check and acquisition.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import time
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+SESSION_TTL_SECONDS = 24 * 60 * 60
+
+
+class SessionConflict(RuntimeError):
+    """The domain is occupied, or the supplied hosted-session owner is invalid."""
+
+
+@contextmanager
+def coordinator(runtime_dir: Path) -> Iterator[sqlite3.Connection]:
+    """Hold a short, transactional cross-process lock around lease transitions."""
+    leases = runtime_dir / "leases"
+    leases.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "posix":
+        leases.chmod(0o700)
+    db_path = leases / "coordinator.sqlite3"
+    connection = sqlite3.connect(str(db_path), timeout=5)
+    if os.name == "posix":
+        db_path.chmod(0o600)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS hosted_session ("
+            "slot INTEGER PRIMARY KEY CHECK (slot = 1), "
+            "session_id TEXT NOT NULL, acquired_at REAL NOT NULL, "
+            "expires_at REAL NOT NULL)"
+        )
+        yield connection
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _active_row(connection: sqlite3.Connection, *, now: float | None = None) -> tuple | None:
+    now = time.time() if now is None else now
+    row = connection.execute(
+        "SELECT session_id, acquired_at, expires_at FROM hosted_session WHERE slot = 1"
+    ).fetchone()
+    if row and row[2] <= now:
+        connection.execute("DELETE FROM hosted_session WHERE slot = 1")
+        return None
+    return row
+
+
+def hosted_active(connection: sqlite3.Connection) -> bool:
+    """Called inside coordinator() while acquiring standalone PID-owned slots."""
+    return _active_row(connection) is not None
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _standalone_active(runtime_dir: Path) -> bool:
+    """Check all mutating slots, not just the current policy's slot count."""
+    active = False
+    for slot in (runtime_dir / "leases").glob("mutating-*.lock"):
+        try:
+            current = json.loads(slot.read_text(encoding="utf-8"))
+            pid = int(current.get("pid") or 0)
+        except (OSError, ValueError, TypeError, AttributeError):
+            pid = 0
+        if _pid_alive(pid):
+            active = True
+            continue
+        try:
+            slot.unlink()
+        except FileNotFoundError:
+            pass
+    return active
+
+
+def start(runtime_dir: Path, *, session_id: str | None = None) -> dict:
+    """Create or resume a hosted session without ever stealing an active owner."""
+    with coordinator(runtime_dir) as connection:
+        now = time.time()
+        active = _active_row(connection, now=now)
+        if active:
+            if session_id != active[0]:
+                raise SessionConflict("another hosted Goal session owns this domain")
+            owner, acquired, _ = active
+        else:
+            if session_id:
+                raise SessionConflict("hosted Goal session has expired or does not exist")
+            if _standalone_active(runtime_dir):
+                raise SessionConflict("standalone Autopilot holds a mutating domain lease")
+            owner, acquired = uuid.uuid4().hex, now
+        expires = now + SESSION_TTL_SECONDS
+        connection.execute(
+            "INSERT INTO hosted_session (slot, session_id, acquired_at, expires_at) "
+            "VALUES (1, ?, ?, ?) ON CONFLICT(slot) DO UPDATE SET "
+            "session_id = excluded.session_id, acquired_at = excluded.acquired_at, "
+            "expires_at = excluded.expires_at",
+            (owner, acquired, expires),
+        )
+        return {"status": "acquired", "session_id": owner, "expires_at": expires}
+
+
+def require(runtime_dir: Path, session_id: str | None) -> None:
+    """Reject stale or foreign sessions, renewing only the actual current owner."""
+    if not session_id:
+        raise SessionConflict("hosted Goal commands require --session-id")
+    start(runtime_dir, session_id=session_id)
+
+
+def end(runtime_dir: Path, session_id: str | None) -> dict:
+    """Release only the current hosted owner, not a concurrently replaced session."""
+    if not session_id:
+        raise SessionConflict("session-end requires --session-id")
+    with coordinator(runtime_dir) as connection:
+        row = connection.execute(
+            "SELECT session_id FROM hosted_session WHERE slot = 1"
+        ).fetchone()
+        if not row or row[0] != session_id:
+            raise SessionConflict("hosted Goal session owner does not match")
+        connection.execute("DELETE FROM hosted_session WHERE slot = 1")
+    return {"status": "released", "session_id": session_id}
+
+
+def status(runtime_dir: Path) -> dict:
+    """Read-only health projection; the session identifier is never disclosed."""
+    with coordinator(runtime_dir) as connection:
+        active = _active_row(connection)
+        return {
+            "status": "active" if active else "idle",
+            "expires_at": active[2] if active else None,
+        }
