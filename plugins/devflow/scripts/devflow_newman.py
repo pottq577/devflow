@@ -105,9 +105,14 @@ def check_target(
     return url.rstrip("/")
 
 
+class PrivateStorageSymlinkError(ValueError):
+    """An unsafe symlink in the private Newman diagnostics directory tree."""
+
+
 def prepare_private_dir(root: Path, run_id: str) -> Path:
     relative = f".devflow/private/newman/{run_id}"
-    target = delivery.inside(root, relative)
+    # Reject symlinks before resolving the path, including links outside the repo.
+    target = root / relative
     for part in (
         root / ".devflow",
         root / ".devflow/private",
@@ -115,9 +120,10 @@ def prepare_private_dir(root: Path, run_id: str) -> Path:
         target,
     ):
         if part.is_symlink():
-            raise ValueError(
+            raise PrivateStorageSymlinkError(
                 "private Newman paths must use real directories, not symlinks"
             )
+    target = delivery.inside(root, relative)
     if delivery.git(root, "ls-files", "--", ".devflow/private"):
         raise ValueError(
             "private Newman directory contains tracked files; keep raw diagnostics local"
@@ -552,6 +558,8 @@ def execute(
         return preflight_block("environment_setup_failed")
     try:
         private = prepare_private_dir(root, run_id)
+    except PrivateStorageSymlinkError:
+        return preflight_block("private_storage_symlink_rejected")
     except (OSError, ValueError):
         return preflight_block("private_storage_unavailable")
     raw_file = private / "report.json"

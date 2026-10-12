@@ -1037,6 +1037,11 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         result = self.run_newman()
         self.assertEqual(result.returncode, 2)
         self.assertIn("symlink", result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["reason_codes"], ["private_storage_symlink_rejected"])
+        self.assertEqual(payload["failure_stage"], "preflight")
+        self.assertFalse(payload["recorded"])
+        self.assertEqual(self.read_state()["delivery"]["finalization"]["runs"], [])
         self.assertEqual(list(folder.iterdir()), [])
 
     def test_second_branch_missing_run_blocks_whole_work(self):
