@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -25,6 +26,7 @@ SCRIPT_DIRECTORY = str(Path(__file__).resolve().parent)
 if SCRIPT_DIRECTORY not in sys.path:
     sys.path.insert(0, SCRIPT_DIRECTORY)
 import devflow_session as session
+import devflow_scout as scout_contract
 
 MODEL_CAPABILITY_FAILURE = re.compile(
     r"(?:unknown|unsupported|invalid|unavailable|not available|not found|no access|access denied).*model|"
@@ -1192,6 +1194,7 @@ class ContextAssembler:
         self, spec: dict[str, Any], rendered_packet: str, scout_digest: str | None
     ) -> str:
         role = str(spec.get("role") or "")
+        scout_digest = scout_contract.validated_capsule(scout_digest)
         if not scout_digest or role not in self.COMPACT_PACKET_ROLES:
             return "## Runtime packet\n" + rendered_packet
         domain = self._runtime_domain(rendered_packet)
@@ -1248,8 +1251,9 @@ class ContextAssembler:
             "## Role contract\n" + contract,
             self._packet_section(spec, rendered_packet, scout_digest),
         ]
-        if scout_digest and spec["role"] not in self.COMPACT_PACKET_ROLES:
-            parts.append("## Repository scout\n" + scout_digest)
+        valid_scout = scout_contract.validated_capsule(scout_digest)
+        if valid_scout and spec["role"] not in self.COMPACT_PACKET_ROLES:
+            parts.append("## Repository scout\n" + valid_scout)
         if diagnosis:
             parts.append("## Prior independent diagnosis\n" + diagnosis)
         if command == "bootstrap":
@@ -1635,11 +1639,11 @@ class AutopilotController:
         self.diagnoses = {
             str(k): str(v) for k, v in (resume.get("diagnoses") or {}).items()
         }
-        self.scouts = {
-            str(k): self._bounded_scout_digest(str(v))
-            for k, v in (resume.get("scouts") or {}).items()
-            if str(v).strip()
-        }
+        self.scouts: dict[str, str] = {}
+        for key, value in (resume.get("scouts") or {}).items():
+            capsule = self._bounded_scout_digest(value)
+            if capsule:
+                self.scouts[str(key)] = capsule
         self.timeout_counts = {
             str(k): int(v) for k, v in (resume.get("timeout_counts") or {}).items()
         }
@@ -1655,8 +1659,14 @@ class AutopilotController:
 
     @staticmethod
     def fingerprint(action: dict[str, Any]) -> str:
-        keys = ("command", "scope", "mode", "phase", "work_item")
-        return json.dumps({key: action.get(key) for key in keys}, sort_keys=True)
+        # Include all routed action/risk fields, but exclude transient _role_override.
+        keys = ("command", "scope", "mode", "phase", "work_item", "role",
+                "item_kind", "item_risk", "risk")
+        payload = json.dumps(
+            {key: action.get(key) for key in keys},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        return "v2:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _bucket(spec: dict[str, Any]) -> str:
@@ -1675,13 +1685,8 @@ class AutopilotController:
         self.timeout_counts.pop(fingerprint, None)
         self.timeout_diagnosis_pending.discard(fingerprint)
 
-    def _bounded_scout_digest(self, value: str) -> str:
-        digest = value.strip()
-        if len(digest) <= self.scout_max_chars:
-            return digest
-        marker = "\n[pre-analysis capsule truncated by DevFlow]"
-        keep = max(0, self.scout_max_chars - len(marker))
-        return digest[:keep].rstrip() + marker
+    def _bounded_scout_digest(self, value: str) -> str | None:
+        return scout_contract.validated_capsule(value, self.scout_max_chars)
 
     def _checkpoint(
         self,
@@ -1911,9 +1916,10 @@ class AutopilotController:
                     and scout_receipt.get("status") == "success"
                 ):
                     digest = scout_receipt.get("message") or scout_receipt.get("stdout")
-                    if isinstance(digest, str) and digest.strip():
-                        self.scouts[fp] = self._bounded_scout_digest(digest)
-                        spec["scout_digest"] = self.scouts[fp]
+                    capsule = self._bounded_scout_digest(digest)
+                    if capsule:
+                        self.scouts[fp] = capsule
+                        spec["scout_digest"] = capsule
 
             if self.budget and not self.budget.can_dispatch(
                 bucket, required_tokens=required_tokens

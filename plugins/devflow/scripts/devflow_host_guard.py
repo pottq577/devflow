@@ -222,6 +222,28 @@ def finish(
         }
 
 
+def require_reserved_step(
+    runtime_dir: Path, session_id: str, step_id: str, *,
+    fingerprint: str, kind: str, attempt: int, candidate_alias: str,
+) -> dict[str, Any]:
+    """Bind optional telemetry to an actual pending, session-owned child spawn."""
+    with session.coordinator(runtime_dir) as connection:
+        _owner(connection, session_id)
+        pending = _load(connection, session_id)["inflight"]
+        expected = {
+            "step_id": step_id,
+            "fingerprint": fingerprint,
+            "kind": kind,
+            "attempt": attempt,
+            "candidate_alias": candidate_alias,
+        }
+        if not isinstance(pending, dict) or any(
+            pending.get(key) != value for key, value in expected.items()
+        ):
+            raise GuardBlocked("hosted_telemetry_step_mismatch")
+        return copy.deepcopy(pending)
+
+
 def assert_idle(runtime_dir: Path, session_id: str) -> None:
     """Never release a hosted lease with an unacknowledged child dispatch."""
     with session.coordinator(runtime_dir) as connection:

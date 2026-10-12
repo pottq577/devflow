@@ -26,8 +26,9 @@ notes:
   - dispatch_reserve_tokens and scout_reserve_tokens must fit before a new dispatch starts; one in-flight backend run may report usage above its reservation.
   - orchestration.scout_before names roles that always receive one persisted pre-analysis capsule per action when budget permits.
   - orchestration.scout_on_critical adds scouts only when the routed specialist effective risk is critical; orchestration.scout_on_retry adds scouts only after attempt zero.
-  - A successful scout capsule replaces the full rendered runtime packet for compact specialist roles; the specialist re-renders only when material evidence is missing or contradictory.
-  - orchestration.scout_max_chars bounds the persisted/passed pre-analysis capsule; failed or same-model scouts fall back to the full runtime packet.
+  - Only six-section, source-path-citing and size-valid scout capsules can replace the full rendered runtime packet for compact roles; the specialist still verifies the cited evidence.
+  - orchestration.scout_max_chars bounds the persisted/passed capsule without truncation; invalid, oversized, failed and same-model scouts fall back to the full runtime packet.
+  - Hosted telemetry is correlated by the session-owned reserved step id and versioned action fingerprint, but remains optional and fail-open.
   - concurrency.mutating is enforced with cross-process domain leases.
   - orchestration.hosted.max_steps bounds all reserved hosted child spawns, including scouts and capability fallbacks; hosted previews do not consume steps.
   - orchestration.hosted.max_action_visits blocks repeated lifecycle action cycles across real progress, independent of semantic no-progress retries.

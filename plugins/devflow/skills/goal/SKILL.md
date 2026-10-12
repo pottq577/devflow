@@ -116,18 +116,19 @@ python3 <this-skill-directory>/scripts/host.py step-finish <domain> \
   --until <plan|implementation|complete>
 ```
 
-The runtime re-reads lifecycle STATE to detect progress. A non-progressing primary increments the persisted semantic retry, even if the child says it succeeded. A scout or model-spawn capability blocker does not increment the semantic retry, but **every reserved spawn consumes a cumulative step**. The default limits are 100 reserved spawns, five non-progressing primary attempts per action, and four visits to one action across progress transitions. The repository can override `orchestration.hosted.max_steps`, `orchestration.hosted.max_action_visits`, and `escalation.retries.max_no_progress`. Exceeding a bound blocks rather than silently resetting it. This is an execution-count guard, **not** a token budget: Codex-hosted sub-agent token usage is not measured reliably by these commands.
+The runtime re-reads lifecycle STATE to detect progress. A non-progressing primary increments the persisted semantic retry, even if the child says it succeeded. A scout or model-spawn capability blocker does not increment the semantic retry, but **every reserved spawn consumes a cumulative step**. The default limits are 100 reserved spawns, five non-progressing primary attempts per action, and four visits to one action across progress transitions. Fingerprints are versioned SHA-256 identities over routing-relevant action/risk fields; transient role overrides are excluded. Existing v1 operational checkpoints reset their per-action counters when first observed as v2, without modifying lifecycle artifacts. The repository can override `orchestration.hosted.max_steps`, `orchestration.hosted.max_action_visits`, and `escalation.retries.max_no_progress`. Exceeding a bound blocks rather than silently resetting it. This is an execution-count guard, **not** a token budget: Codex-hosted sub-agent token usage is not measured reliably by these commands.
 
 On a supervisor restart, resume the **same** hosted session and run `guard-status <domain> --session-id <session_id>`. If it reports `hosted_step_inflight`, do not spawn again or release the lease. Check whether the earlier child is still running; only after it has finished or been cancelled may the supervisor acknowledge the persisted pending `step_id` using `step-finish`. If child state cannot be verified, leave the run blocked for human intervention. An expired session id cannot resume or force-reclaim the state of an active child.
 
 ## Record hosted dispatch telemetry
 
-Record each scout and primary spawn attempt around the host wait. Telemetry is optional and fail-open; `step-start`/`step-finish` are mandatory, fail-closed execution controls and cannot be replaced by telemetry.
+Record each scout and primary spawn attempt around the host wait. Telemetry is optional and fail-open; `step-start`/`step-finish` are mandatory, fail-closed execution controls and cannot be replaced by telemetry. Only a session-owned reserved `step_id` can create a telemetry record; `step_id` connects both telemetry events to one concrete spawn, not just an action name.
 
 Before a spawn attempt, run:
 
 ```bash
 python3 <this-skill-directory>/scripts/host.py telemetry-start <domain> \
+  --session-id <session_id> --step-id <step_id> \
   --kind <scout|primary> --attempt <attempt> \
   --until <plan|implementation|complete> [--candidate-alias <alias>]
 ```
@@ -136,17 +137,18 @@ Keep the returned `dispatch_id`. After the wait finishes, run:
 
 ```bash
 python3 <this-skill-directory>/scripts/host.py telemetry-finish <domain> \
+  --session-id <session_id> --step-id <step_id> \
   --dispatch-id <dispatch_id> \
   --outcome <completed|failed|cancelled|capability_blocked>
 ```
 
-Use `--candidate-alias` when retrying a payload candidate after a spawn capability failure. If either command returns `telemetry_unavailable`, continue the lifecycle. Telemetry must never block or change a routed action.
+Use `--candidate-alias` when retrying a payload candidate after a spawn capability failure. Run `telemetry-finish` **before** acknowledging its `step-finish`, while that step is still reserved. If either telemetry command returns `telemetry_unavailable`, continue the lifecycle; do not fabricate a `dispatch_id`. Telemetry must never block or change a routed action.
 
 For `dispatch_required`:
 
 1. Compare `fingerprint` with the previous action and clear cached scout, scout alias, and diagnosis on changes. Trust the guard's persisted `attempt`, not a locally incremented value.
-2. If `scout` is present and not cached, call `step-start --kind scout` first, optionally record telemetry, spawn it, wait, optionally finish telemetry, then **always** call `step-finish`. Cache its answer and alias only when it really completed successfully.
-3. Build the primary message for the selected candidate. With a successful different-model scout, use `primary.scout_message` and append the cached scout under `## Repository scout`. Otherwise use `primary.message`. Append a prior diagnosis only when it is available.
+2. If `scout` is present and not cached, call `step-start --kind scout` first, optionally record telemetry, spawn it, wait, optionally finish telemetry, then **always** call `step-finish`. Save a successful scout's final text as UTF-8 under `.devflow/runtime/<domain>/scout-capsules/`. Validate it with `host.py scout-validate <domain> --session-id <session_id> --fingerprint '<fingerprint>' --capsule-file <path>`. Cache the text and scout alias **only** if validation returns `valid` and the action fingerprint remains unchanged; otherwise discard it.
+3. Build the primary message for the selected candidate. **Only** with a validated different-model scout, use `primary.scout_message` and append the validated capsule under `## Repository scout`. Otherwise use `primary.message` so the specialist renders the full authoritative packet. Do not truncate a scout response to fit the limit. Append a prior diagnosis only when it is available.
 4. Call `step-start --kind primary`, optionally record telemetry, spawn the routed model and wait for its terminal result, optionally finish telemetry, then call `step-finish` with the truthful outcome. Do not implement the routed action in the parent session.
 5. On a successful diagnostician, cache its final answer for the next worker dispatch. Request `host.py dispatch` again without `--attempt`; the guard computes the next attempt from persisted progress, or blocks if a limit is reached.
 6. On `complete`, `checkpoint`, `paused`, or a terminal `blocked` result, stop. Release the domain lease only after all reserved steps have been acknowledged and all children have ended.

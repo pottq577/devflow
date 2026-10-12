@@ -9,6 +9,7 @@ from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent
 MODULE = PLUGIN / "scripts" / "devflow_autopilot.py"
+SCOUT_CAPSULE = '## Action\nReview plan for phase 01.\n\n## Evidence map\n- `src/service.py:42-58`: existing validation path.\n\n## Existing patterns\n- Repository uses explicit command objects.\n\n## Constraints and risks\n- Scope is limited to this domain.\n\n## Candidate concerns\n- Verify whether existing tests cover null input.\n\n## Uncertainty\n- External client compatibility is not verified.'
 
 
 def load_module():
@@ -767,12 +768,33 @@ class AutopilotRuntimeTests(unittest.TestCase):
         }
         packet = "## Runtime context\n- domain: billing\n\nFULL_PACKET_SENTINEL"
         text = assembler.build(
-            spec, packet, scout_digest="src/billing.py:42 - existing contract"
+            spec, packet, scout_digest=SCOUT_CAPSULE
         )
         self.assertIn("Terra pre-analysis capsule", text)
-        self.assertIn("src/billing.py:42", text)
+        self.assertIn("src/service.py:42", text)
         self.assertIn("status billing", text)
         self.assertNotIn("FULL_PACKET_SENTINEL", text)
+
+    def test_invalid_scout_never_omits_authoritative_packet(self):
+        assembler = self.ap.ContextAssembler(PLUGIN)
+        spec = {"role": "architect", "action": {"command": "plan", "scope": "project"},
+                "model": {"selected": "fixture-frontier-model"}, "execution": {}}
+        for capsule in ("inspect src/app.py", SCOUT_CAPSULE + "\n" + "x" * 12000):
+            with self.subTest(capsule_size=len(capsule)):
+                output = assembler.build(spec, "FULL_PACKET_SENTINEL", scout_digest=capsule)
+                self.assertIn("FULL_PACKET_SENTINEL", output)
+                self.assertNotIn("Terra pre-analysis capsule", output)
+
+    def test_action_fingerprint_includes_routing_risk_and_excludes_override(self):
+        action = {"command": "run", "scope": "phase", "work_item": "P01-I01",
+                  "item_kind": "implementation", "item_risk": "low", "role": "executor"}
+        fingerprint = self.ap.AutopilotController.fingerprint(action)
+        self.assertTrue(fingerprint.startswith("v2:"))
+        self.assertEqual(len(fingerprint), 67)
+        self.assertEqual(fingerprint, self.ap.AutopilotController.fingerprint(dict(reversed(list(action.items())))))
+        self.assertEqual(fingerprint, self.ap.AutopilotController.fingerprint({**action, "_role_override": "scout"}))
+        self.assertNotEqual(fingerprint, self.ap.AutopilotController.fingerprint({**action, "item_risk": "critical"}))
+        self.assertNotEqual(fingerprint, self.ap.AutopilotController.fingerprint({**action, "item_kind": "migration"}))
 
     def test_diagnostician_has_dedicated_read_only_contract(self):
         assembler = self.ap.ContextAssembler(PLUGIN)
@@ -1229,7 +1251,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
                 return {
                     "status": "success",
                     "exit_code": 0,
-                    "message": "inspect app/service.py",
+                    "message": SCOUT_CAPSULE,
                     "usage": {"input_tokens": 10, "output_tokens": 5},
                 }
             specialist_capsules.append(spec.get("scout_digest"))
@@ -1256,7 +1278,7 @@ class AutopilotRuntimeTests(unittest.TestCase):
         result = controller.run()
         self.assertEqual(result["status"], "complete")
         self.assertEqual(roles, ["scout", "architect"])
-        self.assertEqual(specialist_capsules, ["inspect app/service.py"])
+        self.assertEqual(specialist_capsules, [SCOUT_CAPSULE])
 
     def test_controller_persists_attempts_and_resumes_retry_number(self):
         with tempfile.TemporaryDirectory() as td:
