@@ -86,8 +86,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
 
 ## Peer execution disciplines
 
-Follow `core/protocol/skill-composition.md`.
+Read `core/protocol/skill-composition.md` when peer skills are available.
 The active WORK is the hard execution boundary.
+Use `vercel-react-best-practices` for React/Next.js implementation, and `vercel-composition-patterns` when changing a reusable React component interface.
+Use `property-based-testing` only for an independently testable property and `writing-for-agents` only for agent-facing document changes.
+Do not introduce new dependencies, outputs, or unrelated refactors to accommodate a peer skill.
 
 ### Behavior-changing WORK
 
@@ -105,7 +108,9 @@ This does not weaken TDD in general.
 
 ### Defect and remediation WORK
 
-When systematic-debugging is available:
+For unclear, intermittent, or performance-related failures, prefer available `diagnosing-bugs` to build a reproducible, symptom-specific feedback loop.
+For other defects, use `systematic-debugging` when available. Run one primary diagnosis workflow per defect.
+With the selected diagnosis discipline:
 
 1. reproduce or verify the defect;
 2. identify evidence for the root cause;

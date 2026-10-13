@@ -1,7 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.10.1 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.10.2 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -35,6 +35,10 @@ Existing domains keep their PLAN/WORK documents. Run `devflow delivery enable <d
 adopt the new completion requirements; completed WORK is preserved. New domains enable it by
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
+
+## Version 0.10.2 peer-skill composition
+
+Version 0.10.2 adds conditional execution guidance for Vercel, Matt Pocock, and Trail of Bits skills. DevFlow still owns lifecycle routing, verification, audit findings, and artifacts. New peer skills are optional, and peer-managed review workflows never run automatically inside `/goal`. The artifact protocol remains `1.8.0`.
 
 ## Version 0.10.1 hosted retry correction
 

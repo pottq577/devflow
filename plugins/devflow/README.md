@@ -8,6 +8,10 @@ The normative runtime contract is `core/protocol/*.md` plus the `core/schemas/` 
 
 The point is that a fresh session reconstructs what to do next by running one command instead of reading a pile of narrative documents, and that the knowledge each cycle bought does not evaporate when the session ends.
 
+## Optional peer-skill composition (0.10.2)
+
+The `plan`, `run`, and `audit` skills select relevant installed Vercel, Matt Pocock, or Trail of Bits disciplines through `core/protocol/skill-composition.md`. Selection depends on the current work and changed files. Peer skills cannot select WORK, own routing, add mandatory artifacts, or waive audit requirements. `setup-matt-pocock-skills` requires an explicit out-of-lifecycle request; Trail of Bits standalone review workflows are not invoked inside a DevFlow audit. Absent peer skills do not block ordinary actions.
+
 ## Commands and skills
 
 | Skill       | Role            | Does                                                          |

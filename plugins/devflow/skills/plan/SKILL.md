@@ -73,8 +73,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
 
 ## Peer skill composition
 
-Follow `core/protocol/skill-composition.md`.
+Read `core/protocol/skill-composition.md` when peer skills are available.
 DevFlow owns PLAN and WORK decomposition.
+Use available `domain-modeling` for ambiguous domain terms or transitions, `codebase-design` for actual module/interface decisions, and `vercel-composition-patterns` for reusable React component interfaces.
+Use `writing-for-agents` when planning changes to agent-facing documents.
+Apply only the matching discipline; preserve the approved PRD and the existing PLAN/WORK artifact contract.
 
 When Ponytail guidance is available, use it as a planning lens:
 

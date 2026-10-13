@@ -74,7 +74,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
 
 ## Peer audit lenses
 
-Follow `core/protocol/skill-composition.md`.
+Read `core/protocol/skill-composition.md` when peer skills are available.
 
 When Ponytail review guidance is available, use it as an additional discovery lens for unnecessary abstractions, duplicate wrappers or layers, speculative extension points, unused configurability, avoidable custom implementations, unnecessary dependencies, and code that can be deleted while preserving the contract.
 
@@ -86,6 +86,9 @@ Do not create a new audit axis or a Ponytail-specific audit document, and use th
 Superpowers `receiving-code-review` output is advisory only.
 The DevFlow audit finding is the authoritative record.
 Do not trigger `requesting-code-review` from an audit.
+
+For changed UI, use `web-design-guidelines` as an applicable review lens. For security-sensitive changes, apply `differential-review` techniques against the pinned diff. For document-backed requirements, apply `spec-to-code-compliance` techniques with explicit enforcement and search evidence. Use `codebase-design` for an actual module-boundary concern.
+Keep peer results advisory, map verified findings onto existing audit-core axes, and write only the DevFlow AUDIT and traced remediation/evidence WORK. Do not dispatch a peer-owned review workflow or produce its standalone report.
 
 ## Closure mode
 

@@ -7403,13 +7403,16 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
         for entry in marketplace.get("plugins", [])
         if entry.get("name") == manifest.get("name")
     ]
+    release_version = manifest.get("version")
     check(
         "marketplace plugin version matches manifest",
         len(entries) == 1
+        and isinstance(release_version, str)
+        and bool(release_version)
         and entries[0].get("version")
-        == manifest.get("version")
+        == release_version
         == codex_manifest.get("version")
-        == "0.10.1",
+        == marketplace.get("version"),
         repr(entries) + repr(codex_manifest.get("version")),
     )
     check(
