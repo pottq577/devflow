@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -150,7 +149,6 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
             "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
             'if mode == "exit-after-health":\n'
             "    while not marker.exists(): time.sleep(0.01)\n"
-            "    time.sleep(0.05)\n"
             "    sys.exit(0)\n"
             "while True: time.sleep(1)\n"
         )
@@ -207,7 +205,6 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
             def __enter__(self):
                 if getattr(self_outer, "server_mode", "") == "exit-after-health":
                     self_outer.server_ready_marker.write_text("ready")
-                    time.sleep(0.1)
                 return self
 
             def __exit__(self, *args):
@@ -455,11 +452,23 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
 
     def test_owned_server_exit_blocks_even_when_readiness_endpoint_is_2xx(self):
         self.completed()
-        result = self.run_newman(
-            server_command=self.owned_server_command("exit-after-health")
-        )
+        original_wait_readiness = self.runtime.newman.wait_readiness
+
+        def wait_for_server_exit(process, url, timeout, record):
+            ready = original_wait_readiness(process, url, timeout, record)
+            # Synchronize on actual process exit, not a fixed sleep duration.
+            self.assertEqual(process.wait(timeout=5), 0)
+            return ready
+
+        with patch.object(
+            self.runtime.newman, "wait_readiness", side_effect=wait_for_server_exit
+        ):
+            result = self.run_newman(
+                server_command=self.owned_server_command("exit-after-health")
+            )
         self.assertEqual(result.returncode, 2, result.stderr)
         run = self.read_state()["delivery"]["finalization"]["runs"][-1]
+        self.assertEqual(run["server_lifecycle"]["readiness"]["http_status"], 200)
         self.assertEqual(run["status"], "blocked")
         self.assertIn("owned_server_exited", run["reason_codes"])
         self.assertFalse((self.root / "newman-invoked").exists())
