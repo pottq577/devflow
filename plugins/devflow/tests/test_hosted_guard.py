@@ -148,6 +148,7 @@ class HostedExecutionGuardTests(unittest.TestCase):
     def test_foreign_or_expired_session_cannot_read_or_write_progress(self):
         with self.assertRaises(session.SessionConflict):
             guard.inspect(self.runtime, "foreign", "a", self.policy)
+        self.finish(self.start("a"), "a")
         with session.coordinator(self.runtime) as connection:
             connection.execute("UPDATE hosted_session SET expires_at=0 WHERE slot=1")
         with self.assertRaises(session.SessionConflict):
@@ -156,7 +157,9 @@ class HostedExecutionGuardTests(unittest.TestCase):
             self.start()
         new_owner = session.start(self.runtime)["session_id"]
         self.assertNotEqual(new_owner, self.owner)
-        self.assertEqual(guard.inspect(self.runtime, new_owner, "a", self.policy)["steps_completed"], 0)
+        persisted = guard.inspect(self.runtime, new_owner, "a", self.policy)
+        self.assertEqual(persisted["steps_completed"], 1)
+        self.assertEqual(persisted["attempt"], 1)
 
     def test_corrupt_and_invalid_configuration_never_allows_unbounded_runs(self):
         self.policy["orchestration"]["hosted"]["max_steps"] = 0
@@ -191,6 +194,142 @@ class HostedExecutionGuardTests(unittest.TestCase):
             env=env, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def checkpoint(self, fingerprint="action-a"):
+        record = guard.checkpoint(self.runtime, self.owner, fingerprint, self.policy)
+        self.owner = record["session_id"]
+        return record
+
+    def test_normal_actions_continue_beyond_default_hundred_spawn_budget(self):
+        self.policy = {}
+        for index in range(205):
+            self.finish(self.start(f"action-{index}"), f"action-{index + 1}")
+            if (index + 1) % 100 == 0:
+                self.assertEqual(self.preview(f"action-{index + 1}")["reason"], "hosted_max_steps_exhausted")
+                old_owner = self.owner
+                result = self.checkpoint(f"action-{index + 1}")
+                self.assertEqual(result["previous_steps_completed"], 100)
+                with self.assertRaises(session.SessionConflict):
+                    guard.begin(self.runtime, old_owner, "a", {}, kind="primary", expected_attempt=0, candidate_alias="fast")
+        self.assertEqual(self.preview("action-205")["steps_completed"], 5)
+        with session.coordinator(self.runtime) as connection:
+            self.assertEqual(len(session.read_progress(connection)[1]["visits"]), 206)
+
+    def test_checkpoint_preserves_retries_and_visits_and_requires_new_progress(self):
+        self.finish(self.start("a"), "b")
+        self.finish(self.start("b"), "b")
+        self.finish(self.start("b"), "b")
+        self.checkpoint("b")
+        self.assertEqual(self.preview("b")["attempt"], 2)
+        before = self.snapshot()
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_checkpoint_no_progress"):
+            self.checkpoint("b")
+        self.assertEqual(self.snapshot(), before)
+        self.finish(self.start("b"), "b")
+        self.assertEqual(self.preview("b")["reason"], "hosted_no_progress_retries_exhausted")
+        session.end(self.runtime, self.owner)
+        self.owner = session.start(self.runtime)["session_id"]
+        self.assertEqual(self.preview("b")["reason"], "hosted_no_progress_retries_exhausted")
+
+    def test_checkpoint_cannot_bypass_cycles_or_latest_capability_failure(self):
+        for before, after in (("a", "b"), ("b", "a"), ("a", "b"), ("b", "a")):
+            self.finish(self.start(before), after)
+        before = self.snapshot()
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_action_cycle_detected"):
+            self.checkpoint("a")
+        self.assertEqual(self.snapshot(), before)
+
+        self.finish(self.start("c"), "d")
+        self.finish(self.start("d"), "d", outcome="capability_blocked")
+        before = self.snapshot()
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_checkpoint_no_progress"):
+            self.checkpoint("d")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_owner_replacements_and_recovery_preserve_resource_ceiling(self):
+        self.policy["orchestration"]["hosted"]["max_steps"] = 3
+        for replacement in ("end", "expiry", "recover"):
+            record = self.start()
+            if replacement == "recover":
+                self.recover(record, outcome="capability_blocked")
+            else:
+                self.finish(record, outcome="capability_blocked")
+                if replacement == "end":
+                    session.end(self.runtime, self.owner)
+                else:
+                    with session.coordinator(self.runtime) as connection:
+                        connection.execute("UPDATE hosted_session SET expires_at=0")
+            self.owner = session.start(self.runtime)["session_id"]
+        self.assertEqual(self.preview()["reason"], "hosted_max_steps_exhausted")
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_checkpoint_no_progress"):
+            self.checkpoint()
+
+    def test_checkpoint_refusals_are_atomic_for_pending_expired_and_foreign_owner(self):
+        record = self.start()
+        before = self.snapshot()
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_step_inflight"):
+            self.checkpoint()
+        self.assertEqual(self.snapshot(), before)
+        self.finish(record, "b")
+        for owner in ("foreign", self.owner):
+            if owner == self.owner:
+                with session.coordinator(self.runtime) as connection:
+                    connection.execute("UPDATE hosted_session SET expires_at=0")
+            before = self.snapshot()
+            with self.assertRaises(session.SessionConflict):
+                guard.checkpoint(self.runtime, owner, "b", self.policy)
+            self.assertEqual(self.snapshot(), before)
+
+    def test_checkpoint_rolls_back_owner_and_budget_on_persistence_failure(self):
+        self.finish(self.start("a"), "b")
+        before = self.snapshot()
+        original_save = guard._save
+
+        def fail_after_save(connection, owner, value):
+            original_save(connection, owner, value)
+            raise OSError("Injected checkpoint persistence failure")
+
+        with mock.patch.object(guard, "_save", side_effect=fail_after_save):
+            with self.assertRaises(OSError):
+                self.checkpoint("b")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_legacy_checkpoint_requires_persisted_action_transition_evidence(self):
+        self.policy["orchestration"]["hosted"]["max_steps"] = 1
+        self.finish(self.start("a"), "b")
+        with session.coordinator(self.runtime) as connection:
+            value = session.read_progress(connection)[1]
+            value.pop("segment_progressed")
+            value.pop("last_outcome")
+            connection.execute("UPDATE hosted_progress SET progress=?", (json.dumps(value),))
+        self.checkpoint("b")
+        self.assertEqual(self.preview("b")["steps_completed"], 0)
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_checkpoint_no_progress"):
+            self.checkpoint("b")
+        self.finish(self.start("b"), "b", outcome="capability_blocked")
+        with session.coordinator(self.runtime) as connection:
+            value = session.read_progress(connection)[1]
+            value.pop("segment_progressed")
+            value.pop("last_outcome")
+            value["visits"] = {"b": 1}
+            connection.execute("UPDATE hosted_progress SET progress=?", (json.dumps(value),))
+        before = self.snapshot()
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_checkpoint_no_progress"):
+            self.checkpoint("b")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_optional_checkpoint_fields_remain_strict(self):
+        self.finish(self.start())
+        with session.coordinator(self.runtime) as connection:
+            value = session.read_progress(connection)[1]
+        for key, invalid in (("segment_progressed", 1), ("last_outcome", []), ("last_outcome", "unknown")):
+            with self.subTest(key=key, invalid=invalid):
+                with session.coordinator(self.runtime) as connection:
+                    connection.execute("UPDATE hosted_progress SET progress=?", (json.dumps({**value, key: invalid}),))
+                before = self.snapshot()
+                with self.assertRaisesRegex(guard.GuardBlocked, "hosted_progress_corrupt"):
+                    self.checkpoint()
+                self.assertEqual(self.snapshot(), before)
 
     def recover(self, record, **overrides):
         arguments = {
@@ -228,6 +367,9 @@ class HostedExecutionGuardTests(unittest.TestCase):
                 self.recover(record, **changed)
             self.assertEqual(self.snapshot(), before)
         replacement = session.start(self.runtime)["session_id"]
+        persisted = guard.inspect(self.runtime, replacement, "action-a", self.policy)
+        self.assertEqual(persisted["attempt"], 1)
+        self.assertEqual(persisted["steps_completed"], 1)
         with self.assertRaises(session.SessionConflict):
             self.recover(record)
         session.end(self.runtime, replacement)

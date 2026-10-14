@@ -908,6 +908,34 @@ None.
         self.assertEqual(json.loads(repeated.stdout), receipt)
         self.assertEqual(self.run_host(root, "session-start", "sample").returncode, 0)
 
+    def test_cli_checkpoint_reads_current_action_and_replaces_only_resource_owner(self):
+        root = self.new_repo()
+        initialized = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        owner = json.loads(self.run_host(root, "session-start", "sample").stdout)["session_id"]
+        envelope = json.loads(self.run_host(root, "dispatch", "sample", "--session-id", owner).stdout)
+        host = load_host()
+        runtime = host._telemetry_dir(root, "sample")
+        step = host.guard.begin(runtime, owner, "previous-action", {}, kind="primary", expected_attempt=0, candidate_alias="fast")
+        host.guard.finish(runtime, owner, step["step_id"], envelope["fingerprint"], {}, outcome="completed")
+
+        checkpoint = self.run_host(root, "session-checkpoint", "sample", "--session-id", owner)
+        self.assertEqual(checkpoint.returncode, 0, checkpoint.stderr)
+        result = json.loads(checkpoint.stdout)
+        self.assertEqual(result["status"], "checkpointed")
+        replacement = result["session_id"]
+        self.assertNotEqual(replacement, owner)
+        self.assertEqual(self.run_host(root, "session-end", "sample", "--session-id", owner).returncode, 2)
+        after = self.run_host(root, "dispatch", "sample", "--session-id", replacement)
+        self.assertEqual(after.returncode, 0, after.stderr)
+        self.assertEqual(json.loads(after.stdout)["safety"]["steps_completed"], 0)
+        refused = self.run_host(root, "session-checkpoint", "sample", "--session-id", replacement)
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual(json.loads(refused.stdout)["reason"], "hosted_checkpoint_no_progress")
+
     def test_scout_validation_is_fingerprint_bound_and_read_only(self):
         root = self.new_repo()
         init = subprocess.run(

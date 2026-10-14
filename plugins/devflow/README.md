@@ -140,6 +140,15 @@ live children stay blocked. The private SQLite recovery receipt preserves the or
 outcome, and repeated identical recovery does not consume retry accounting again. See the
 [session recovery contract](core/protocol/host-telemetry.md#hosted-session-fencing-and-administrator-recovery).
 
+Hosted resource segments default to 100 reserved child spawns. After acknowledged action progress,
+when all children have terminated and the guard is idle, explicitly call
+`python3 plugins/devflow/scripts/devflow_host.py session-checkpoint <domain> --session-id <owner>`.
+Save the returned `session_id` before reserving another child. The atomic checkpoint resets only
+resource steps; retry and cycle counters survive checkpoint, ordinary session replacement, expiry
+and recovery. A latest capability blocker or exhausted semantic guard refuses renewal. Legacy
+records require at least two distinct persisted action visits for one migration checkpoint;
+historical last outcomes cannot be recovered. See the
+[resource checkpoint contract](core/protocol/host-telemetry.md#hosted-resource-checkpoints).
 
 Use `--until plan` to finish planning, including required plan review and remediation, then stop before ordinary phase delivery. Use `--until implementation` to finish phase WORK and required work/phase review gates, then stop before integration or whole-delivery finalization. `--until complete` is the default and preserves the existing full lifecycle. Staged boundaries apply only to `delivery` workflows.
 

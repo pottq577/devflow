@@ -60,14 +60,15 @@ def _load(connection: Any, session_id: str) -> dict[str, Any]:
     progress = session.read_progress(connection)
     if progress and progress[0] != session_id and progress[1]["inflight"] is not None:
         raise GuardBlocked("hosted_step_inflight")
-    if not progress or progress[0] != session_id:
-        # Starting a new explicit session resets operational counters, never lifecycle state.
+    if not progress:
         return {
             "steps": 0,
             "fingerprint": None,
             "attempt": 0,
             "visits": {},
             "inflight": None,
+            "segment_progressed": False,
+            "last_outcome": None,
         }
     return progress[1]
 
@@ -139,6 +140,39 @@ def inspect(
         return _projection(_load(connection, session_id), fingerprint, bounds, terminal=terminal)
 
 
+def checkpoint(
+    runtime_dir: Path, session_id: str, fingerprint: str, policy: dict[str, Any],
+) -> dict[str, Any]:
+    """Renew a progressed, idle resource segment without resetting action guards."""
+    bounds = limits(policy)
+    with session.coordinator(runtime_dir) as connection:
+        _owner(connection, session_id)
+        value = _load(connection, session_id)
+        if value["inflight"] is not None:
+            raise GuardBlocked("hosted_step_inflight")
+        if not value["segment_progressed"] or value["last_outcome"] == "capability_blocked":
+            raise GuardBlocked("hosted_checkpoint_no_progress")
+        candidate = copy.deepcopy(value)
+        candidate["steps"] = 0
+        safety = _projection(candidate, fingerprint, bounds)
+        if safety["status"] != "ready":
+            raise GuardBlocked(safety["reason"])
+        _observe(candidate, fingerprint)
+        candidate["segment_progressed"] = False
+        candidate["last_outcome"] = None
+        owner = secrets.token_hex(16)
+        now = time.time()
+        expires = now + session.SESSION_TTL_SECONDS
+        _save(connection, owner, candidate)
+        connection.execute(
+            "UPDATE hosted_session SET session_id=?, acquired_at=?, expires_at=? WHERE slot=1",
+            (owner, now, expires),
+        )
+        return {"status": "checkpointed", "session_id": owner, "expires_at": expires,
+                "steps_completed": 0, "previous_steps_completed": value["steps"],
+                "attempt": safety["attempt"]}
+
+
 def begin(
     runtime_dir: Path, session_id: str, fingerprint: str,
     policy: dict[str, Any], *, kind: str, expected_attempt: int,
@@ -204,6 +238,8 @@ def _finish(
         raise GuardBlocked("hosted_step_owner_mismatch")
     changed = pending["fingerprint"] != after_fingerprint
     value["inflight"] = None
+    value["segment_progressed"] = value["segment_progressed"] or changed
+    value["last_outcome"] = outcome
     if changed:
         _observe(value, after_fingerprint)
     elif pending["kind"] in {"primary", "bootstrap"} and outcome != "capability_blocked":

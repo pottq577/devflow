@@ -172,6 +172,40 @@ class HostedSessionLeaseTests(unittest.TestCase):
         with self.assertRaisesRegex(guard.GuardBlocked, "termination_unconfirmed"):
             guard.recover(self.runtime, record["owner"], record["step"], "a", {}, outcome="cancelled", confirm_child_terminated=False, termination_evidence="Child state is unknown")
 
+    def test_checkpoint_serializes_with_reservation_release_and_other_checkpoints(self):
+        for competitor in ("begin", "end", "checkpoint"):
+            with self.subTest(competitor=competitor):
+                runtime = self.runtime / competitor
+                owner = session.start(runtime)["session_id"]
+                step = guard.begin(runtime, owner, "a", {}, kind="primary", expected_attempt=0, candidate_alias="fast")
+                guard.finish(runtime, owner, step["step_id"], "b", {}, outcome="completed")
+                barrier = threading.Barrier(2)
+
+                def transition(command):
+                    barrier.wait()
+                    try:
+                        if command == "begin":
+                            return guard.begin(runtime, owner, "b", {}, kind="primary", expected_attempt=0, candidate_alias="fast")["status"]
+                        if command == "end":
+                            return session.end(runtime, owner)["status"]
+                        return guard.checkpoint(runtime, owner, "b", {})["status"]
+                    except session.SessionConflict:
+                        return "denied"
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    checkpoint = executor.submit(transition, "checkpoint")
+                    other = executor.submit(transition, competitor)
+                    results = (checkpoint.result(), other.result())
+                allowed = {("checkpointed", "denied"), ("denied", {
+                    "begin": "started", "end": "released", "checkpoint": "checkpointed",
+                }[competitor])}
+                self.assertIn(results, allowed)
+                with session.coordinator(runtime) as connection:
+                    progress_owner, progress = session.read_progress(connection)
+                    row = connection.execute("SELECT session_id FROM hosted_session").fetchone()
+                    if progress["inflight"] is not None or "checkpointed" in results:
+                        self.assertEqual(row[0], progress_owner)
+
     def test_living_child_blocks_takeover_until_administrator_observes_termination(self):
         owner = session.start(self.runtime)["session_id"]
         record = guard.begin(self.runtime, owner, "a", {}, kind="primary", expected_attempt=0, candidate_alias="fast")

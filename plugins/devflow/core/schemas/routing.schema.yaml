@@ -31,8 +31,9 @@ notes:
   - Hosted telemetry is correlated by the session-owned reserved step id and versioned action fingerprint, but remains optional and fail-open.
   - Hosted telemetry v3 observation fields and legacy v2 compatibility are defined in host-telemetry.schema.yaml; telemetry-start requires the reserved attempt explicitly.
   - concurrency.mutating is enforced with cross-process domain leases.
-  - orchestration.hosted.max_steps bounds all reserved hosted child spawns, including scouts and capability fallbacks; hosted previews do not consume steps.
+  - orchestration.hosted.max_steps bounds each resource segment's reserved hosted child spawns, including scouts and capability fallbacks; hosted previews do not consume steps.
   - orchestration.hosted.max_action_visits blocks repeated lifecycle action cycles across real progress, independent of semantic no-progress retries.
-  - Hosted attempt, visit, and in-flight state is persisted per session and fenced by the shared SQLite coordinator; resumed supervisors must acknowledge pending steps rather than re-spawn them.
+  - Hosted attempts, visits, resource steps and in-flight evidence survive ordinary owner changes and recovery; resumed supervisors must acknowledge pending steps rather than re-spawn them.
+  - Explicit session-checkpoint atomically replaces an idle live owner and resets only resource steps after real segment progress and satisfied retry/cycle guards; a latest capability_blocked outcome refuses renewal.
   - Expired or orphan pending hosted steps fence new hosted and standalone ownership; only the exact original owner and step with explicit administrator child-termination attestation can recover them atomically.
   - Hosted native child token usage is unmeasured: standalone measured token-budget rules are not claimed or simulated for hosted runs.

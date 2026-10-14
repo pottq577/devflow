@@ -92,6 +92,7 @@ orchestration:
   scout_on_retry: [verifier, auditor, finalizer]
   scout_max_chars: 12000
   hosted:
+    # Per resource segment; explicit idle progressed checkpoints renew only this budget.
     max_steps: 100
     max_action_visits: 4
 budget:

@@ -45,7 +45,7 @@ automatically a child execution duration. `token_usage` remains `unmeasured`.
 
 Protocol version remains 1.8.0: this operational format adds no STATE/WORK field,
 lifecycle artifact, transition or approval requirement. Native token accounting,
-execution budget changes are outside this contract.
+including hosted token-budget enforcement, remains outside this contract.
 
 ## Hosted session fencing and administrator recovery
 
@@ -73,3 +73,31 @@ outcome and evidence returns that receipt without applying accounting again; cha
 rejected. Any failed write rolls back the receipt, progress and lease together. Corrupt stored
 receipts refuse recovery. These private runtime rows add no STATE/WORK fields or lifecycle
 artifact. Protocol version remains 1.8.0 with backward-readable existing operational progress.
+
+## Hosted resource checkpoints
+
+`orchestration.hosted.max_steps` bounds reserved child spawns within one resource segment,
+including scouts and capability fallbacks. Its default remains 100. Semantic no-progress
+attempts and action visits persist across checkpoints, ordinary session end/start, TTL owner
+replacement and administrator recovery. None of those ownership changes erases execution
+evidence or silently replenishes the resource segment.
+
+After independently observing every child has terminated and acknowledging every reserved
+step, the Supervisor may explicitly call `session-checkpoint <domain> --session-id <owner>`.
+The host re-reads the current lifecycle action. One coordinator transaction requires a live
+matching owner, idle progress, a completed action transition since the previous resource
+checkpoint, and satisfied no-progress/cycle guards. The latest `capability_blocked` outcome
+also refuses checkpointing. Only the step ceiling is excluded from this check. The transaction
+replaces the owner and resets segment steps, preserving semantic attempts and action visits.
+The Supervisor must retain the returned new `session_id` before scheduling another child.
+No worker is launched by this command. Concurrent old-owner begin/end/checkpoint commands
+cannot change the new owner; failed checks or writes preserve progress and ownership together.
+
+Operational progress adds optional `segment_progressed` (boolean) and `last_outcome`
+(`completed`, `failed`, `cancelled`, `capability_blocked`, or null). Older records remain
+readable. A legacy record with at least two distinct persisted action visits supplies positive
+transition evidence for one checkpoint; a single visited action supplies none. Legacy records
+cannot reconstruct the last outcome, so a historical capability failure after earlier progress
+cannot be identified. The first checkpoint writes explicit false progress and null outcome,
+preventing repeated legacy budget renewal without a newly acknowledged action transition.
+Protocol version remains 1.8.0: no lifecycle artifact, field or transition changes.

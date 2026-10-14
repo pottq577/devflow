@@ -742,6 +742,9 @@ def build_parser() -> argparse.ArgumentParser:
     session_end = sub.add_parser("session-end")
     session_end.add_argument("domain")
     session_end.add_argument("--session-id", required=True)
+    session_checkpoint = sub.add_parser("session-checkpoint")
+    session_checkpoint.add_argument("domain")
+    session_checkpoint.add_argument("--session-id", required=True)
     session_recover = sub.add_parser("session-recover")
     session_recover.add_argument("domain")
     session_recover.add_argument("--session-id", required=True)
@@ -846,6 +849,11 @@ def main() -> int:
             result = session.start(runtime_dir, session_id=args.session_id)
         elif args.command == "session-end":
             result = session.end(runtime_dir, args.session_id)
+        elif args.command == "session-checkpoint":
+            state = _load_state(root, args.domain) if devflow.state_path(root, args.domain).exists() else None
+            action = (state or {}).get("next_action") or {"command": "bootstrap", "scope": "project"}
+            fingerprint = autopilot.AutopilotController.fingerprint(action)
+            result = guard.checkpoint(runtime_dir, args.session_id, fingerprint, policy)
         elif args.command == "session-recover":
             state = _load_state(root, args.domain) if devflow.state_path(root, args.domain).exists() else None
             action = (state or {}).get("next_action") or {"command": "bootstrap", "scope": "project"}

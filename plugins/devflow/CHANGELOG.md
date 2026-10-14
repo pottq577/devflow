@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R03 resource checkpoints
+
+- Add an explicit hosted session checkpoint after acknowledged action progress and child completion. Renew ownership and reset only the resource step segment atomically; preserve retry and cycle counters across checkpoints, session replacement, expiry and recovery.
+- Keep the default 100-step segment and policy overrides. Reject pending children, invalid ownership, exhausted semantic guards and a latest capability blocker. Legacy progress permits one migration checkpoint only with positive persisted action-transition evidence.
+- Retain Protocol `1.8.0`: optional operational progress fields remain backward-readable, without STATE/WORK changes or automatic child dispatch. Native child termination remains a supervisor-observed fact.
+
 ## Unreleased - R04 read-only projections
 
 - Add opt-in no-refresh status and render commands that derive current HEAD and actions without changing STATE bytes or mtime. Scout and Diagnostician use these commands, including conditional authoritative-packet fallback.

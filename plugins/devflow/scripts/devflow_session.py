@@ -61,6 +61,10 @@ def read_progress(connection: sqlite3.Connection) -> tuple[str, dict] | None:
             for key, count in visits.items()
         ):
             raise ValueError
+        if "segment_progressed" in value and type(value["segment_progressed"]) is not bool:
+            raise ValueError
+        if value.get("last_outcome") not in {None, "completed", "failed", "cancelled", "capability_blocked"}:
+            raise ValueError
         pending = value["inflight"]
         if pending is not None:
             if not isinstance(pending, dict):
@@ -74,6 +78,9 @@ def read_progress(connection: sqlite3.Connection) -> tuple[str, dict] | None:
                     or pending["fingerprint"] != fingerprint
                     or value["steps"] < 1 or fingerprint not in visits):
                 raise ValueError
+        # Legacy visits record observed action transitions, never assume progress from age.
+        value.setdefault("segment_progressed", len(visits) > 1)
+        value.setdefault("last_outcome", None)
     except (ValueError, TypeError, KeyError):
         raise SessionBlocked("hosted_progress_corrupt") from None
     return owner, value
