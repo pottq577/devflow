@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R00 lifecycle measurement
+
+- Ship a reproducible lifecycle benchmark with committed comment anchors, evidence-tamper checks, validated CLI response meanings, raw timing samples and automatic fixture cleanup.
+- Record YAML/Git/evidence-read/hash counters and warm-cache/source metadata; opt into expensive Newman and delivered-WORK sweeps explicitly. Synthetic reports and CLI-only steps do not claim native agent execution or token measurements.
+- Retain Protocol `1.8.0` and plugin versions: measurement tools do not change lifecycle artifacts or runtime contracts.
+
 ## Unreleased - R01 hosted telemetry
 
 - Require the reserved attempt explicitly for hosted telemetry and expose machine-readable failure reasons while retaining fail-open execution.

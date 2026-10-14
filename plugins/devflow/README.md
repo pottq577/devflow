@@ -428,6 +428,16 @@ report cannot pass either gate. Verdict and full-suite JSON evidence are written
 separate files; no private Newman response data is copied into either report.
 See `core/protocol/release-validation.md` for the complete acceptance contract.
 
+### Lifecycle benchmarks
+
+Run `python3 plugins/devflow/tests/bench_goal_lifecycle.py --json /tmp/devflow-baseline.json`
+for validated throwaway Git fixtures, CLI timings and WORK projection counters.
+`--include-expensive` adds committed-source, rendered-packet and large Newman-evidence sweeps;
+`--section` selects one sweep and `--reps` controls timed samples (default seven).
+Raw JSON records sample times, output bytes, source hashes, machine details and the warm-cache
+policy. Invalid fixture results fail the run. All temporary repositories are removed on exit.
+Newman report fixtures are synthetic; native agent duration and token usage remain unmeasured.
+
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
