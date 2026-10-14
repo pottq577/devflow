@@ -1,0 +1,46 @@
+schema_version: 3
+scope: operational hosted dispatch telemetry, never lifecycle authority
+backward_readable: [2]
+required:
+  - schema_version
+  - event
+  - dispatch_id
+  - step_id
+  - fingerprint
+  - dispatch_kind
+  - attempt
+  - task_name
+  - role
+  - model_alias
+  - model
+  - reasoning_effort
+  - action
+  - started_at
+  - token_usage
+  - observations
+finish_required: [outcome, finished_at, duration_seconds]
+token_usage: unmeasured
+observations:
+  source: caller_reported
+  context_bytes:
+    packet: nullable nonnegative integer, UTF-8 bytes of the rendered action packet
+    protocol: nullable nonnegative integer, UTF-8 bytes of protocol text actually supplied
+    capsule: nullable nonnegative integer, UTF-8 bytes of the capsule actually supplied
+  stage_duration_seconds:
+    packet_render: nullable finite nonnegative number, caller measured elapsed time
+    spawn: nullable finite nonnegative number, caller measured elapsed time
+    child_wait: nullable finite nonnegative number, caller measured elapsed time
+    telemetry_prepare: finite nonnegative number, runtime measured start preparation before log writes
+input:
+  cli_option: --observations-file
+  max_bytes: 65536
+  optional_fields: [context_bytes, stage_duration_seconds, source]
+  source: when present, must equal caller_reported
+  context_bytes_keys: [packet, protocol, capsule]
+  stage_duration_seconds_keys: [packet_render, spawn, child_wait]
+  notes:
+    - JSON objects only; duplicate or unknown keys, booleans, negative and nonfinite values are rejected.
+    - Missing or null context and caller duration values mean unmeasured, never zero.
+    - Finish merges supplied keys into the start observations; omitted keys retain their values.
+    - The source label applies to supplied caller values; telemetry_prepare is runtime measured.
+    - A v2 inflight record finishes in v2 without an observations file; it is never silently upgraded.

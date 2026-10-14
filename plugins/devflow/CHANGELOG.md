@@ -3,6 +3,7 @@
 ## Unreleased - R01 hosted telemetry
 
 - Require the reserved attempt explicitly for hosted telemetry and expose machine-readable failure reasons while retaining fail-open execution.
+- Add telemetry schema v3 with optional caller-reported UTF-8 context bytes and measured stage durations, explicit unmeasured token usage and backward-readable v2 inflight completion.
 - Keep Protocol `1.8.0`: only operational telemetry changes; STATE/WORK artifacts, lifecycle transitions and independent approval gates remain unchanged. No plugin release or manifest version change is made by this patch.
 
 ## 0.10.1 - 2026-10-12 - Hosted execution and release guards

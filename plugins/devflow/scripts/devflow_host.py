@@ -7,6 +7,7 @@ import copy
 import hashlib
 import io
 import json
+import math
 import re
 import shlex
 import sys
@@ -24,6 +25,7 @@ import devflow_autopilot as autopilot
 import devflow_session as session
 import devflow_host_guard as guard
 import devflow_scout as scout_contract
+from devflow_postman import strict_json
 
 HOST_BACKEND = "host_native_agent"
 TELEMETRY_FILENAME = "host-dispatch.jsonl"
@@ -209,6 +211,43 @@ def _telemetry_candidate(
     )
 
 
+def _telemetry_observations(
+    file_path: str | None, previous: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    fields = {
+        "context_bytes": {"packet", "protocol", "capsule"},
+        "stage_duration_seconds": {"packet_render", "spawn", "child_wait"},
+    }
+    observations = copy.deepcopy(previous) if previous is not None else {
+        group: {key: None for key in sorted(keys)} for group, keys in fields.items()
+    }
+    observations["source"] = "caller_reported"
+    if file_path is None:
+        return observations
+    with Path(file_path).open("rb") as source:
+        raw = source.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("Telemetry observations exceed 64 KiB")
+    supplied = strict_json(raw.decode("utf-8"))
+    if not isinstance(supplied, dict) or set(supplied) - {*fields, "source"}:
+        raise ValueError("Telemetry observations contain unsupported fields")
+    if "source" in supplied and supplied["source"] != "caller_reported":
+        raise ValueError("Telemetry observation source must be caller_reported")
+    for group, keys in fields.items():
+        if group not in supplied:
+            continue
+        values = supplied[group]
+        if not isinstance(values, dict) or set(values) - keys:
+            raise ValueError(f"Telemetry {group} contains unsupported fields")
+        for key, value in values.items():
+            if value is not None:
+                numeric = type(value) is int if group == "context_bytes" else type(value) in {int, float}
+                if not numeric or value < 0 or not math.isfinite(value):
+                    raise ValueError(f"Telemetry {group}.{key} must be a finite nonnegative number")
+            observations[group][key] = value
+    return observations
+
+
 def telemetry_start(
     root: Path,
     plugin_root: Path,
@@ -221,6 +260,7 @@ def telemetry_start(
     candidate_alias: str | None = None,
     session_id: str | None = None,
     step_id: str | None = None,
+    observations_file: str | None = None,
 ) -> dict[str, Any]:
     if attempt is None:
         return {
@@ -230,6 +270,8 @@ def telemetry_start(
         }
     if type(attempt) is not int or attempt < 0:
         raise guard.GuardBlocked("telemetry_attempt_invalid")
+    prepare_started = time.perf_counter()
+    observations = _telemetry_observations(observations_file)
     state = _load_state(root, domain)
     envelope = dispatch_envelope(
         root,
@@ -262,7 +304,7 @@ def telemetry_start(
         ).encode("utf-8")
     ).hexdigest()[:24]
     record = {
-        "schema_version": 2,
+        "schema_version": 3,
         "dispatch_id": dispatch_id,
         "step_id": step_id,
         "fingerprint": envelope["fingerprint"],
@@ -275,7 +317,12 @@ def telemetry_start(
         "reasoning_effort": candidate.get("reasoning_effort"),
         "action": envelope.get("action") or {},
         "started_at": _utc_timestamp(started_epoch),
+        "token_usage": "unmeasured",
+        "observations": observations,
     }
+    observations["stage_duration_seconds"]["telemetry_prepare"] = round(
+        max(0.0, time.perf_counter() - prepare_started), 6
+    )
     inflight = dict(record)
     inflight["started_epoch"] = started_epoch
     inflight_path = _telemetry_inflight_path(root, domain, dispatch_id)
@@ -300,6 +347,7 @@ def telemetry_finish(
     outcome: str,
     session_id: str | None = None,
     step_id: str | None = None,
+    observations_file: str | None = None,
 ) -> dict[str, Any]:
     inflight_path = _telemetry_inflight_path(root, domain, dispatch_id)
     if not inflight_path.is_file():
@@ -312,6 +360,12 @@ def telemetry_finish(
         fingerprint=inflight["fingerprint"], kind=inflight["dispatch_kind"],
         attempt=inflight["attempt"], candidate_alias=inflight["model_alias"],
     )
+    if inflight.get("schema_version") == 3:
+        inflight["observations"] = _telemetry_observations(
+            observations_file, inflight["observations"],
+        )
+    elif observations_file is not None:
+        raise ValueError("Legacy telemetry cannot accept observations; finish without --observations-file")
     started_epoch = float(inflight.pop("started_epoch"))
     finished_epoch = time.time()
     record = {
@@ -736,12 +790,14 @@ def build_parser() -> argparse.ArgumentParser:
     telemetry_start_parser.add_argument("--candidate-alias")
     telemetry_start_parser.add_argument("--session-id")
     telemetry_start_parser.add_argument("--step-id")
+    telemetry_start_parser.add_argument("--observations-file")
 
     telemetry_finish_parser = sub.add_parser("telemetry-finish")
     telemetry_finish_parser.add_argument("domain")
     telemetry_finish_parser.add_argument("--dispatch-id", required=True)
     telemetry_finish_parser.add_argument("--session-id")
     telemetry_finish_parser.add_argument("--step-id")
+    telemetry_finish_parser.add_argument("--observations-file")
     telemetry_finish_parser.add_argument(
         "--outcome",
         choices=["completed", "failed", "cancelled", "capability_blocked"],
@@ -879,6 +935,7 @@ def main() -> int:
                 candidate_alias=args.candidate_alias,
                 session_id=args.session_id,
                 step_id=args.step_id,
+                observations_file=args.observations_file,
             )
         elif args.command == "telemetry-finish":
             result = telemetry_finish(
@@ -888,6 +945,7 @@ def main() -> int:
                 outcome=args.outcome,
                 session_id=args.session_id,
                 step_id=args.step_id,
+                observations_file=args.observations_file,
             )
         else:
             raise AssertionError(f"Unhandled host command: {args.command}")

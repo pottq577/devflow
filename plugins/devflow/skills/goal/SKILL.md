@@ -130,7 +130,8 @@ Before a spawn attempt, run:
 python3 <this-skill-directory>/scripts/host.py telemetry-start <domain> \
   --session-id <session_id> --step-id <step_id> \
   --kind <scout|primary> --attempt <attempt> \
-  --until <plan|implementation|complete> [--candidate-alias <alias>]
+  --until <plan|implementation|complete> [--candidate-alias <alias>] \
+  [--observations-file <path>]
 ```
 
 Keep the returned `dispatch_id`. After the wait finishes, run:
@@ -139,12 +140,13 @@ Keep the returned `dispatch_id`. After the wait finishes, run:
 python3 <this-skill-directory>/scripts/host.py telemetry-finish <domain> \
   --session-id <session_id> --step-id <step_id> \
   --dispatch-id <dispatch_id> \
-  --outcome <completed|failed|cancelled|capability_blocked>
+  --outcome <completed|failed|cancelled|capability_blocked> \
+  [--observations-file <path>]
 ```
 
-Always pass the guard's current `attempt`, including zero. Record the returned `reason` on `telemetry_unavailable` so missing attempts and reservation mismatches are visible.
-
 Use `--candidate-alias` when retrying a payload candidate after a spawn capability failure. Run `telemetry-finish` **before** acknowledging its `step-finish`, while that step is still reserved. If either telemetry command returns `telemetry_unavailable`, continue the lifecycle; do not fabricate a `dispatch_id`. Telemetry must never block or change a routed action.
+
+Always pass the guard's current `attempt`, including zero. Record the returned `reason` on `telemetry_unavailable` so missing attempts and reservation mismatches are visible. When reporting packet/protocol/capsule bytes or stage durations, read `core/protocol/host-telemetry.md` for the observation format and measurement boundaries. Supply only directly observed values; omitted values and native token usage remain unmeasured. Finish a legacy v2 inflight record without an observations file.
 
 For `dispatch_required`:
 

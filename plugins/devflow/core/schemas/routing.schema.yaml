@@ -29,6 +29,7 @@ notes:
   - Only six-section, source-path-citing and size-valid scout capsules can replace the full rendered runtime packet for compact roles; the specialist still verifies the cited evidence.
   - orchestration.scout_max_chars bounds the persisted/passed capsule without truncation; invalid, oversized, failed and same-model scouts fall back to the full runtime packet.
   - Hosted telemetry is correlated by the session-owned reserved step id and versioned action fingerprint, but remains optional and fail-open.
+  - Hosted telemetry v3 observation fields and legacy v2 compatibility are defined in host-telemetry.schema.yaml; telemetry-start requires the reserved attempt explicitly.
   - concurrency.mutating is enforced with cross-process domain leases.
   - orchestration.hosted.max_steps bounds all reserved hosted child spawns, including scouts and capability fallbacks; hosted previews do not consume steps.
   - orchestration.hosted.max_action_visits blocks repeated lifecycle action cycles across real progress, independent of semantic no-progress retries.
