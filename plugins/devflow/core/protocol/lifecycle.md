@@ -111,7 +111,9 @@ Phase numbers are normalized before comparison, and a work audit derives its pha
 
 A mismatch exits with code `2`, writes no packet to stdout, and reports both requested and expected actions on stderr with a `devflow status <domain>` hint.
 Render does not create audit directories or other lifecycle artifacts.
-An accepted render retains the existing derived STATE write contract.
+An accepted render retains the existing derived STATE write contract unless `--no-refresh` or `--check-only` is selected.
+Hosted child commands pass `--expected-head <full-sha|unborn>` and `--expected-fingerprint <v2-fingerprint>` from the dispatch projection. Before writing STATE or emitting a packet, render checks the current action fingerprint and both projected and current HEAD. `unborn` explicitly pins the absence of a commit. A mismatch exits `2` without output or mutation; the child stops and returns the blocker to its parent instead of choosing another action.
+`--check-only` runs the same guards and returns zero without STATE writes or packet output. Compact scout-backed children use it before their capsule; other children render once. Neither path needs an initial full status. Read-only roles keep `--no-refresh`; mutating children still run status after their lifecycle changes and return its receipt. Existing manual render calls without expected pins retain their prior behavior.
 
 ## Peer skill composition
 

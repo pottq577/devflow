@@ -112,6 +112,8 @@ def _render_command(
     action: dict[str, Any],
     *,
     no_refresh: bool = False,
+    expected_head: str | None = None,
+    check_only: bool = False,
 ) -> str:
     command = str(action.get("command") or "")
     base = [
@@ -137,6 +139,10 @@ def _render_command(
         raise ValueError(f"Action cannot be rendered for host dispatch: {command}")
     if no_refresh:
         base.append("--no-refresh")
+    base.extend(["--expected-head", expected_head or "unborn",
+                 "--expected-fingerprint", autopilot.AutopilotController.fingerprint(action)])
+    if check_only:
+        base.append("--check-only")
     return " ".join(shlex.quote(part) for part in base)
 
 
@@ -406,6 +412,7 @@ def _host_message(
     *,
     scout_max_chars: int | None = None,
     scout_backed: bool = False,
+    expected_head: str | None = None,
 ) -> str:
     role = str(spec["role"])
     read_only = role in {"scout", "diagnostician"}
@@ -426,18 +433,23 @@ def _host_message(
             "Use repository files and DevFlow runtime output as authority. "
             "Do not depend on parent chat history."
         ),
+        (
+            "The pinned render/check-only below replaces the role contract's initial status "
+            "and render preflight. Do not repeat either before work. Keep post-mutation status."
+        ),
         "",
         "Run these steps:",
         f"1. Change directory to `{root}`.",
         f"2. Read the role contract at `{_role_contract_path(plugin_root, role)}`.",
-        (
-            "3. Read current lifecycle state with "
-            f"`{_status_command(plugin_root, domain, no_refresh=read_only)}`."
-        ),
+        "If pinned render validation fails, stop without mutation and return the blocker to the parent; do not select another action.",
     ]
     if scout_backed and role in autopilot.ContextAssembler.COMPACT_PACKET_ROLES:
         lines.extend(
             [
+                (
+                    "3. Validate the pinned action and HEAD without rendering a packet with "
+                    f"`{_render_command(plugin_root, domain, action, no_refresh=read_only, expected_head=expected_head, check_only=True)}`."
+                ),
                 (
                     "4. Use the `## Repository scout` capsule appended by the parent "
                     "as a navigation/evidence index. Do not repeat repository-wide discovery."
@@ -446,17 +458,17 @@ def _host_message(
                     "5. Verify the scout's cited files, symbols, tests, and constraints "
                     "directly. Only if material evidence is missing or contradictory, "
                     "render the authoritative action packet with "
-                    f"`{_render_command(plugin_root, domain, action, no_refresh=read_only)}`."
+                    f"`{_render_command(plugin_root, domain, action, no_refresh=read_only, expected_head=expected_head)}`."
                 ),
             ]
         )
         action_step = 6
     else:
         lines.append(
-            "4. Render the authoritative action packet with "
-            f"`{_render_command(plugin_root, domain, action, no_refresh=read_only)}`."
+            "3. Render the authoritative action packet and validate the pinned action and HEAD with "
+            f"`{_render_command(plugin_root, domain, action, no_refresh=read_only, expected_head=expected_head)}`."
         )
-        action_step = 5
+        action_step = 4
     if read_only:
         lines.extend(
             [
@@ -500,6 +512,7 @@ def _spawn_payload(
     *,
     scout_max_chars: int | None = None,
     message: str | None = None,
+    expected_head: str | None = None,
 ) -> dict[str, Any]:
     model = spec.get("model") or {}
     execution = spec.get("execution") or {}
@@ -522,6 +535,7 @@ def _spawn_payload(
                 action,
                 spec,
                 scout_max_chars=scout_max_chars,
+                expected_head=expected_head,
             )
         ),
         "route": spec,
@@ -538,6 +552,7 @@ def _spawn_payload(
             spec,
             scout_max_chars=scout_max_chars,
             scout_backed=True,
+            expected_head=expected_head,
         )
     return payload
 
@@ -592,6 +607,7 @@ def dispatch_envelope(
                 action,
                 scout_spec,
                 scout_max_chars=scout_max_chars,
+                expected_head=state.get("target_sha"),
             )
 
     retries = policy.get("escalation", {}).get("retries", {}) or {}
@@ -609,6 +625,7 @@ def dispatch_envelope(
             domain,
             action,
             primary_spec,
+            expected_head=state.get("target_sha"),
         ),
         "retry": {
             "max_no_progress": int(retries.get("max_no_progress", 3)),

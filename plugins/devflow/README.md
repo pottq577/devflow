@@ -113,6 +113,11 @@ Each status, render or state projection shares one invocation-local WORK documen
 snapshot. Later calls read fresh WORK and HEAD; prospective mutations build their own overlays.
 Render validates the requested action against that single projection before updating STATE.
 
+Hosted children receive `--expected-fingerprint` and `--expected-head` pins with their render
+command. A moved action fingerprint or HEAD exits `2` without output or STATE writes, and
+`render --check-only` runs the same guards while printing nothing. The compact scout-backed
+path validates with `--check-only` before its capsule, so no child starts with a full status.
+
 ## Autonomous `/goal` routing (0.10.1 / protocol 1.8.0)
 
 Version 0.10.0 routes `fast` to `gpt-6-luna`, `balanced` to `gpt-5.6-terra`, and `frontier` to `gpt-6.1-sol`. Stable aliases live in `core/routing/default.yaml`; concrete model identifiers and supported efforts live in `core/routing/models.yaml`.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R06 pinned hosted child render
+
+- Pin every hosted child render with the dispatch action fingerprint and projected HEAD. Render rejects a moved fingerprint or HEAD with exit `2`, no packet and no STATE write, and `--check-only` runs the same guards while emitting nothing.
+- Replace the child initial full status with the pinned render, or with pinned `--check-only` before a scout capsule. Mutating children keep their post-change status receipt and read-only roles keep `--no-refresh`. Manual render without pins is unchanged.
+- Retain Protocol `1.8.0`: CLI options are additive, existing lifecycle gates and audit/approval authority are unchanged, and a child blocker returns to its parent instead of selecting another action.
+
 ## Unreleased - R05 invocation WORK snapshots
 
 - Reuse one WORK document/index snapshot across each status, render or state projection, and compute render's current action once. Audit output readers reuse the same documents, including empty files; custom WORK paths keep their existing fallback.

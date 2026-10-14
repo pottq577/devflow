@@ -5353,6 +5353,18 @@ def render(args: argparse.Namespace) -> int:
     expected_request = {key: expected.get(key) for key in requested}
     if error or requested != expected_request:
         return reject_render(args.domain, requested, expected_request, error)
+    expected_fingerprint = getattr(args, "expected_fingerprint", None)
+    if (expected_fingerprint is not None
+            and expected_fingerprint != autopilot.AutopilotController.fingerprint(expected)):
+        return reject_render(args.domain, requested, expected_request, "hosted action fingerprint changed")
+    expected_head = getattr(args, "expected_head", None)
+    if expected_head is not None and (
+        expected_head != (state.get("target_sha") or "unborn")
+        or expected_head != (current_sha(root) or "unborn")
+    ):
+        return reject_render(args.domain, requested, expected_request, "hosted HEAD changed")
+    if getattr(args, "check_only", False):
+        return 0
     if not no_refresh:
         dump_yaml_if_changed(state_path(root, args.domain), state)
 
@@ -6172,6 +6184,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--mode", choices=["initial", "closure"], default="initial")
     s.add_argument("--no-refresh", action="store_true")
     s.set_defaults(func=render)
+    for render_parser in rsub.choices.values():
+        render_parser.add_argument("--expected-head")
+        render_parser.add_argument("--expected-fingerprint")
+        render_parser.add_argument("--check-only", action="store_true")
     return p
 
 
