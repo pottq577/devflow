@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -861,6 +862,51 @@ None.
             self.run_host(root, "session-end", "sample", "--session-id", owner).returncode,
             0,
         )
+
+    def test_cli_expired_child_fence_and_confirmed_recovery(self):
+        root = self.new_repo()
+        initialized = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        owner = json.loads(self.run_host(root, "session-start", "sample").stdout)["session_id"]
+        envelope = json.loads(self.run_host(root, "dispatch", "sample", "--session-id", owner).stdout)
+        started = self.run_host(
+            root, "step-start", "sample", "--session-id", owner,
+            "--kind", "primary", "--fingerprint", envelope["fingerprint"],
+            "--candidate-alias", envelope["primary"]["model_alias"], "--attempt", "0",
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        step = json.loads(started.stdout)["step_id"]
+        database = root / ".devflow/runtime/sample/leases/coordinator.sqlite3"
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE hosted_session SET expires_at=0")
+        blocked = self.run_host(root, "session-start", "sample")
+        self.assertEqual(blocked.returncode, 1, blocked.stderr)
+        self.assertEqual(json.loads(blocked.stdout)["reason"], "hosted_step_inflight")
+        standalone = subprocess.run(
+            [sys.executable, str(CLI), "autopilot", "start", "sample", "--max-steps", "1"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(standalone.returncode, 1, standalone.stderr)
+        self.assertEqual(json.loads(standalone.stdout)["reason"], "hosted_goal_session_active")
+        arguments = (
+            "session-recover", "sample", "--session-id", owner, "--step-id", step,
+            "--outcome", "cancelled", "--termination-evidence",
+            "Trusted administrator observed terminal child cancellation at 12:00 UTC",
+        )
+        refused = self.run_host(root, *arguments)
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        confirmed = self.run_host(root, *arguments, "--confirm-child-terminated")
+        self.assertEqual(confirmed.returncode, 0, confirmed.stderr)
+        receipt = json.loads(confirmed.stdout)
+        self.assertEqual(receipt["status"], "recovered")
+        self.assertEqual(receipt["termination_confirmation"], "explicit_admin_attestation")
+        repeated = self.run_host(root, *arguments, "--confirm-child-terminated")
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertEqual(json.loads(repeated.stdout), receipt)
+        self.assertEqual(self.run_host(root, "session-start", "sample").returncode, 0)
 
     def test_scout_validation_is_fingerprint_bound_and_read_only(self):
         root = self.new_repo()

@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,6 +17,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import devflow_autopilot as autopilot
+import devflow_host_guard as guard
 import devflow_session as session
 
 
@@ -82,6 +84,115 @@ class HostedSessionLeaseTests(unittest.TestCase):
         winners = [owner for owner in owners if owner]
         self.assertEqual(len(winners), 1)
         session.end(self.runtime, winners[0])
+
+    def test_expired_or_orphan_pending_blocks_hosted_and_standalone(self):
+        owner = session.start(self.runtime)["session_id"]
+        step = guard.begin(self.runtime, owner, "a", {}, kind="primary", expected_attempt=0, candidate_alias="fast")
+        for orphan in (False, True):
+            with self.subTest(orphan=orphan):
+                with session.coordinator(self.runtime) as connection:
+                    if orphan:
+                        connection.execute("DELETE FROM hosted_session")
+                    else:
+                        connection.execute("UPDATE hosted_session SET expires_at=0")
+                    before = list(connection.iterdump())
+                for attempted_owner in (None, owner, "foreign"):
+                    with self.assertRaisesRegex(session.SessionBlocked, "hosted_step_inflight"):
+                        session.start(self.runtime, session_id=attempted_owner)
+                with self.assertRaises(session.SessionConflict):
+                    autopilot.DomainLease(self.runtime, 1).acquire()
+                self.assertEqual(session.status(self.runtime)["status"], "blocked")
+                with session.coordinator(self.runtime) as connection:
+                    self.assertEqual(list(connection.iterdump()), before)
+                    self.assertEqual(session.read_progress(connection)[1]["inflight"]["step_id"], step["step_id"])
+
+    def test_active_owner_heartbeat_keeps_pending_child_fenced(self):
+        owner = session.start(self.runtime)["session_id"]
+        guard.begin(self.runtime, owner, "a", {}, kind="primary", expected_attempt=0, candidate_alias="fast")
+        with session.coordinator(self.runtime) as connection:
+            connection.execute("UPDATE hosted_session SET expires_at=expires_at-3600")
+        old_expiry = session.status(self.runtime)["expires_at"]
+        self.assertGreater(session.start(self.runtime, session_id=owner)["expires_at"], old_expiry)
+        with self.assertRaises(session.SessionBlocked):
+            session.end(self.runtime, owner)
+
+    def test_concurrent_reservation_and_end_cannot_leave_an_unowned_child(self):
+        for index in range(12):
+            runtime = self.runtime / str(index)
+            owner = session.start(runtime)["session_id"]
+            barrier = threading.Barrier(2)
+
+            def reserve():
+                barrier.wait()
+                try:
+                    guard.begin(runtime, owner, "a", {}, kind="primary", expected_attempt=0, candidate_alias="fast")
+                    return "started"
+                except session.SessionConflict:
+                    return "denied"
+
+            def release():
+                barrier.wait()
+                try:
+                    session.end(runtime, owner)
+                    return "released"
+                except session.SessionBlocked:
+                    return "denied"
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                started, ended = executor.submit(reserve), executor.submit(release)
+                results = (started.result(), ended.result())
+            self.assertIn(results, {("started", "denied"), ("denied", "released")})
+            with session.coordinator(runtime) as connection:
+                progress = session.read_progress(connection)
+                row = connection.execute("SELECT session_id FROM hosted_session").fetchone()
+                if progress and progress[1]["inflight"]:
+                    self.assertEqual(row[0], progress[0])
+
+    def test_crashed_supervisor_and_unknown_child_remain_fenced_after_expiry(self):
+        env = dict(os.environ, PYTHONPATH=str(SCRIPTS))
+        code = (
+            "import json,sys,time;from pathlib import Path;"
+            "import devflow_session as s,devflow_host_guard as g;"
+            "p=Path(sys.argv[1]);o=s.start(p)['session_id'];"
+            "r=g.begin(p,o,'a',{},kind='primary',expected_attempt=0,candidate_alias='fast');"
+            "print(json.dumps({'owner':o,'step':r['step_id']}),flush=True);time.sleep(60)"
+        )
+        supervisor = subprocess.Popen([sys.executable, "-c", code, str(self.runtime)], env=env, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(supervisor.stdout.close)
+        self.addCleanup(lambda: supervisor.poll() is None and supervisor.kill())
+        record = json.loads(supervisor.stdout.readline())
+        supervisor.kill()
+        supervisor.wait(timeout=5)
+        with session.coordinator(self.runtime) as connection:
+            connection.execute("UPDATE hosted_session SET expires_at=0")
+        with self.assertRaises(session.SessionBlocked):
+            session.start(self.runtime)
+        with self.assertRaises(session.SessionConflict):
+            autopilot.DomainLease(self.runtime, 1).acquire()
+        with self.assertRaisesRegex(guard.GuardBlocked, "termination_unconfirmed"):
+            guard.recover(self.runtime, record["owner"], record["step"], "a", {}, outcome="cancelled", confirm_child_terminated=False, termination_evidence="Child state is unknown")
+
+    def test_living_child_blocks_takeover_until_administrator_observes_termination(self):
+        owner = session.start(self.runtime)["session_id"]
+        record = guard.begin(self.runtime, owner, "a", {}, kind="primary", expected_attempt=0, candidate_alias="fast")
+        child = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(60)"])
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        with session.coordinator(self.runtime) as connection:
+            connection.execute("UPDATE hosted_session SET expires_at=0")
+        with self.assertRaises(session.SessionBlocked):
+            session.start(self.runtime)
+        with self.assertRaises(session.SessionConflict):
+            autopilot.DomainLease(self.runtime, 1).acquire()
+        self.assertIsNone(child.poll())
+        child.terminate()
+        terminal_code = child.wait(timeout=5)
+        recovered = guard.recover(
+            self.runtime, owner, record["step_id"], "a", {}, outcome="cancelled",
+            confirm_child_terminated=True,
+            termination_evidence=f"Test administrator waited for child PID {child.pid} termination, exit {terminal_code}",
+        )
+        self.assertEqual(recovered["status"], "recovered")
+        self.assertEqual(session.start(self.runtime)["status"], "acquired")
 
     def test_session_ownership_is_durable_across_processes(self):
         code = (

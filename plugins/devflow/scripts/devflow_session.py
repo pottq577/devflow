@@ -16,11 +16,67 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from devflow_postman import strict_json
+
 SESSION_TTL_SECONDS = 24 * 60 * 60
 
 
 class SessionConflict(RuntimeError):
     """The domain is occupied, or the supplied hosted-session owner is invalid."""
+
+
+class SessionBlocked(SessionConflict):
+    """Persisted execution evidence forbids releasing or replacing ownership."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+def read_progress(connection: sqlite3.Connection) -> tuple[str, dict] | None:
+    """Validate shared execution evidence without hiding a foreign owner's child."""
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_progress'"
+    ).fetchone():
+        return None
+    row = connection.execute(
+        "SELECT session_id, progress FROM hosted_progress WHERE slot = 1"
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        owner, raw = row
+        value = strict_json(raw)
+        if not isinstance(owner, str) or not owner.strip() or not isinstance(value, dict):
+            raise ValueError
+        for key in ("steps", "attempt"):
+            if type(value[key]) is not int or value[key] < 0:
+                raise ValueError
+        fingerprint = value["fingerprint"]
+        if fingerprint is not None and (not isinstance(fingerprint, str) or not fingerprint.strip()):
+            raise ValueError
+        visits = value["visits"]
+        if not isinstance(visits, dict) or any(
+            not isinstance(key, str) or not key.strip() or type(count) is not int or count < 1
+            for key, count in visits.items()
+        ):
+            raise ValueError
+        pending = value["inflight"]
+        if pending is not None:
+            if not isinstance(pending, dict):
+                raise ValueError
+            for key in ("step_id", "fingerprint", "candidate_alias"):
+                if not isinstance(pending[key], str) or not pending[key].strip():
+                    raise ValueError
+            if (pending["kind"] not in {"bootstrap", "scout", "primary"}
+                    or type(pending["attempt"]) is not int
+                    or pending["attempt"] != value["attempt"]
+                    or pending["fingerprint"] != fingerprint
+                    or value["steps"] < 1 or fingerprint not in visits):
+                raise ValueError
+    except (ValueError, TypeError, KeyError):
+        raise SessionBlocked("hosted_progress_corrupt") from None
+    return owner, value
 
 
 @contextmanager
@@ -56,15 +112,13 @@ def _active_row(connection: sqlite3.Connection, *, now: float | None = None) -> 
     row = connection.execute(
         "SELECT session_id, acquired_at, expires_at FROM hosted_session WHERE slot = 1"
     ).fetchone()
-    if row and row[2] <= now:
-        connection.execute("DELETE FROM hosted_session WHERE slot = 1")
-        return None
-    return row
+    return row if row and row[2] > now else None
 
 
 def hosted_active(connection: sqlite3.Connection) -> bool:
     """Called inside coordinator() while acquiring standalone PID-owned slots."""
-    return _active_row(connection) is not None
+    progress = read_progress(connection)
+    return bool((progress and progress[1]["inflight"] is not None) or _active_row(connection))
 
 
 def _pid_alive(pid: int) -> bool:
@@ -102,7 +156,11 @@ def start(runtime_dir: Path, *, session_id: str | None = None) -> dict:
     """Create or resume a hosted session without ever stealing an active owner."""
     with coordinator(runtime_dir) as connection:
         now = time.time()
+        progress = read_progress(connection)
         active = _active_row(connection, now=now)
+        if progress and progress[1]["inflight"] is not None:
+            if not active or active[0] != progress[0] or session_id != progress[0]:
+                raise SessionBlocked("hosted_step_inflight")
         if active:
             if session_id != active[0]:
                 raise SessionConflict("another hosted Goal session owns this domain")
@@ -141,6 +199,9 @@ def end(runtime_dir: Path, session_id: str | None) -> dict:
         ).fetchone()
         if not row or row[0] != session_id:
             raise SessionConflict("hosted Goal session owner does not match")
+        progress = read_progress(connection)
+        if progress and progress[1]["inflight"] is not None:
+            raise SessionBlocked("hosted_step_inflight")
         connection.execute("DELETE FROM hosted_session WHERE slot = 1")
     return {"status": "released", "session_id": session_id}
 
@@ -148,8 +209,13 @@ def end(runtime_dir: Path, session_id: str | None) -> dict:
 def status(runtime_dir: Path) -> dict:
     """Read-only health projection; the session identifier is never disclosed."""
     with coordinator(runtime_dir) as connection:
+        progress = read_progress(connection)
         active = _active_row(connection)
+        blocked = bool(progress and progress[1]["inflight"] is not None and (
+            not active or active[0] != progress[0]
+        ))
         return {
-            "status": "active" if active else "idle",
+            "status": "blocked" if blocked else "active" if active else "idle",
             "expires_at": active[2] if active else None,
+            "reason": "hosted_step_inflight" if blocked else None,
         }

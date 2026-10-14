@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R02 session fencing
+
+- Preserve expired and orphan inflight reservations as fences for hosted and standalone execution. Check idle progress and release hosted ownership in one SQLite transaction.
+- Add explicit administrator-attested recovery of the original owner and step, with atomic retry accounting, lease release and an exact-once private audit receipt. Reject malformed progress and receipts without changing ownership.
+- Retain Protocol `1.8.0`: SQLite operational progress remains backward-readable and STATE/WORK schemas and lifecycle artifacts are unchanged. Recovery attests trusted termination facts; it does not verify native child termination or authorize a supervisor to assert it.
+
 ## Unreleased - R17 Newman tool checks
 
 - Check the Newman executable and version before starting an owned server. Missing, invalid, nonzero or timed-out tool checks persist the existing `execution`/`tool` blocker and `fix_tool` guidance with server stages marked `not_run`.

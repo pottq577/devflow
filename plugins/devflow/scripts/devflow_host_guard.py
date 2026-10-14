@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import secrets
 import time
 from pathlib import Path
@@ -17,12 +18,9 @@ from typing import Any
 import devflow_session as session
 
 
-class GuardBlocked(RuntimeError):
-    """Refuse execution before it can silently exceed a hosted safety bound."""
+GuardBlocked = session.SessionBlocked
 
-    def __init__(self, reason: str):
-        self.reason = reason
-        super().__init__(reason)
+OUTCOMES = {"completed", "failed", "cancelled", "capability_blocked"}
 
 
 def _positive(value: Any, label: str) -> int:
@@ -59,15 +57,10 @@ def _owner(connection: Any, session_id: str) -> None:
 
 
 def _load(connection: Any, session_id: str) -> dict[str, Any]:
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS hosted_progress ("
-        "slot INTEGER PRIMARY KEY CHECK (slot = 1), "
-        "session_id TEXT NOT NULL, progress TEXT NOT NULL)"
-    )
-    row = connection.execute(
-        "SELECT session_id, progress FROM hosted_progress WHERE slot = 1"
-    ).fetchone()
-    if not row or row[0] != session_id:
+    progress = session.read_progress(connection)
+    if progress and progress[0] != session_id and progress[1]["inflight"] is not None:
+        raise GuardBlocked("hosted_step_inflight")
+    if not progress or progress[0] != session_id:
         # Starting a new explicit session resets operational counters, never lifecycle state.
         return {
             "steps": 0,
@@ -76,18 +69,15 @@ def _load(connection: Any, session_id: str) -> dict[str, Any]:
             "visits": {},
             "inflight": None,
         }
-    value = json.loads(row[1])
-    if not isinstance(value, dict) or not all(
-        key in value for key in ("steps", "fingerprint", "attempt", "visits", "inflight")
-    ):
-        raise GuardBlocked("hosted_progress_corrupt")
-    if (type(value["steps"]) is not int or type(value["attempt"]) is not int
-            or not isinstance(value["visits"], dict)):
-        raise GuardBlocked("hosted_progress_corrupt")
-    return value
+    return progress[1]
 
 
 def _save(connection: Any, session_id: str, value: dict[str, Any]) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS hosted_progress ("
+        "slot INTEGER PRIMARY KEY CHECK (slot = 1), "
+        "session_id TEXT NOT NULL, progress TEXT NOT NULL)"
+    )
     connection.execute(
         "INSERT INTO hosted_progress (slot, session_id, progress) VALUES (1, ?, ?) "
         "ON CONFLICT(slot) DO UPDATE SET session_id=excluded.session_id, "
@@ -192,7 +182,7 @@ def finish(
     runtime_dir: Path, session_id: str, step_id: str,
     after_fingerprint: str, policy: dict[str, Any], *, outcome: str,
 ) -> dict[str, Any]:
-    if outcome not in {"completed", "failed", "cancelled", "capability_blocked"}:
+    if outcome not in OUTCOMES:
         raise ValueError("hosted step outcome is unsupported")
     if not step_id:
         raise ValueError("hosted step finish requires a step id")
@@ -200,27 +190,121 @@ def finish(
     with session.coordinator(runtime_dir) as connection:
         _owner(connection, session_id)
         value = _load(connection, session_id)
-        pending = value["inflight"]
-        if not isinstance(pending, dict) or pending.get("step_id") != step_id:
-            raise GuardBlocked("hosted_step_owner_mismatch")
-        before = pending["fingerprint"]
-        changed = before != after_fingerprint
-        value["inflight"] = None
-        if changed:
-            _observe(value, after_fingerprint)
-        elif pending["kind"] in {"primary", "bootstrap"} and outcome != "capability_blocked":
-            # A successful child that did not move STATE still consumes a semantic retry.
-            value["attempt"] += 1
+        result = _finish(value, step_id, after_fingerprint, bounds, outcome=outcome)
         _save(connection, session_id, value)
-        next_state = _projection(value, after_fingerprint, bounds)
-        return {
-            "status": "recorded",
-            "progressed": changed,
-            "outcome": outcome,
-            "attempt": value["attempt"],
-            "steps_completed": value["steps"],
-            "next_guard": next_state,
+        return result
+
+
+def _finish(
+    value: dict[str, Any], step_id: str, after_fingerprint: str,
+    bounds: dict[str, int], *, outcome: str,
+) -> dict[str, Any]:
+    pending = value["inflight"]
+    if not isinstance(pending, dict) or pending.get("step_id") != step_id:
+        raise GuardBlocked("hosted_step_owner_mismatch")
+    changed = pending["fingerprint"] != after_fingerprint
+    value["inflight"] = None
+    if changed:
+        _observe(value, after_fingerprint)
+    elif pending["kind"] in {"primary", "bootstrap"} and outcome != "capability_blocked":
+        # A successful child that did not move STATE still consumes a semantic retry.
+        value["attempt"] += 1
+    return {
+        "status": "recorded",
+        "progressed": changed,
+        "outcome": outcome,
+        "attempt": value["attempt"],
+        "steps_completed": value["steps"],
+        "next_guard": _projection(value, after_fingerprint, bounds),
+    }
+
+
+def recover(
+    runtime_dir: Path, session_id: str, step_id: str,
+    after_fingerprint: str, policy: dict[str, Any], *, outcome: str,
+    confirm_child_terminated: bool, termination_evidence: str,
+) -> dict[str, Any]:
+    """Record a trusted administrator's termination attestation and release atomically."""
+    if (not confirm_child_terminated or not isinstance(termination_evidence, str)
+            or not termination_evidence.strip()):
+        raise GuardBlocked("hosted_child_termination_unconfirmed")
+    if not session_id or not step_id or outcome not in OUTCOMES:
+        raise ValueError("session recovery requires the original owner, exact step and supported outcome")
+    bounds = limits(policy)
+    with session.coordinator(runtime_dir) as connection:
+        progress = session.read_progress(connection)
+        row = connection.execute(
+            "SELECT session_id FROM hosted_session WHERE slot = 1"
+        ).fetchone()
+        if row and row[0] != session_id:
+            raise session.SessionConflict("hosted Goal session owner does not match")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS hosted_recovery ("
+            "session_id TEXT NOT NULL, step_id TEXT NOT NULL, receipt TEXT NOT NULL, "
+            "PRIMARY KEY (session_id, step_id))"
+        )
+        recorded = connection.execute(
+            "SELECT receipt FROM hosted_recovery WHERE session_id=? AND step_id=?",
+            (session_id, step_id),
+        ).fetchone()
+        if recorded:
+            try:
+                receipt = session.strict_json(recorded[0])
+                if (not isinstance(receipt, dict) or receipt.get("session_id") != session_id
+                        or receipt.get("step_id") != step_id
+                        or receipt.get("status") != "recovered"
+                        or receipt.get("termination_confirmation") != "explicit_admin_attestation"
+                        or receipt.get("outcome") not in OUTCOMES
+                        or not isinstance(receipt.get("termination_evidence"), str)
+                        or not receipt["termination_evidence"].strip()):
+                    raise ValueError
+                pending = receipt["pending_step"]
+                if (not isinstance(pending, dict) or pending.get("step_id") != step_id
+                        or pending.get("kind") not in {"bootstrap", "scout", "primary"}
+                        or type(pending.get("attempt")) is not int or pending["attempt"] < 0
+                        or any(not isinstance(pending.get(key), str) or not pending[key].strip()
+                               for key in ("fingerprint", "candidate_alias"))
+                        or not isinstance(receipt["after_fingerprint"], str)
+                        or not receipt["after_fingerprint"].strip()
+                        or type(receipt["progressed"]) is not bool
+                        or type(receipt["recovered_at"]) not in (int, float)
+                        or not math.isfinite(receipt["recovered_at"]) or receipt["recovered_at"] < 0
+                        or type(receipt["attempt"]) is not int or receipt["attempt"] < 0
+                        or type(receipt["steps_completed"]) is not int or receipt["steps_completed"] < 1):
+                    raise ValueError
+                next_guard = receipt["next_guard"]
+                if (not isinstance(next_guard, dict)
+                        or type(next_guard.get("attempt")) is not int
+                        or next_guard["attempt"] != receipt["attempt"]
+                        or type(next_guard.get("steps_completed")) is not int
+                        or next_guard["steps_completed"] != receipt["steps_completed"]
+                        or "pending_step" not in next_guard or next_guard["pending_step"] is not None):
+                    raise ValueError
+            except (ValueError, TypeError, KeyError, OverflowError):
+                raise GuardBlocked("hosted_recovery_corrupt") from None
+            if receipt["outcome"] != outcome or receipt["termination_evidence"] != termination_evidence:
+                raise GuardBlocked("hosted_recovery_conflict")
+            return receipt
+        if not progress or progress[0] != session_id:
+            raise GuardBlocked("hosted_step_owner_mismatch")
+        value = progress[1]
+        pending = copy.deepcopy(value["inflight"])
+        result = _finish(value, step_id, after_fingerprint, bounds, outcome=outcome)
+        receipt = {
+            **result, "status": "recovered", "session_id": session_id,
+            "step_id": step_id, "pending_step": pending,
+            "after_fingerprint": after_fingerprint,
+            "termination_confirmation": "explicit_admin_attestation",
+            "termination_evidence": termination_evidence,
+            "recovered_at": time.time(),
         }
+        _save(connection, session_id, value)
+        connection.execute(
+            "INSERT INTO hosted_recovery (session_id, step_id, receipt) VALUES (?, ?, ?)",
+            (session_id, step_id, json.dumps(receipt, sort_keys=True, ensure_ascii=False)),
+        )
+        connection.execute("DELETE FROM hosted_session WHERE slot = 1")
+        return receipt
 
 
 def require_reserved_step(

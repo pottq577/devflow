@@ -125,6 +125,17 @@ For a new hosted `/goal`, the supervisor stores approved requirements verbatim, 
 
 Unless a paragraph below says otherwise, timeout, token-budget, dispatch-ledger, and `autopilot status` behavior describes the standalone controller. The host-native Goal path delegates child runtime and cancellation to Codex, keeps scout/diagnosis text in the supervisor session, persists hosted retry/step/cycle counters in the coordinator, and reads lifecycle authority through `devflow status`. Both execution drivers now share one per-domain ownership coordinator: hosted Goals hold a durable session across separate `host.py` invocations, while standalone Autopilot holds its existing PID-owned slot lease. A hosted `session-start` fails if standalone is running; a standalone `start`/`resume` fails if hosted ownership is active. The hosted supervisor passes `--session-id` to every bootstrap/dispatch command and invokes `session-end` only after children finish. Sessions renew on authorized host commands and expire after 24 hours without renewal; refresh the same owner during unusually long waits, and never reclaim a stale session while an older child is still running. A session is operational ownership, not lifecycle authority or an authentication credential.
 
+An expired or orphan pending child keeps both drivers blocked until a trusted administrator
+confirms termination. `session-end` checks idle progress and releases ownership atomically.
+To recover, use `python3 plugins/devflow/scripts/devflow_host.py session-recover <domain> --session-id <original-owner>
+--step-id <exact-step> --outcome cancelled --confirm-child-terminated --termination-evidence
+"<administrator termination facts>"`. This records `explicit_admin_attestation`, not native child
+termination verified by the runtime. The supervisor cannot invent that confirmation; unknown or
+live children stay blocked. The private SQLite recovery receipt preserves the original step and
+outcome, and repeated identical recovery does not consume retry accounting again. See the
+[session recovery contract](core/protocol/host-telemetry.md#hosted-session-fencing-and-administrator-recovery).
+
+
 Use `--until plan` to finish planning, including required plan review and remediation, then stop before ordinary phase delivery. Use `--until implementation` to finish phase WORK and required work/phase review gates, then stop before integration or whole-delivery finalization. `--until complete` is the default and preserves the existing full lifecycle. Staged boundaries apply only to `delivery` workflows.
 
 A reached boundary writes controller status `checkpoint` and exits successfully before route, render, scout, or specialist dispatch for the next stage. Start the next stage with a fresh `autopilot start` so it gets a new run budget and operational state. Use `autopilot resume` for interrupted or blocked runs that must retain their operational telemetry.

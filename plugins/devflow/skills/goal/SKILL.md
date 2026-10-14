@@ -34,7 +34,18 @@ python3 <this-skill-directory>/scripts/host.py session-end <domain> \
   --session-id <session_id>
 ```
 
-Never release a lease while a child is still changing repository artifacts. A failed/crashed session's stale lease is reclaimable after expiry, but first ensure no prior child agent is still active. `session-status <domain>` reports whether the domain remains occupied.
+Never release a lease while a child is still changing repository artifacts. TTL expiry removes execution authority, never pending child evidence. An expired or orphan pending step fences both hosted Goal and standalone Autopilot acquisition. `session-status <domain>` reports `blocked` until that evidence is resolved; an idle expired lease can be replaced.
+
+When the original owner cannot acknowledge a pending step, stop for a trusted administrator. The administrator must independently confirm the exact child has terminated, then record the original session and step:
+
+```bash
+python3 <this-skill-directory>/scripts/host.py session-recover <domain> \
+  --session-id <original_session_id> --step-id <exact_step_id> \
+  --outcome <completed|failed|cancelled|capability_blocked> \
+  --confirm-child-terminated --termination-evidence '<trusted administrator facts>'
+```
+
+This is an `explicit_admin_attestation`, not native PID or terminal-status verification. The Goal Supervisor must never self-attest termination, infer it from TTL, or invent administrator facts. Unknown or live child state stays blocked. Recovery atomically records a SQLite receipt, applies ordinary finish retry accounting, clears the pending step and releases the original lease. Repeating the exact outcome and evidence returns the same receipt; changed facts or a different current owner are rejected. Malformed execution evidence is fail-closed. See `core/protocol/host-telemetry.md` for the operational fencing contract.
 
 ## Bootstrap a new domain
 

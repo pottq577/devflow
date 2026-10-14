@@ -730,6 +730,13 @@ def build_parser() -> argparse.ArgumentParser:
     session_end = sub.add_parser("session-end")
     session_end.add_argument("domain")
     session_end.add_argument("--session-id", required=True)
+    session_recover = sub.add_parser("session-recover")
+    session_recover.add_argument("domain")
+    session_recover.add_argument("--session-id", required=True)
+    session_recover.add_argument("--step-id", required=True)
+    session_recover.add_argument("--outcome", choices=sorted(guard.OUTCOMES), required=True)
+    session_recover.add_argument("--confirm-child-terminated", action="store_true")
+    session_recover.add_argument("--termination-evidence", required=True)
     session_status = sub.add_parser("session-status")
     session_status.add_argument("domain")
 
@@ -826,8 +833,16 @@ def main() -> int:
         if args.command == "session-start":
             result = session.start(runtime_dir, session_id=args.session_id)
         elif args.command == "session-end":
-            guard.assert_idle(runtime_dir, args.session_id)
             result = session.end(runtime_dir, args.session_id)
+        elif args.command == "session-recover":
+            state = _load_state(root, args.domain) if devflow.state_path(root, args.domain).exists() else None
+            action = (state or {}).get("next_action") or {"command": "bootstrap", "scope": "project"}
+            fingerprint = autopilot.AutopilotController.fingerprint(action)
+            result = guard.recover(
+                runtime_dir, args.session_id, args.step_id, fingerprint, policy,
+                outcome=args.outcome, confirm_child_terminated=args.confirm_child_terminated,
+                termination_evidence=args.termination_evidence,
+            )
         elif args.command == "session-status":
             result = session.status(runtime_dir)
         elif args.command == "dispatch":

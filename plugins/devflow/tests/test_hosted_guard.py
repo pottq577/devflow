@@ -9,12 +9,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import devflow_host_guard as guard
+import devflow_autopilot as autopilot
 import devflow_session as session
 
 
@@ -188,6 +191,150 @@ class HostedExecutionGuardTests(unittest.TestCase):
             env=env, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def recover(self, record, **overrides):
+        arguments = {
+            "outcome": "cancelled", "confirm_child_terminated": True,
+            "termination_evidence": "Administrator verified native child terminal status at 12:00 UTC",
+        }
+        arguments.update(overrides)
+        return guard.recover(self.runtime, self.owner, record["step_id"], "action-a", self.policy, **arguments)
+
+    def snapshot(self):
+        with session.coordinator(self.runtime) as connection:
+            return list(connection.iterdump())
+
+    def test_expired_owner_recovery_is_exact_once_and_auditable(self):
+        record = self.start()
+        with session.coordinator(self.runtime) as connection:
+            connection.execute("UPDATE hosted_session SET expires_at=0")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            receipts = list(executor.map(lambda _: self.recover(record), range(4)))
+        self.assertTrue(all(receipt == receipts[0] for receipt in receipts))
+        receipt = receipts[0]
+        self.assertEqual(receipt["termination_confirmation"], "explicit_admin_attestation")
+        self.assertEqual(receipt["pending_step"]["step_id"], record["step_id"])
+        self.assertEqual(receipt["attempt"], 1)
+        self.assertEqual(session.status(self.runtime)["status"], "idle")
+        with session.coordinator(self.runtime) as connection:
+            owner, value = session.read_progress(connection)
+            self.assertEqual(owner, self.owner)
+            self.assertIsNone(value["inflight"])
+            self.assertEqual(value["attempt"], 1)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM hosted_recovery").fetchone()[0], 1)
+        before = self.snapshot()
+        for changed in ({"outcome": "failed"}, {"termination_evidence": "Different administrator facts"}):
+            with self.assertRaisesRegex(guard.GuardBlocked, "hosted_recovery_conflict"):
+                self.recover(record, **changed)
+            self.assertEqual(self.snapshot(), before)
+        replacement = session.start(self.runtime)["session_id"]
+        with self.assertRaises(session.SessionConflict):
+            self.recover(record)
+        session.end(self.runtime, replacement)
+
+    def test_recovery_refusals_preserve_pending_and_owner(self):
+        record = self.start()
+        before = self.snapshot()
+        for override in ({"confirm_child_terminated": False}, {"termination_evidence": "  \n"}):
+            with self.assertRaisesRegex(guard.GuardBlocked, "termination_unconfirmed"):
+                self.recover(record, **override)
+            self.assertEqual(self.snapshot(), before)
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_step_owner_mismatch"):
+            self.recover({"step_id": "wrong"})
+        with self.assertRaises(session.SessionConflict):
+            guard.recover(self.runtime, "foreign", record["step_id"], "a", self.policy, outcome="cancelled", confirm_child_terminated=True, termination_evidence="Trusted facts")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_orphan_recovery_keeps_finish_semantics(self):
+        record = self.start()
+        with session.coordinator(self.runtime) as connection:
+            connection.execute("DELETE FROM hosted_session")
+        receipt = self.recover(record, outcome="capability_blocked")
+        self.assertEqual(receipt["attempt"], 0)
+        self.assertEqual(receipt["steps_completed"], 1)
+        self.assertEqual(session.status(self.runtime)["status"], "idle")
+
+    def test_recovery_rolls_back_clear_and_release_when_receipt_write_fails(self):
+        record = self.start()
+        before = self.snapshot()
+        original_save = guard._save
+
+        def fail_after_save(connection, owner, value):
+            original_save(connection, owner, value)
+            raise OSError("Injected receipt persistence failure")
+
+        with mock.patch.object(guard, "_save", side_effect=fail_after_save):
+            with self.assertRaises(OSError):
+                self.recover(record)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_malformed_progress_is_fenced_before_any_owner_change(self):
+        record = self.start()
+        original = self.snapshot()
+        with session.coordinator(self.runtime) as connection:
+            good = session.read_progress(connection)[1]
+        malformed = [
+            "{invalid", json.dumps({**good, "inflight": {}}),
+            json.dumps({**good, "inflight": []}), json.dumps({**good, "attempt": -1}),
+            json.dumps({**good, "visits": {"action-a": True}}),
+            json.dumps(good)[:-1] + ', "inflight": null}',
+        ]
+        for raw in malformed:
+            with self.subTest(raw=raw):
+                with session.coordinator(self.runtime) as connection:
+                    connection.execute("UPDATE hosted_progress SET progress=?", (raw,))
+                    connection.execute("UPDATE hosted_session SET expires_at=0")
+                before = self.snapshot()
+                for command in (lambda: session.start(self.runtime), lambda: session.end(self.runtime, self.owner), lambda: self.recover(record), lambda: autopilot.DomainLease(self.runtime, 1).acquire()):
+                    with self.assertRaisesRegex(guard.GuardBlocked, "hosted_progress_corrupt"):
+                        command()
+                    self.assertEqual(self.snapshot(), before)
+        self.assertNotEqual(self.snapshot(), original)
+
+    def test_corrupt_recovery_receipt_cannot_be_treated_as_exact_confirmation(self):
+        record = self.start()
+        receipt = self.recover(record)
+        stored = json.dumps(receipt)
+        malformed = [
+            stored[:-1] + ', "status": "recovered"}',
+            json.dumps({key: receipt[key] for key in (
+                "session_id", "step_id", "status", "termination_confirmation", "outcome", "termination_evidence",
+            )}),
+        ]
+        for key in ("pending_step", "after_fingerprint", "recovered_at", "progressed", "attempt", "steps_completed", "next_guard"):
+            malformed.append(json.dumps({name: value for name, value in receipt.items() if name != key}))
+        for key in ("step_id", "kind", "fingerprint", "attempt", "candidate_alias"):
+            malformed.append(json.dumps({**receipt, "pending_step": {
+                name: value for name, value in receipt["pending_step"].items() if name != key
+            }}))
+        for key, value in (
+            ("after_fingerprint", " "), ("recovered_at", True), ("recovered_at", -1),
+            ("progressed", 1), ("attempt", True), ("steps_completed", 0), ("next_guard", {}),
+        ):
+            malformed.append(json.dumps({**receipt, key: value}))
+        for key, value in (("step_id", "foreign-step"), ("kind", []), ("attempt", True), ("fingerprint", ""), ("candidate_alias", 1)):
+            malformed.append(json.dumps({**receipt, "pending_step": {**receipt["pending_step"], key: value}}))
+        for raw in malformed:
+            with self.subTest(raw=raw):
+                with session.coordinator(self.runtime) as connection:
+                    connection.execute("UPDATE hosted_recovery SET receipt=?", (raw,))
+                before = self.snapshot()
+                with self.assertRaisesRegex(guard.GuardBlocked, "hosted_recovery_corrupt"):
+                    self.recover(record)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_foreign_current_owner_cannot_hide_or_recover_original_pending_child(self):
+        record = self.start()
+        with session.coordinator(self.runtime) as connection:
+            connection.execute("UPDATE hosted_session SET session_id='foreign'")
+        before = self.snapshot()
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_step_inflight"):
+            session.start(self.runtime, session_id="foreign")
+        with self.assertRaisesRegex(guard.GuardBlocked, "hosted_step_inflight"):
+            guard.inspect(self.runtime, "foreign", "a", self.policy)
+        with self.assertRaises(session.SessionConflict):
+            self.recover(record)
+        self.assertEqual(self.snapshot(), before)
 
 
 if __name__ == "__main__":
