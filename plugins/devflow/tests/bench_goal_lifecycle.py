@@ -173,12 +173,15 @@ def count_git_subprocesses(root: Path, runtime: Any, args: list[str]) -> Row:
 def count_yaml_loads(root: Path, runtime: Any, args: list[str]) -> Row:
     """Count YAML reads and WORK index projections performed by one in-process run."""
     real_load_yaml, real_index = runtime.load_yaml, runtime.load_work_index
+    real_build = runtime.index_work_docs
     calls: Counter[str] = Counter()
     files: set[str] = set()
     try:
         def load_yaml(path, default=None):
             calls["load_yaml"] += 1
             files.add(str(path))
+            if Path(path).parent.name == "work":
+                calls["work_yaml_loads"] += 1
             if Path(path).is_file():
                 calls["parsed_yaml_bytes"] += Path(path).stat().st_size
             return real_load_yaml(path, default)
@@ -187,10 +190,16 @@ def count_yaml_loads(root: Path, runtime: Any, args: list[str]) -> Row:
             calls["load_work_index"] += 1
             return real_index(d, overrides)
 
+        def index_work_docs(docs):
+            calls["work_index_builds"] += 1
+            return real_build(docs)
+
         runtime.load_yaml, runtime.load_work_index = load_yaml, load_work_index
+        runtime.index_work_docs = index_work_docs
         proc = t.invoke_runtime(root, runtime, *args)
     finally:
         runtime.load_yaml, runtime.load_work_index = real_load_yaml, real_index
+        runtime.index_work_docs = real_build
     check_run(f"yaml-count {' '.join(args)}", proc)
     return Row(
         label=" ".join(args),
@@ -199,7 +208,9 @@ def count_yaml_loads(root: Path, runtime: Any, args: list[str]) -> Row:
         measurement="single",
         extra={
             "yaml_loads": calls["load_yaml"],
-            "work_index_builds": calls["load_work_index"],
+            "work_index_requests": calls["load_work_index"],
+            "work_index_builds": calls["work_index_builds"],
+            "work_yaml_loads": calls["work_yaml_loads"],
             "distinct_yaml_files": len(files),
             "parsed_yaml_bytes": calls["parsed_yaml_bytes"],
         },
@@ -1091,6 +1102,8 @@ def _projection_row(root: Path, runtime: Any, args: tuple[str, ...], total: int,
         "work": total,
         "yaml_loads": counts.extra["yaml_loads"],
         "work_index_builds": counts.extra["work_index_builds"],
+        "work_index_requests": counts.extra["work_index_requests"],
+        "work_yaml_loads": counts.extra["work_yaml_loads"],
         "distinct_yaml_files": counts.extra["distinct_yaml_files"],
         "parsed_yaml_bytes": counts.extra["parsed_yaml_bytes"],
     }
@@ -1407,7 +1420,7 @@ def main() -> int:
                     results[name] = {"rows": [r.as_dict() for r in rows]}
                     table("F02 lifecycle projection by WORK count",
                           rows, ["work", "label", "p50_ms", "yaml_loads",
-                                 "work_index_builds", "distinct_yaml_files",
+                                 "work_index_requests", "work_index_builds", "work_yaml_loads", "distinct_yaml_files",
                                  "next_command"])
                 elif name == "paths":
                     rows = section_paths(args.reps)

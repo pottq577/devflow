@@ -109,6 +109,10 @@ to project the latest lifecycle state and HEAD without updating STATE. Scout and
 messages use these options; mutating children keep the normal refresh behavior. The options
 avoid STATE writes and do not enforce operating-system read-only permissions.
 
+Each status, render or state projection shares one invocation-local WORK document/index
+snapshot. Later calls read fresh WORK and HEAD; prospective mutations build their own overlays.
+Render validates the requested action against that single projection before updating STATE.
+
 ## Autonomous `/goal` routing (0.10.1 / protocol 1.8.0)
 
 Version 0.10.0 routes `fast` to `gpt-6-luna`, `balanced` to `gpt-5.6-terra`, and `frontier` to `gpt-6.1-sol`. Stable aliases live in `core/routing/default.yaml`; concrete model identifiers and supported efforts live in `core/routing/models.yaml`.

@@ -76,7 +76,7 @@ Return to the human/Chat layer for product-policy decisions, scope changes, conf
 
 `refresh_state()` owns those derived fields.
 Mutation commands update authoritative lifecycle state and then refresh the projection; status writes STATE only when that projection changed.
-Render first computes the expected action without writing, rejects any mismatch, and refreshes STATE only for an accepted request.
+Render computes the projection once without writing, rejects any mismatch, and persists that projection only for an accepted request. Status and render share one invocation-local WORK snapshot with their nested projection and output readers; later invocations and post-mutation projections read fresh sources.
 `status --no-refresh` and `render <action> --no-refresh` compute the same current projection in memory and leave STATE untouched, including when HEAD has moved. The default commands retain the refresh behavior. This option avoids the STATE write; it does not provide an operating-system read-only guarantee for the process.
 
 ## Audit apply

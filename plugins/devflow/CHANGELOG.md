@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R05 invocation WORK snapshots
+
+- Reuse one WORK document/index snapshot across each status, render or state projection, and compute render's current action once. Audit output readers reuse the same documents, including empty files; custom WORK paths keep their existing fallback.
+- End the snapshot at invocation scope, including exceptions. Read fresh WORK and HEAD on later calls and rebuild prospective override indexes without contaminating the base snapshot.
+- Retain Protocol `1.8.0`: lifecycle decisions, mutation checks, STATE/WORK formats and cross-process freshness remain unchanged. Benchmark counters distinguish index requests from actual builds and WORK YAML reads.
+
 ## Unreleased - R03 resource checkpoints
 
 - Add an explicit hosted session checkpoint after acknowledged action progress and child completion. Renew ownership and reset only the resource step segment atomically; preserve retry and cycle counters across checkpoints, session replacement, expiry and recovery.

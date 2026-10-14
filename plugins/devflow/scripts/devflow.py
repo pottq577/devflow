@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1296,11 +1297,38 @@ def index_work_docs(docs: dict[Path, dict[str, Any]]):
     return docs, index, duplicates
 
 
+_WORK_INDEX_SNAPSHOT: ContextVar[dict[Path, tuple] | None] = ContextVar(
+    "work_index_snapshot", default=None
+)
+
+
+@contextlib.contextmanager
+def _work_snapshot():
+    if _WORK_INDEX_SNAPSHOT.get() is not None:
+        yield
+        return
+    token = _WORK_INDEX_SNAPSHOT.set({})
+    try:
+        yield
+    finally:
+        _WORK_INDEX_SNAPSHOT.reset(token)
+
+
 def load_work_index(d: Path, overrides: dict[Path, dict[str, Any]] | None = None):
-    docs = {path: load_yaml(path, {}) or {} for path in work_files(d)}
+    snapshot = _WORK_INDEX_SNAPSHOT.get()
+    key = d.resolve()
+    cached = snapshot.get(key) if snapshot is not None else None
+    if cached is None:
+        docs = {path: load_yaml(path, {}) or {} for path in work_files(d)}
+        cached = index_work_docs(docs)
+        if snapshot is not None:
+            snapshot[key] = cached
     if overrides:
+        # Prospective mutation documents can change between calls; never cache their overlay.
+        docs = dict(cached[0])
         docs.update(overrides)
-    return index_work_docs(docs)
+        return index_work_docs(docs)
+    return cached
 
 
 def item_phase(path: Path, doc: dict[str, Any]) -> str:
@@ -2377,6 +2405,7 @@ def active_phase_for_action(
     return active[0] if len(active) == 1 else None
 
 
+@_work_snapshot()
 def project_state(
     root: Path,
     domain: str,
@@ -2443,6 +2472,7 @@ def action_inputs(root: Path, domain: str, state: dict[str, Any]) -> list[str]:
     return inputs
 
 
+@_work_snapshot()
 def print_status(args: argparse.Namespace) -> int:
     root = repo_root()
     path = state_path(root, args.domain)
@@ -2489,16 +2519,17 @@ def print_status(args: argparse.Namespace) -> int:
     print(
         f"unresolved_decisions: {', '.join(state.get('unresolved_decisions', []) or []) or '<none>'}"
     )
+    _, work_index, _ = load_work_index(d)
     blocked = [
         i
-        for _, (_, i) in load_work_index(domain_dir(root, args.domain))[1].items()
+        for _, i in work_index.values()
         if i.get("status") == "blocked" and work_block_kind(i) != "external"
     ]
     if blocked:
         print(f"blocked_work: {', '.join(str(i.get('id')) for i in blocked)}")
     waiting_external = [
         i
-        for _, (_, i) in load_work_index(domain_dir(root, args.domain))[1].items()
+        for _, i in work_index.values()
         if work_block_kind(i) == "external"
     ]
     if waiting_external:
@@ -5309,24 +5340,21 @@ def reject_render(
     return 2
 
 
+@_work_snapshot()
 def render(args: argparse.Namespace) -> int:
     root = repo_root()
     d = domain_dir(root, args.domain)
     role = args.render_command
     state = load_yaml(state_path(root, args.domain), {}) or {}
     no_refresh = getattr(args, "no_refresh", False)
-    state = project_state(root, args.domain, copy.deepcopy(state)) if no_refresh else state
-    expected = (
-        state["next_action"]
-        if no_refresh
-        else compute_next_action(root, args.domain, state)
-    )
+    state = project_state(root, args.domain, copy.deepcopy(state))
+    expected = state["next_action"]
     requested, error = render_request(root, args, expected)
     expected_request = {key: expected.get(key) for key in requested}
     if error or requested != expected_request:
         return reject_render(args.domain, requested, expected_request, error)
     if not no_refresh:
-        state = refresh_state(root, args.domain)
+        dump_yaml_if_changed(state_path(root, args.domain), state)
 
     print(
         (plugin_root() / "core" / "prompts" / f"{role}.md")
@@ -5439,7 +5467,8 @@ def render(args: argparse.Namespace) -> int:
             print(f"- audit_file: {d / ps.get('audit_file', f'audits/phase-{key}.md')}")
             work_path = d / ps.get("work_file", f"work/phase-{key}.yaml")
             audit_path = d / ps.get("audit_file", f"audits/phase-{key}.md")
-            work_doc = load_yaml(work_path, {}) or {}
+            docs, _, _ = load_work_index(d)
+            work_doc = docs[work_path] if work_path in docs else load_yaml(work_path, {}) or {}
             items = list(work_doc.get("items", []) or [])
             requirements = list(
                 dict.fromkeys(
@@ -5481,8 +5510,12 @@ def render(args: argparse.Namespace) -> int:
                 print(f"- {d / entry['audit_file']}")
             integration_work_path = d / integ.get("work_file", "work/integration.yaml")
             if integration_work_path.exists():
+                docs, _, _ = load_work_index(d)
                 render_yaml_context(
-                    "Integration WORK YAML", load_yaml(integration_work_path, {}) or {}
+                    "Integration WORK YAML",
+                    docs[integration_work_path]
+                    if integration_work_path in docs
+                    else load_yaml(integration_work_path, {}) or {},
                 )
             render_closure_audit(
                 "Existing integration audit",
