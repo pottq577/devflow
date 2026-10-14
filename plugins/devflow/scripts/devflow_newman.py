@@ -604,20 +604,47 @@ def execute(
     server_process: subprocess.Popen[Any] | None = None
     cleanup_ok = True
     try:
-        try:
-            with server_log.open("ab") as output:
-                server_process = subprocess.Popen(
-                    server_argv,
+        executable = shutil.which(args.newman_bin or "newman")
+        if not executable:
+            lifecycle_record["newman"]["status"] = "blocked"
+            mark_blocked("newman_tool_unavailable")
+        else:
+            try:
+                version = subprocess.run(
+                    [executable, "--version"],
                     cwd=root,
-                    stdout=output,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
-            lifecycle_record["startup"]["status"] = "passed"
-            add_event(lifecycle_record, "server_started")
-        except OSError:
-            lifecycle_record["startup"]["status"] = "failed"
-            mark_blocked("server_start_failed")
+            except (OSError, subprocess.TimeoutExpired):
+                version = None
+            if (
+                version is None
+                or version.returncode != 0
+                or not re.fullmatch(
+                    r"\d+\.\d+\.\d+(?:[-+][\w.-]+)?", version.stdout.strip()
+                )
+            ):
+                lifecycle_record["newman"]["status"] = "blocked"
+                mark_blocked("newman_tool_failed")
+            else:
+                result["newman_version"] = version.stdout.strip()
+        if result["status"] != "blocked":
+            try:
+                with server_log.open("ab") as output:
+                    server_process = subprocess.Popen(
+                        server_argv,
+                        cwd=root,
+                        stdout=output,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+                lifecycle_record["startup"]["status"] = "passed"
+                add_event(lifecycle_record, "server_started")
+            except OSError:
+                lifecycle_record["startup"]["status"] = "failed"
+                mark_blocked("server_start_failed")
         if server_process is not None:
             if not wait_readiness(
                 server_process, readiness_url, args.readiness_timeout, lifecycle_record
@@ -635,103 +662,69 @@ def execute(
                 mark_blocked("owned_server_exited")
             else:
                 lifecycle_record["owned_process_alive_before_newman"] = True
-                executable = shutil.which(args.newman_bin or "newman")
-                if not executable:
-                    lifecycle_record["newman"]["status"] = "blocked"
-                    mark_blocked("newman_tool_unavailable")
-                else:
-                    try:
-                        version = subprocess.run(
-                            [executable, "--version"],
+                command = [
+                    executable,
+                    "run",
+                    str(snapshot_file),
+                    "--environment",
+                    str(env_file),
+                    "--reporters",
+                    "json",
+                    "--reporter-json-export",
+                    str(raw_file),
+                    "--timeout",
+                    str(args.timeout * 1000),
+                    "--timeout-request",
+                    str(args.request_timeout * 1000),
+                    "--timeout-script",
+                    "5000",
+                    "--ignore-redirects",
+                    "--no-insecure-file-read",
+                    "--working-dir",
+                    str(private),
+                ]
+                # Credentials travel in a 0600 environment file, never as visible CLI arguments.
+                add_event(lifecycle_record, "newman_started")
+                try:
+                    with output_file.open("xb") as output:
+                        output_file.chmod(0o600)
+                        process = subprocess.run(
+                            command,
                             cwd=root,
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
+                            stdout=output,
+                            stderr=subprocess.STDOUT,
+                            timeout=args.timeout + 10,
                         )
-                    except (OSError, subprocess.TimeoutExpired):
-                        version = None
-                    if (
-                        version is None
-                        or version.returncode != 0
-                        or not re.fullmatch(
-                            r"\d+\.\d+\.\d+(?:[-+][\w.-]+)?", version.stdout.strip()
-                        )
-                    ):
-                        lifecycle_record["newman"]["status"] = "blocked"
-                        mark_blocked("newman_tool_failed")
-                    else:
-                        result["newman_version"] = version.stdout.strip()
-                        if server_process.poll() is not None or not process_group_alive(
-                            server_process
-                        ):
-                            lifecycle_record["owned_process_alive_before_newman"] = (
-                                False
-                            )
-                            mark_blocked("owned_server_exited")
-                        else:
-                            command = [
-                                executable,
-                                "run",
-                                str(snapshot_file),
-                                "--environment",
-                                str(env_file),
-                                "--reporters",
-                                "json",
-                                "--reporter-json-export",
-                                str(raw_file),
-                                "--timeout",
-                                str(args.timeout * 1000),
-                                "--timeout-request",
-                                str(args.request_timeout * 1000),
-                                "--timeout-script",
-                                "5000",
-                                "--ignore-redirects",
-                                "--no-insecure-file-read",
-                                "--working-dir",
-                                str(private),
-                            ]
-                            # Credentials travel in a 0600 environment file, never as visible CLI arguments.
-                            add_event(lifecycle_record, "newman_started")
-                            try:
-                                with output_file.open("xb") as output:
-                                    output_file.chmod(0o600)
-                                    process = subprocess.run(
-                                        command,
-                                        cwd=root,
-                                        stdout=output,
-                                        stderr=subprocess.STDOUT,
-                                        timeout=args.timeout + 10,
-                                    )
-                                    result["exit_code"] = process.returncode
-                                add_event(lifecycle_record, "newman_finished")
-                                report: Any = None
-                                if raw_file.is_file():
-                                    raw_file.chmod(0o600)
-                                    if raw_file.stat().st_size <= 32 * 1024 * 1024:
-                                        data = raw_file.read_bytes()
-                                        result["raw_sha256"] = hashlib.sha256(
-                                            data
-                                        ).hexdigest()
-                                        report = strict_json(data.decode("utf-8-sig"))
-                                (
-                                    result["status"],
-                                    result["counts"],
-                                    result["reason_codes"],
-                                ) = summarize(
-                                    report, len(requests), result["exit_code"]
-                                )
-                                lifecycle_record["newman"]["status"] = result["status"]
-                                lifecycle_record["newman"]["exit_code"] = result[
-                                    "exit_code"
-                                ]
-                            except subprocess.TimeoutExpired:
-                                lifecycle_record["newman"]["status"] = "blocked"
-                                lifecycle_record["newman"]["exit_code"] = 124
-                                result["exit_code"] = 124
-                                mark_blocked("newman_tool_failed")
-                            except (ValueError, OSError):
-                                lifecycle_record["newman"]["status"] = "blocked"
-                                mark_blocked("newman_tool_failed")
+                        result["exit_code"] = process.returncode
+                    add_event(lifecycle_record, "newman_finished")
+                    report: Any = None
+                    if raw_file.is_file():
+                        raw_file.chmod(0o600)
+                        if raw_file.stat().st_size <= 32 * 1024 * 1024:
+                            data = raw_file.read_bytes()
+                            result["raw_sha256"] = hashlib.sha256(
+                                data
+                            ).hexdigest()
+                            report = strict_json(data.decode("utf-8-sig"))
+                    (
+                        result["status"],
+                        result["counts"],
+                        result["reason_codes"],
+                    ) = summarize(
+                        report, len(requests), result["exit_code"]
+                    )
+                    lifecycle_record["newman"]["status"] = result["status"]
+                    lifecycle_record["newman"]["exit_code"] = result[
+                        "exit_code"
+                    ]
+                except subprocess.TimeoutExpired:
+                    lifecycle_record["newman"]["status"] = "blocked"
+                    lifecycle_record["newman"]["exit_code"] = 124
+                    result["exit_code"] = 124
+                    mark_blocked("newman_tool_failed")
+                except (ValueError, OSError):
+                    lifecycle_record["newman"]["status"] = "blocked"
+                    mark_blocked("newman_tool_failed")
     finally:
         if server_process is not None:
             try:

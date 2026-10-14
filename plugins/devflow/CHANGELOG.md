@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased - R17 Newman tool checks
+
+- Check the Newman executable and version before starting an owned server. Missing, invalid, nonzero or timed-out tool checks persist the existing `execution`/`tool` blocker and `fix_tool` guidance with server stages marked `not_run`.
+- Preserve readiness, owned-process liveness, cleanup and source/evidence verification. Protocol remains `1.8.0`: old receipts remain readable and no STATE/WORK or schema fields change.
+
 ## Unreleased - R00 lifecycle measurement
 
 - Ship a reproducible lifecycle benchmark with committed comment anchors, evidence-tamper checks, validated CLI response meanings, raw timing samples and automatic fixture cleanup.

@@ -458,7 +458,10 @@ Only after passing or proven non-HTTP Newman evidence and completed remediation 
 `delivery finalize` validates this handoff and retains independent integration audits.
 All changes remain local until separately authorized publication/push/merge.
 
-Newman needs a separately installed repository-approved executable. `delivery newman` starts and
+Newman needs a separately installed repository-approved executable. Executable lookup
+and version checks run before server startup. Tool failures retain their recorded
+blocker and retry guidance; server startup, readiness and cleanup remain `not_run`.
+`delivery newman` starts and
 stops the verified local/test server itself from a JSON argv array, polls the readiness URL until it
 returns HTTP 200 through 299, then runs Newman. The owned process and process group must still be
 alive immediately before Newman. Cleanup uses bounded SIGTERM, SIGKILL fallback and process-group

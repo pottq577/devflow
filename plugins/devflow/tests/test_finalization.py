@@ -529,14 +529,14 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
         self.assertTrue(cleanup["kill_sent"])
         self.assertTrue(cleanup["stopped"])
 
-    def test_newman_tool_failure_is_blocked_after_server_cleanup(self):
+    def test_newman_tool_failure_is_blocked_before_server_start(self):
         self.completed()
         result = self.run_newman("--newman-bin", str(self.root / "missing-newman"))
         self.assertEqual(result.returncode, 2, result.stderr)
         run = self.read_state()["delivery"]["finalization"]["runs"][-1]
         self.assertEqual(run["status"], "blocked")
         self.assertEqual(run["server_lifecycle"]["newman"]["status"], "blocked")
-        self.assertEqual(run["server_lifecycle"]["cleanup"]["status"], "passed")
+        self.assertEqual(run["server_lifecycle"]["cleanup"]["status"], "not_run")
         self.assertFalse((self.root / "newman-invoked").exists())
 
     def test_environment_failure_is_blocked_and_not_not_applicable(self):
