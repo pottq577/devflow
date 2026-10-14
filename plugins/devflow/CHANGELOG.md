@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased - R01 hosted telemetry
+
+- Require the reserved attempt explicitly for hosted telemetry and expose machine-readable failure reasons while retaining fail-open execution.
+- Keep Protocol `1.8.0`: only operational telemetry changes; STATE/WORK artifacts, lifecycle transitions and independent approval gates remain unchanged. No plugin release or manifest version change is made by this patch.
+
 ## 0.10.1 - 2026-10-12 - Hosted execution and release guards
 
 - Permit the final configured no-progress retry index in hosted `/goal`, matching standalone Autopilot. With the default limit of five, attempt 5 reaches the alternative-model worker route and a further non-progressing attempt is blocked.

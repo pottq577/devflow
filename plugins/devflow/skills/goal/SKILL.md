@@ -142,6 +142,8 @@ python3 <this-skill-directory>/scripts/host.py telemetry-finish <domain> \
   --outcome <completed|failed|cancelled|capability_blocked>
 ```
 
+Always pass the guard's current `attempt`, including zero. Record the returned `reason` on `telemetry_unavailable` so missing attempts and reservation mismatches are visible.
+
 Use `--candidate-alias` when retrying a payload candidate after a spawn capability failure. Run `telemetry-finish` **before** acknowledging its `step-finish`, while that step is still reserved. If either telemetry command returns `telemetry_unavailable`, continue the lifecycle; do not fabricate a `dispatch_id`. Telemetry must never block or change a routed action.
 
 For `dispatch_required`:

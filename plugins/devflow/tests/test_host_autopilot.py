@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -193,6 +195,108 @@ class HostAutopilotUnitTests(unittest.TestCase):
         self.assertIn("--mode closure", command)
 
 
+class HostTelemetryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        initialized = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=self.root, text=True, capture_output=True,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        self.host = load_host()
+        self.policy = self.host.autopilot.load_policy(PLUGIN, self.root)
+        self.runtime = self.root / ".devflow/runtime/sample"
+        self.owner = self.host.session.start(self.runtime)["session_id"]
+        self.state = self.host._load_state(self.root, "sample")
+        self.envelope = self.host.dispatch_envelope(
+            self.root, PLUGIN, self.policy, "sample", self.state,
+        )
+        self.fingerprint = self.envelope["fingerprint"]
+        self.log = self.runtime / "host-dispatch.jsonl"
+
+    def call_host(self, *args):
+        stdout = io.StringIO()
+        with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
+                mock.patch.object(sys, "argv", [str(HOST_SCRIPT), *args]), \
+                contextlib.redirect_stdout(stdout):
+            code = self.host.main()
+        self.assertEqual(code, 0, stdout.getvalue())
+        return json.loads(stdout.getvalue())
+
+    def reserve(self, attempt=0):
+        for retry in range(attempt + 1):
+            self.envelope = self.host.dispatch_envelope(
+                self.root, PLUGIN, self.policy, "sample", self.state, attempt=retry,
+            )
+            step = self.host.guard.begin(
+                self.runtime, self.owner, self.fingerprint, self.policy,
+                kind="primary", expected_attempt=retry,
+                candidate_alias=self.envelope["primary"]["model_alias"],
+            )
+            if retry < attempt:
+                self.host.guard.finish(
+                    self.runtime, self.owner, step["step_id"], self.fingerprint,
+                    self.policy, outcome="failed",
+                )
+        self.step_id = step["step_id"]
+        return [
+            "telemetry-start", "sample", "--kind", "primary", "--attempt", str(attempt),
+            "--session-id", self.owner, "--step-id", self.step_id,
+        ]
+
+    def snapshot(self):
+        return (
+            (self.root / "docs/domains/sample/STATE.yaml").read_bytes(),
+            self.host.guard.inspect(self.runtime, self.owner, self.fingerprint, self.policy),
+        )
+
+    def test_attempt_zero_one_three_five_record_actual_reserved_routes(self):
+        original_state = self.snapshot()[0]
+        recorded_attempts = []
+        for attempt in range(6):
+            envelope = self.host.dispatch_envelope(
+                self.root, PLUGIN, self.policy, "sample", self.state, attempt=attempt,
+            )
+            step = self.host.guard.begin(
+                self.runtime, self.owner, self.fingerprint, self.policy,
+                kind="primary", expected_attempt=attempt,
+                candidate_alias=envelope["primary"]["model_alias"],
+            )
+            before = self.snapshot()
+            if attempt in {0, 1, 3, 5}:
+                started = self.call_host(
+                    "telemetry-start", "sample", "--kind", "primary", "--attempt", str(attempt),
+                    "--session-id", self.owner, "--step-id", step["step_id"],
+                )
+                self.assertEqual(started["status"], "started")
+                finished = self.call_host(
+                    "telemetry-finish", "sample", "--dispatch-id", started["dispatch_id"],
+                    "--session-id", self.owner, "--step-id", step["step_id"], "--outcome", "failed",
+                )
+                self.assertEqual(finished["status"], "recorded")
+                rows = [json.loads(line) for line in self.log.read_text().splitlines()][-2:]
+                self.assertEqual([row["event"] for row in rows], ["start", "finish"])
+                for row in rows:
+                    self.assertEqual(row["attempt"], attempt)
+                    self.assertEqual(row["schema_version"], 2)
+                    self.assertEqual(row["model_alias"], envelope["primary"]["model_alias"])
+                    self.assertEqual(row["model"], envelope["primary"]["model"])
+                self.assertEqual(rows[1]["outcome"], "failed")
+                self.assertGreaterEqual(rows[1]["duration_seconds"], 0)
+                recorded_attempts.append(attempt)
+                self.assertEqual(self.snapshot(), before)
+            acknowledgement = self.host.guard.finish(
+                self.runtime, self.owner, step["step_id"], self.fingerprint,
+                self.policy, outcome="failed",
+            )
+            self.assertEqual(acknowledgement["attempt"], attempt + 1)
+        self.assertEqual(recorded_attempts, [0, 1, 3, 5])
+        self.assertEqual(self.snapshot()[0], original_state)
+
+
 class HostAutopilotCliTests(unittest.TestCase):
     def new_repo(self) -> Path:
         self.temp = tempfile.TemporaryDirectory()
@@ -319,6 +423,37 @@ class HostAutopilotCliTests(unittest.TestCase):
         self.assertTrue(records[0]["model_alias"])
         self.assertTrue(records[0]["model"])
         self.assertTrue(records[0]["reasoning_effort"])
+
+    def test_telemetry_start_without_attempt_is_unavailable_at_attempt_zero(self):
+        root = self.new_repo()
+        initialized = subprocess.run(
+            [sys.executable, str(CLI), "init", "sample"],
+            cwd=root, text=True, capture_output=True,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        acquired = self.run_host(root, "session-start", "sample")
+        self.assertEqual(acquired.returncode, 0, acquired.stderr)
+        owner = json.loads(acquired.stdout)["session_id"]
+        dispatched = self.run_host(root, "dispatch", "sample", "--session-id", owner)
+        self.assertEqual(dispatched.returncode, 0, dispatched.stderr)
+        envelope = json.loads(dispatched.stdout)
+        reserved = self.run_host(
+            root, "step-start", "sample", "--session-id", owner,
+            "--kind", "primary", "--fingerprint", envelope["fingerprint"],
+            "--candidate-alias", envelope["primary"]["model_alias"], "--attempt", "0",
+        )
+        self.assertEqual(reserved.returncode, 0, reserved.stderr)
+        step_id = json.loads(reserved.stdout)["step_id"]
+        result = self.run_host(
+            root, "telemetry-start", "sample", "--kind", "primary",
+            "--session-id", owner, "--step-id", step_id,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "telemetry_unavailable")
+        self.assertEqual(payload["reason"], "telemetry_attempt_missing")
+        self.assertIsInstance(payload["error"], str)
+        self.assertFalse((root / ".devflow/runtime/sample/host-dispatch.jsonl").exists())
 
     def test_telemetry_failure_does_not_block_lifecycle(self):
         root = self.new_repo()

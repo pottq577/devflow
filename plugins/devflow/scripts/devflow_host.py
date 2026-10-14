@@ -216,12 +216,20 @@ def telemetry_start(
     domain: str,
     *,
     kind: str,
-    attempt: int,
+    attempt: int | None,
     until: str,
     candidate_alias: str | None = None,
     session_id: str | None = None,
     step_id: str | None = None,
 ) -> dict[str, Any]:
+    if attempt is None:
+        return {
+            "status": "telemetry_unavailable",
+            "reason": "telemetry_attempt_missing",
+            "error": "Telemetry requires --attempt from the reserved step",
+        }
+    if type(attempt) is not int or attempt < 0:
+        raise guard.GuardBlocked("telemetry_attempt_invalid")
     state = _load_state(root, domain)
     envelope = dispatch_envelope(
         root,
@@ -721,7 +729,7 @@ def build_parser() -> argparse.ArgumentParser:
     telemetry_start_parser.add_argument(
         "--kind", choices=["scout", "primary"], required=True
     )
-    telemetry_start_parser.add_argument("--attempt", type=int, default=0)
+    telemetry_start_parser.add_argument("--attempt", type=int)
     telemetry_start_parser.add_argument(
         "--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete"
     )
@@ -892,7 +900,7 @@ def main() -> int:
         if "args" in locals() and getattr(args, "command", None) in TELEMETRY_COMMANDS:
             print(
                 json.dumps(
-                    {"status": "telemetry_unavailable", "error": exc.reason},
+                    {"status": "telemetry_unavailable", "reason": exc.reason, "error": exc.reason},
                     ensure_ascii=False,
                     indent=2,
                 )
@@ -904,7 +912,7 @@ def main() -> int:
         if "args" in locals() and getattr(args, "command", None) in TELEMETRY_COMMANDS:
             print(
                 json.dumps(
-                    {"status": "telemetry_unavailable", "error": str(exc)},
+                    {"status": "telemetry_unavailable", "reason": "telemetry_error", "error": str(exc)},
                     ensure_ascii=False,
                     indent=2,
                 )
