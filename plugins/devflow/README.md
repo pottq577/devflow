@@ -113,6 +113,10 @@ Each status, render or state projection shares one invocation-local WORK documen
 snapshot. Later calls read fresh WORK and HEAD; prospective mutations build their own overlays.
 Render validates the requested action against that single projection before updating STATE.
 
+`delivery check` and delivery validation share each successful Git inspection that is pinned to full
+commit SHAs within one invocation, and read one source blob per path for several comment anchors.
+Mutable refs and artifact contents stay fresh reads, and nothing is reused across invocations.
+
 Hosted children receive `--expected-fingerprint` and `--expected-head` pins with their render
 command. A moved action fingerprint or HEAD exits `2` without output or STATE writes, and
 `render --check-only` runs the same guards while printing nothing. The compact scout-backed

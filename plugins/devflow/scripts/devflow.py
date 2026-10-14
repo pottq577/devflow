@@ -4352,6 +4352,7 @@ def audit_artifact_contract_errors(
     return errors
 
 
+@delivery.validation_snapshot()
 def collect_validation(
     root: Path,
     domain: str,

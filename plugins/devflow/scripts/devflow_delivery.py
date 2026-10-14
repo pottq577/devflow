@@ -7,12 +7,14 @@ STATE/WORK transaction, so an artifact refusal cannot partially mark a WORK comp
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import io
 import re
 import subprocess
 import tokenize
 from collections.abc import Callable
+from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -56,6 +58,21 @@ SOURCE_SUFFIXES = {
 HASH = re.compile(r"[0-9a-f]{64}")
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 PR_METADATA = re.compile(r"<!--\s*devflow-delivery:\s*(\{.*?\})\s*-->", re.DOTALL)
+_VALIDATION_GIT: ContextVar[dict[tuple[Path, tuple[str, ...]], str] | None] = ContextVar(
+    "delivery_validation_git", default=None
+)
+
+
+@contextlib.contextmanager
+def validation_snapshot():
+    if _VALIDATION_GIT.get() is not None:
+        yield
+        return
+    token = _VALIDATION_GIT.set({})
+    try:
+        yield
+    finally:
+        _VALIDATION_GIT.reset(token)
 
 
 def default_policy() -> dict[str, Any]:
@@ -75,10 +92,22 @@ def git(root: Path, *args: str) -> str:
     return result.stdout.rstrip("\n")
 
 
+def _immutable_git(root: Path, *args: str) -> str:
+    """Reuse successful inspections whose callers have pinned every Git ref to a full SHA."""
+    snapshot = _VALIDATION_GIT.get()
+    if snapshot is None:
+        return git(root, *args)
+    key = (root.resolve(), args)
+    if key not in snapshot:
+        snapshot[key] = git(root, *args)
+    return snapshot[key]
+
+
 def resolve_commit(root: Path, ref: Any) -> str:
     if not isinstance(ref, str) or not ref.strip():
         raise ValueError("delivery requires a nonblank source commit/ref")
-    value = git(root, "rev-parse", "--verify", "--end-of-options", ref + "^{commit}")
+    reader = _immutable_git if SHA.fullmatch(ref) else git
+    value = reader(root, "rev-parse", "--verify", "--end-of-options", ref + "^{commit}")
     if not SHA.fullmatch(value):
         raise ValueError("delivery source ref must resolve to one commit")
     return value
@@ -227,7 +256,8 @@ def read_artifact(root: Path, path: str, label: str) -> tuple[str, str]:
 
 def source_changes(root: Path, start: str, head: str) -> list[str]:
     # NUL-separated names preserve spaces and non-ASCII paths without Git's display quoting.
-    output = git(
+    reader = _immutable_git if SHA.fullmatch(start) and SHA.fullmatch(head) else git
+    output = reader(
         root,
         "diff",
         "--no-ext-diff",
@@ -292,6 +322,7 @@ def comment_lines(source: str, suffix: str) -> set[int]:
     return found
 
 
+@validation_snapshot()
 def comment_errors(root: Path, item: dict[str, Any]) -> list[str]:
     evidence = item.get("evidence") or {}
     errors: list[str] = []
@@ -299,7 +330,7 @@ def comment_errors(root: Path, item: dict[str, Any]) -> list[str]:
         head = resolve_commit(root, evidence.get("commit"))
         start = resolve_commit(root, evidence.get("start_sha"))
         try:
-            ancestor = git(root, "merge-base", start, head)
+            ancestor = _immutable_git(root, "merge-base", start, head)
         except ValueError:
             ancestor = None
         if ancestor != start:
@@ -323,6 +354,7 @@ def comment_errors(root: Path, item: dict[str, Any]) -> list[str]:
         return [
             "changed executable source requires at least one meaningful evidence.comments anchor"
         ]
+    source_comments: dict[str, set[int]] = {}
     for anchor in anchors:
         if not isinstance(anchor, dict):
             errors.append("comment anchor must be a mapping")
@@ -350,8 +382,10 @@ def comment_errors(root: Path, item: dict[str, Any]) -> list[str]:
                 "comment anchor requires a positive line and a nonblank reason"
             )
             continue
-        source = git(root, "show", f"{head}:{path}")
-        if line not in comment_lines(source, Path(path).suffix.lower()):
+        if path not in source_comments:
+            source = _immutable_git(root, "show", f"{head}:{path}")
+            source_comments[path] = comment_lines(source, Path(path).suffix.lower())
+        if line not in source_comments[path]:
             errors.append(
                 f"comment anchor does not point to a substantive source comment/docstring: {path}:{line}"
             )
@@ -535,6 +569,7 @@ def prepare_completion(
     policy["branches"][branch] = record
 
 
+@validation_snapshot()
 def validation_errors(
     root: Path,
     domain: str,
@@ -635,7 +670,7 @@ def validation_errors(
                         f"delivery branch {branch} requires branch_start_sha for detached checkout"
                     )
                 if (
-                    git(root, "merge-base", branch_start, record["head_sha"])
+                    _immutable_git(root, "merge-base", branch_start, record["head_sha"])
                     != branch_start
                 ):
                     raise ValueError(

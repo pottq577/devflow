@@ -113,6 +113,7 @@ failed servers, tools and credentials never become `not_applicable`.
 ## Validation, refresh and audits
 
 `devflow delivery check <domain>` checks all recorded artifacts and source evidence.
+Successful Git inspections pinned to full commit SHAs may be shared within one validation invocation; mutable refs and artifact file contents remain fresh reads, and no inspection cache survives the invocation.
 `devflow delivery check <domain> --final` also checks extant local branch tips.
 For attached delivery, the branch tip must still equal the delivered HEAD.
 For detached delivery, an unapplied target branch may remain an ancestor of the delivered HEAD; divergence or commits beyond the delivered HEAD are rejected.

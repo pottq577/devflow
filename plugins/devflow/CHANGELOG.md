@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased - R07 shared Git inspection in validation
+
+- Share `rev-parse`, `merge-base`, `diff` and `show` results across one validation invocation when every pinned ref is a full commit SHA. Mutable refs, artifact contents and external files always read fresh, and no inspection survives the invocation.
+- Read one source blob per path so several anchors parse the same file once. Different roots, heads and starts never share results. Protocol remains `1.8.0`: verdict rules and evidence provenance are unchanged.
+
 ## Unreleased - R06 pinned hosted child render
 
 - Pin every hosted child render with the dispatch action fingerprint and projected HEAD. Render rejects a moved fingerprint or HEAD with exit `2`, no packet and no STATE write, and `--check-only` runs the same guards while emitting nothing.
