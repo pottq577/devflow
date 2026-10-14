@@ -147,6 +147,7 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
             'if mode == "ignore-term":\n'
             "    import signal\n"
             "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            '    marker.write_text("ready")\n'
             'if mode == "exit-after-health":\n'
             "    while not marker.exists(): time.sleep(0.01)\n"
             "    sys.exit(0)\n"
@@ -203,6 +204,11 @@ class FinalizationTests(DeliveryFixtureMixin, unittest.TestCase):
             status = readiness_status
 
             def __enter__(self):
+                if (
+                    getattr(self_outer, "server_mode", "") == "ignore-term"
+                    and not self_outer.server_ready_marker.is_file()
+                ):
+                    raise OSError("owned server fixture is still initializing")
                 if getattr(self_outer, "server_mode", "") == "exit-after-health":
                     self_outer.server_ready_marker.write_text("ready")
                 return self
