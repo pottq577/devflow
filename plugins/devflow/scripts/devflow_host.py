@@ -106,7 +106,13 @@ def _role_contract_path(plugin_root: Path, role: str) -> Path:
     return plugin_root / "core" / "prompts" / name
 
 
-def _render_command(plugin_root: Path, domain: str, action: dict[str, Any]) -> str:
+def _render_command(
+    plugin_root: Path,
+    domain: str,
+    action: dict[str, Any],
+    *,
+    no_refresh: bool = False,
+) -> str:
     command = str(action.get("command") or "")
     base = [
         sys.executable,
@@ -129,16 +135,22 @@ def _render_command(plugin_root: Path, domain: str, action: dict[str, Any]) -> s
         base.extend(["--mode", str(action.get("mode") or "initial")])
     elif command not in {"plan", "finalize"}:
         raise ValueError(f"Action cannot be rendered for host dispatch: {command}")
+    if no_refresh:
+        base.append("--no-refresh")
     return " ".join(shlex.quote(part) for part in base)
 
 
-def _status_command(plugin_root: Path, domain: str) -> str:
+def _status_command(
+    plugin_root: Path, domain: str, *, no_refresh: bool = False
+) -> str:
     parts = [
         sys.executable,
         str(plugin_root / "scripts" / "devflow.py"),
         "status",
         domain,
     ]
+    if no_refresh:
+        parts.append("--no-refresh")
     return " ".join(shlex.quote(part) for part in parts)
 
 
@@ -420,7 +432,7 @@ def _host_message(
         f"2. Read the role contract at `{_role_contract_path(plugin_root, role)}`.",
         (
             "3. Read current lifecycle state with "
-            f"`{_status_command(plugin_root, domain)}`."
+            f"`{_status_command(plugin_root, domain, no_refresh=read_only)}`."
         ),
     ]
     if scout_backed and role in autopilot.ContextAssembler.COMPACT_PACKET_ROLES:
@@ -434,7 +446,7 @@ def _host_message(
                     "5. Verify the scout's cited files, symbols, tests, and constraints "
                     "directly. Only if material evidence is missing or contradictory, "
                     "render the authoritative action packet with "
-                    f"`{_render_command(plugin_root, domain, action)}`."
+                    f"`{_render_command(plugin_root, domain, action, no_refresh=read_only)}`."
                 ),
             ]
         )
@@ -442,7 +454,7 @@ def _host_message(
     else:
         lines.append(
             "4. Render the authoritative action packet with "
-            f"`{_render_command(plugin_root, domain, action)}`."
+            f"`{_render_command(plugin_root, domain, action, no_refresh=read_only)}`."
         )
         action_step = 5
     if read_only:

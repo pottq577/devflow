@@ -2459,7 +2459,7 @@ def print_status(args: argparse.Namespace) -> int:
     raw_state = load_yaml(path, {}) or {}
     state = (
         project_state(root, args.domain, copy.deepcopy(raw_state))
-        if newer_config
+        if newer_config or getattr(args, "no_refresh", False)
         else refresh_state(root, args.domain, raw_state)
     )
     cfg = runtime_config(root)
@@ -5314,12 +5314,19 @@ def render(args: argparse.Namespace) -> int:
     d = domain_dir(root, args.domain)
     role = args.render_command
     state = load_yaml(state_path(root, args.domain), {}) or {}
-    expected = compute_next_action(root, args.domain, state)
+    no_refresh = getattr(args, "no_refresh", False)
+    state = project_state(root, args.domain, copy.deepcopy(state)) if no_refresh else state
+    expected = (
+        state["next_action"]
+        if no_refresh
+        else compute_next_action(root, args.domain, state)
+    )
     requested, error = render_request(root, args, expected)
     expected_request = {key: expected.get(key) for key in requested}
     if error or requested != expected_request:
         return reject_render(args.domain, requested, expected_request, error)
-    state = refresh_state(root, args.domain)
+    if not no_refresh:
+        state = refresh_state(root, args.domain)
 
     print(
         (plugin_root() / "core" / "prompts" / f"{role}.md")
@@ -5927,6 +5934,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("status")
     sp.add_argument("domain")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--no-refresh", action="store_true")
     sp.set_defaults(func=print_status)
 
     sp = sub.add_parser("next")
@@ -6110,13 +6118,16 @@ def build_parser() -> argparse.ArgumentParser:
     rsub = sp.add_subparsers(dest="render_command", required=True)
     s = rsub.add_parser("finalize")
     s.add_argument("domain")
+    s.add_argument("--no-refresh", action="store_true")
     s.set_defaults(func=render)
     s = rsub.add_parser("plan")
     s.add_argument("domain")
+    s.add_argument("--no-refresh", action="store_true")
     s.set_defaults(func=render)
     s = rsub.add_parser("run")
     s.add_argument("domain")
     s.add_argument("--task")
+    s.add_argument("--no-refresh", action="store_true")
     s.set_defaults(func=render)
     s = rsub.add_parser("audit")
     s.add_argument("domain")
@@ -6126,6 +6137,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--task")
     s.add_argument("--phase")
     s.add_argument("--mode", choices=["initial", "closure"], default="initial")
+    s.add_argument("--no-refresh", action="store_true")
     s.set_defaults(func=render)
     return p
 

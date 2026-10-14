@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased - R04 read-only projections
+
+- Add opt-in no-refresh status and render commands that derive current HEAD and actions without changing STATE bytes or mtime. Scout and Diagnostician use these commands, including conditional authoritative-packet fallback.
+- Preserve default refresh and live render mismatch checks against current WORK. Protocol remains `1.8.0`; CLI options are additive and no lifecycle fields or permissions change.
+
 ## Unreleased - R02 session fencing
 
 - Preserve expired and orphan inflight reservations as fences for hosted and standalone execution. Check idle progress and release hosted ownership in one SQLite transaction.
