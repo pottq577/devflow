@@ -113,6 +113,11 @@ Each status, render or state projection shares one invocation-local WORK documen
 snapshot. Later calls read fresh WORK and HEAD; prospective mutations build their own overlays.
 Render validates the requested action against that single projection before updating STATE.
 
+Finalization state projections stop at the first definitive finalization error and keep the same
+`finalize` action and reason; an error-free projection still runs the complete evidence check before
+it releases an audit or project completion. Newman raw and server log digests are shared only within
+one invocation, after re-checking path, size and change times, and never across invocations.
+
 `delivery check` and delivery validation share each successful Git inspection that is pinned to full
 commit SHAs within one invocation, and read one source blob per path for several comment anchors.
 Mutable refs and artifact contents stay fresh reads, and nothing is reused across invocations.

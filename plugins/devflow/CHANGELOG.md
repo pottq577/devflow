@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R08 finalization projection and shared digests
+
+- Stop a state projection at the first definitive finalization error and keep the existing `finalize` action and reason. An error-free projection still needs the complete evidence check, and explicit finalization checks, `delivery finalize` and integration validation keep collecting every error.
+- Share Newman raw and server log digests only inside one invocation, re-checking resolved path, size and change times, failing a file that changes while it is read, never caching failures and discarding the scope on return or error. Later invocations re-read content and detect byte changes.
+- Retain Protocol `1.8.0`: statuses, gate meaning and evidence provenance are unchanged.
+
 ## Unreleased - R07 shared Git inspection in validation
 
 - Share `rev-parse`, `merge-base`, `diff` and `show` results across one validation invocation when every pinned ref is a full commit SHA. Mutable refs, artifact contents and external files always read fresh, and no inspection survives the invocation.

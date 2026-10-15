@@ -15,6 +15,15 @@ The Executor owns this delivery stage.
 Existing WORK, risk-review, phase-audit and integration-audit gates retain their authority.
 The runtime executes explicit foreground commands; the host agent follows the rendered procedure.
 
+State projections may stop at the first definitive finalization error and keep its existing
+`finalize` action and reason. An error-free projection still requires the complete evidence
+check before it can release an audit or project completion. Explicit finalization checks and
+verified-integration validation retain complete error collection.
+Raw-report and server-log digests may be shared only within one invocation. Every reuse checks
+the resolved path and current file identity, size, modification time and change time. A file
+that changes while being read fails verification; failures are not cached. The scope is discarded
+on return or error, so later invocations always re-read content and detect byte changes.
+
 The computed action `finalize` has role `executor`, scope `project`, and project status `delivery_finalization`.
 It is selected at integration handoff once implemented WORK exists, and again after integration remediation changes the scope.
 A phase-free initial audit may first identify implementation WORK.

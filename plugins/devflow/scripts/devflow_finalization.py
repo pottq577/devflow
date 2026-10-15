@@ -6,12 +6,14 @@ they never claim that reading a SKILL.md alone proves semantic compliance with t
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import hashlib
 import itertools
 import json
 import os
 import re
+from contextvars import ContextVar
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,45 @@ TERMINAL = {"done", "cancelled", "transferred"}
 RUN_STATUSES = {"passed", "failed", "blocked", "not_applicable"}
 CLASSIFICATIONS = {"code", "collection", "environment", "unknown"}
 HTML_META = re.compile(r"<!--\s*devflow-explanation:\s*(\{.*?\})\s*-->", re.DOTALL)
+
+
+_EVIDENCE_HASHES: ContextVar[dict[tuple, str] | None] = ContextVar(
+    "finalization_evidence_hashes", default=None
+)
+
+
+@contextlib.contextmanager
+def evidence_snapshot():
+    if _EVIDENCE_HASHES.get() is not None:
+        yield
+        return
+    token = _EVIDENCE_HASHES.set({})
+    try:
+        yield
+    finally:
+        _EVIDENCE_HASHES.reset(token)
+
+
+def _evidence_identity(path: Path) -> tuple:
+    stat = path.stat()
+    return (
+        path.resolve(), stat.st_dev, stat.st_ino, stat.st_size,
+        stat.st_mtime_ns, stat.st_ctime_ns,
+    )
+
+
+def _evidence_sha256(path: Path) -> str:
+    key = _evidence_identity(path)
+    hashes = _EVIDENCE_HASHES.get()
+    if hashes is not None and key in hashes:
+        return hashes[key]
+    data = path.read_bytes()
+    if _evidence_identity(path) != key:
+        raise ValueError(f"Finalization evidence changed while reading: {path}")
+    sha = hashlib.sha256(data).hexdigest()
+    if hashes is not None:
+        hashes[key] = sha
+    return sha
 
 
 def default_policy() -> dict[str, Any]:
@@ -404,7 +445,7 @@ def lifecycle_errors(
             or not log.is_file()
         ):
             raise ValueError("server log is missing")
-        if lifecycle.get("log_sha256") != hashlib.sha256(log.read_bytes()).hexdigest():
+        if lifecycle.get("log_sha256") != _evidence_sha256(log):
             errors.append("Newman server log hash changed: " + str(run.get("id")))
     except (ValueError, OSError, TypeError):
         errors.append("Newman server log evidence is missing: " + str(run.get("id")))
@@ -458,6 +499,7 @@ def no_http_errors(
     return errors
 
 
+@evidence_snapshot()
 def completed_failed_newman(root: Path, run: dict[str, Any]) -> bool:
     if (
         run.get("status") != "failed"
@@ -477,7 +519,7 @@ def completed_failed_newman(root: Path, run: dict[str, Any]) -> bool:
             and isinstance(raw_sha, str)
             and delivery.HASH.fullmatch(raw_sha) is not None
             and raw.is_file()
-            and hashlib.sha256(raw.read_bytes()).hexdigest() == raw_sha
+            and _evidence_sha256(raw) == raw_sha
         )
     except (ValueError, OSError, TypeError):
         return False
@@ -573,6 +615,7 @@ def registered_findings(state: dict[str, Any], item: dict[str, Any]) -> set[str]
     return result
 
 
+@evidence_snapshot()
 def final_errors(
     root: Path,
     domain: str,
@@ -582,18 +625,21 @@ def final_errors(
     *,
     require_receipt: bool = False,
     require_explanation: bool = True,
+    first_error_only: bool = False,
 ) -> list[str]:
     if not active(state):
         return []
     errors = structural_errors(state)
     if errors:
-        return errors
+        return errors[:1] if first_error_only else errors
     fin = policy(state)
     ctx = scope(root, domain, state, docs, domain_path)
     index = work_index(docs)
     for item_id, item in index.items():
         if item.get("status") not in TERMINAL:
             errors.append(f"whole-work finalization has open WORK: {item_id}")
+    if first_error_only and errors:
+        return errors[:1]
     explanation = fin.get("explanation")
     if require_explanation:
         if not isinstance(explanation, dict):
@@ -626,6 +672,9 @@ def final_errors(
                     errors.append("ELI5 explanation invocation evidence is missing")
             except (ValueError, OSError) as exc:
                 errors.append("ELI5 explanation stale or invalid: " + str(exc))
+    # A known blocker already selects finalize; only successful projections need all evidence.
+    if first_error_only and errors:
+        return errors[:1]
     latest = {run["branch"]: run for run in fin["runs"]}
     branches = state["delivery"].get("branches", {})
     for branch, record in branches.items():
@@ -651,9 +700,13 @@ def final_errors(
                 errors.append("PR template changed after finalization")
         except (ValueError, OSError, KeyError, TypeError) as exc:
             errors.append(str(exc))
+        if first_error_only and errors:
+            return errors[:1]
         run = latest.get(branch)
         if not run:
             errors.append(f"Newman execution evidence missing for branch: {branch}")
+            if first_error_only:
+                return errors[:1]
             continue
         if (
             run["source_sha"] != record["head_sha"]
@@ -666,6 +719,8 @@ def final_errors(
             errors.extend(lifecycle_errors(root, run))
         else:
             errors.append(f"Newman branch requires successful rerun: {branch}")
+        if first_error_only and errors:
+            return errors[:1]
     for run in fin["runs"]:
         try:
             text, sha = delivery.read_artifact(
@@ -701,6 +756,8 @@ def final_errors(
                     )
         except (ValueError, OSError) as exc:
             errors.append(str(exc))
+        if first_error_only and errors:
+            return errors[:1]
         if run.get("raw_sha256"):
             try:
                 raw = delivery.inside(root, run.get("raw_file"))
@@ -712,17 +769,21 @@ def final_errors(
                     raise ValueError(
                         "Newman raw report is missing or outside its private location"
                     )
-                if hashlib.sha256(raw.read_bytes()).hexdigest() != run["raw_sha256"]:
+                if _evidence_sha256(raw) != run["raw_sha256"]:
                     errors.append("Newman raw report hash changed: " + run["id"])
             except (ValueError, OSError) as exc:
                 errors.append(str(exc))
         elif run["status"] == "passed":
             errors.append("Newman passed evidence requires its private raw report hash")
+        if first_error_only and errors:
+            return errors[:1]
         if run["status"] not in {"failed", "blocked"}:
             continue
         diagnosis = fin["diagnoses"].get(run["id"])
         if not diagnosis or diagnosis.get("classification") == "unknown":
             errors.append("Newman failure requires evidence-based triage: " + run["id"])
+            if first_error_only:
+                return errors[:1]
             continue
         if diagnosis.get("classification") in {"code", "collection"} and (
             not completed_failed_newman(root, run)
@@ -731,6 +792,8 @@ def final_errors(
                 "code/collection triage requires a completed failed Newman run: "
                 + run["id"]
             )
+        if first_error_only and errors:
+            return errors[:1]
         subsequent = latest.get(run["branch"])
         branch_record = branches.get(run["branch"], {})
         valid_subsequent = bool(subsequent) and (
@@ -744,12 +807,16 @@ def final_errors(
             errors.append(
                 "triaged failure requires a later successful Newman run: " + run["id"]
             )
+        if first_error_only and errors:
+            return errors[:1]
         if diagnosis["classification"] in {"code", "collection"}:
             item = index.get(diagnosis.get("work_id"))
             if not item or item.get("status") != "done":
                 errors.append(
                     "Newman defect requires completed repair WORK: " + run["id"]
                 )
+                if first_error_only:
+                    return errors[:1]
                 continue
             ev = item.get("evidence") or {}
             try:
@@ -776,6 +843,8 @@ def final_errors(
                         )
             except ValueError as exc:
                 errors.append(str(exc))
+        if first_error_only and errors:
+            return errors[:1]
     if require_receipt:
         receipt = fin.get("receipt")
         explanation_sha = (
@@ -791,4 +860,4 @@ def final_errors(
             errors.append(
                 "whole-work finalization receipt missing or stale; run delivery finalize"
             )
-    return errors
+    return errors[:1] if first_error_only else errors

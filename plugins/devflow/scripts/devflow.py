@@ -2331,7 +2331,7 @@ def compute_next_action(
     has_delivery = any(item.get("status") == "done" for _, item in index.values())
     if at_integration and (has_delivery or action.get("command") == "complete"):
         errors = finalization.final_errors(
-            root, domain, state, docs, d, require_receipt=True
+            root, domain, state, docs, d, require_receipt=True, first_error_only=True
         )
         if errors:
             return {
@@ -6192,6 +6192,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+@finalization.evidence_snapshot()
 def main() -> int:
     try:
         configure_work_schema()
