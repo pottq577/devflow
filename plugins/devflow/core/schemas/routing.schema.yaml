@@ -25,7 +25,8 @@ notes:
   - Budget total_tokens is a measured-usage pre-dispatch guard; percentage buckets may borrow only from reserve.
   - dispatch_reserve_tokens and scout_reserve_tokens must fit before a new dispatch starts; one in-flight backend run may report usage above its reservation.
   - orchestration.scout_before names roles that always receive one persisted pre-analysis capsule per action when budget permits.
-  - orchestration.scout_on_critical adds scouts only when the routed specialist effective risk is critical; orchestration.scout_on_retry adds scouts only after attempt zero.
+  - orchestration.scout_on_critical adds scouts only when the routed specialist effective risk is critical; orchestration.scout_on_retry adds scouts only after attempt zero and only when the supervisor holds no capsule that scout-validate still reports as valid for the current action and current evidence.
+  - A hosted capsule is current only when its validated six-section text, the action fingerprint and the evidence digest all match. A moved HEAD, changed source, changed verification target or changed failure evidence makes the capsule stale, and the next dispatch re-scouts instead of reusing it.
   - Only six-section, source-path-citing and size-valid scout capsules can replace the full rendered runtime packet for compact roles; the specialist still verifies the cited evidence.
   - orchestration.scout_max_chars bounds the persisted/passed capsule without truncation; invalid, oversized, failed and same-model scouts fall back to the full runtime packet.
   - Hosted telemetry is correlated by the session-owned reserved step id and versioned action fingerprint, but remains optional and fail-open.

@@ -7,6 +7,8 @@ silently replacing the authoritative runtime packet with a free-form answer.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -23,6 +25,14 @@ _PATH = re.compile(
     r"(?:^|[\s`(])(?:[\w.-]+/)+[\w.-]+(?::\d+(?:-\d+)?)?(?=$|[\s`),;])",
     re.MULTILINE,
 )
+
+
+def evidence_digest(index: Any) -> str:
+    """Bind a capsule to the source and failure evidence it actually inspected."""
+    payload = json.dumps(
+        index, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
+    return "ev1:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def validated_capsule(value: Any, max_chars: int = 12000) -> str | None:

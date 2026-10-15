@@ -114,18 +114,19 @@ def _render_command(
     no_refresh: bool = False,
     expected_head: str | None = None,
     check_only: bool = False,
+    evidence: bool = False,
 ) -> str:
     command = str(action.get("command") or "")
     base = [
         sys.executable,
         str(plugin_root / "scripts" / "devflow.py"),
         "render",
-        command,
+        "evidence" if evidence else command,
         domain,
     ]
-    if command == "run" and action.get("work_item"):
+    if not evidence and command == "run" and action.get("work_item"):
         base.extend(["--task", str(action["work_item"])])
-    elif command == "audit":
+    elif not evidence and command == "audit":
         scope = action.get("scope")
         if not scope:
             raise ValueError("Audit host dispatch requires scope")
@@ -135,7 +136,7 @@ def _render_command(
         if action.get("phase") is not None:
             base.extend(["--phase", str(action["phase"])])
         base.extend(["--mode", str(action.get("mode") or "initial")])
-    elif command not in {"plan", "finalize"}:
+    elif not evidence and command not in {"plan", "finalize"}:
         raise ValueError(f"Action cannot be rendered for host dispatch: {command}")
     if no_refresh:
         base.append("--no-refresh")
@@ -463,6 +464,17 @@ def _host_message(
             ]
         )
         action_step = 6
+    elif role == "scout":
+        lines.append(
+            "3. Read the bounded evidence index for this action with "
+            f"`{_render_command(plugin_root, domain, action, no_refresh=read_only, expected_head=expected_head, evidence=True)}`."
+        )
+        lines.append(
+            "4. Explore the repository only for the files, symbols and tests that index cites, "
+            "plus the current failing evidence. Do not load the full action protocol, PRD, PLAN "
+            "or WORK bodies to rediscover navigation facts."
+        )
+        action_step = 5
     else:
         lines.append(
             "3. Render the authoritative action packet and validate the pinned action and HEAD with "
@@ -566,6 +578,7 @@ def dispatch_envelope(
     *,
     attempt: int = 0,
     until: str = "complete",
+    scout_cached: bool = False,
 ) -> dict[str, Any]:
     action = copy.deepcopy(state.get("next_action") or {})
     command = action.get("command")
@@ -592,6 +605,7 @@ def dispatch_envelope(
         scout_before=set(orchestration.get("scout_before", [])),
         scout_on_retry=set(orchestration.get("scout_on_retry", [])),
         scout_on_critical=set(orchestration.get("scout_on_critical", [])),
+        scout_cached=scout_cached,
     ):
         scout_action = copy.deepcopy(action)
         scout_action["_role_override"] = "scout"
@@ -723,6 +737,21 @@ def _load_state(root: Path, domain: str) -> dict[str, Any]:
     return devflow.project_state(root, domain, copy.deepcopy(raw))
 
 
+def _scout_capsule_record(file_path: Path) -> dict[str, Any]:
+    try:
+        value = strict_json(file_path.with_suffix(".evidence.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _write_scout_capsule_record(file_path: Path, digest: str) -> None:
+    file_path.with_suffix(".evidence.json").write_text(
+        json.dumps({"evidence_digest": digest}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _guard_view(
     root: Path, domain: str, owner: str, policy: dict[str, Any], until: str,
 ) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
@@ -778,6 +807,11 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--attempt", type=int)  # optional assertion, never a reset
     dispatch.add_argument(
         "--until", choices=autopilot.ExecutionBoundary.VALUES, default="complete"
+    )
+    dispatch.add_argument(
+        "--scout-cached",
+        action="store_true",
+        help="Assert a scout capsule validated for this action and current evidence",
     )
 
     bootstrap = sub.add_parser("bootstrap")
@@ -896,6 +930,7 @@ def main() -> int:
                 result = dispatch_envelope(
                     root, plugin_root, policy, args.domain, state,
                     attempt=safety["attempt"], until=args.until,
+                    scout_cached=args.scout_cached,
                 )
                 result["safety"] = safety
         elif args.command == "bootstrap":
@@ -960,7 +995,7 @@ def main() -> int:
                 outcome=args.outcome,
             )
         elif args.command == "scout-validate":
-            _state, fingerprint, _safety = _guard_view(
+            state, fingerprint, _safety = _guard_view(
                 root, args.domain, args.session_id, policy, "complete"
             )
             if args.fingerprint != fingerprint:
@@ -974,7 +1009,17 @@ def main() -> int:
             with file_path.open(encoding="utf-8") as source:
                 text = source.read(cap + 1)
             valid = scout_contract.validated_capsule(text, cap)
-            result = {"status": "valid" if valid else "invalid", "chars": len(valid or "")}
+            digest = scout_contract.evidence_digest(devflow.evidence_index(root, args.domain, state or {}))
+            recorded = _scout_capsule_record(file_path).get("evidence_digest")
+            if valid and recorded != digest:
+                _write_scout_capsule_record(file_path, digest)
+            result = {
+                "status": "invalid" if not valid
+                else "stale" if recorded and recorded != digest
+                else "valid",
+                "chars": len(valid or ""),
+                "evidence_digest": digest,
+            }
         elif args.command == "telemetry-start":
             result = telemetry_start(
                 root,

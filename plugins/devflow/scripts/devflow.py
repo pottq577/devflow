@@ -5277,10 +5277,140 @@ def render_closure_audit(title: str, path: Path, mode: str) -> None:
         render_markdown_file(title, path)
 
 
+def evidence_index(
+    root: Path, domain: str, state: dict[str, Any]
+) -> dict[str, Any]:
+    """Bounded navigation index for read-only roles; it decides nothing by itself."""
+    d = domain_dir(root, domain)
+    action = state.get("next_action") or {}
+    docs, index, _ = load_work_index(d)
+    item_id = action.get("work_item")
+    if not item_id and action.get("command") in {"audit", "run"}:
+        item_id = action.get("work_item")
+    selected = None
+    if item_id and item_id in index:
+        path, _doc, item = find_item(root, domain, str(item_id))
+        evidence = item.get("evidence") or {}
+        review = effective_review(item)
+        selected = {
+            "id": item.get("id"),
+            "work_file": str(path.relative_to(root)),
+            "status": item.get("status"),
+            "kind": item.get("kind"),
+            "risk": risk_level(item),
+            "objective": item.get("objective"),
+            "requirements": item.get("requirements"),
+            "acceptance_ids": [
+                str(entry.get("id"))
+                for entry in (item.get("acceptance") or [])
+                if isinstance(entry, dict)
+            ]
+            or None,
+            "verification": [
+                entry.get("command")
+                for entry in (item.get("verification") or [])
+                if isinstance(entry, dict)
+            ],
+            "premise_checks": item.get("premise_checks"),
+            "pitfalls": item.get("pitfalls"),
+            "references": item.get("references"),
+            "changed_files": evidence.get("changed_files"),
+            "comment_paths": sorted(
+                {
+                    str(anchor.get("path"))
+                    for anchor in (evidence.get("comments") or [])
+                    if isinstance(anchor, dict) and anchor.get("path")
+                }
+            )
+            or None,
+            "commit": evidence.get("commit"),
+            "start_sha": evidence.get("start_sha"),
+            "deviations": evidence.get("deviations"),
+            "discoveries": evidence.get("discoveries"),
+            "external_wait": (evidence.get("external_wait") or {}).get(
+                "missing_evidence"
+            )
+            if isinstance(evidence.get("external_wait"), dict)
+            else None,
+            "block_kind": item.get("block_kind"),
+            "block_reason": item.get("block_reason"),
+            "review": {
+                "required": review.get("required"),
+                "status": review.get("status"),
+                "audit_file": str(d / review["audit_file"])
+                if review.get("audit_file")
+                else None,
+            },
+            "audit_findings": sorted(
+                ((review.get("audit_provenance") or {}).get("findings") or {})
+            )
+            or None,
+        }
+    delivery_state = state.get("delivery") or {}
+    final = finalization.policy(state) if finalization.active(state) else {}
+    index_payload = {
+        "domain": domain,
+        "fingerprint": autopilot.AutopilotController.fingerprint(action),
+        "action": action,
+        "risk_profile": state.get("risk_profile"),
+        "phase": active_phase_for_action(root, domain, state, action),
+        "baseline_sha": state.get("baseline_sha"),
+        "target_sha": state.get("target_sha"),
+        "current_head": current_sha(root),
+        "unresolved_decisions": state.get("unresolved_decisions") or [],
+        "work": {
+            "total": len(index),
+            "open": [
+                {"id": key, "status": index[key][1].get("status")}
+                for key in sorted(index)
+                if index[key][1].get("status") not in TERMINAL_STATUSES
+            ],
+            "selected": selected,
+        },
+        "delivery": {
+            "enabled": delivery.active(state),
+            "branches": {
+                name: {
+                    "head_sha": record.get("head_sha"),
+                    "branch_start_sha": record.get("branch_start_sha"),
+                    "pr_file": record.get("pr_file"),
+                    "postman_file": record.get("postman_file"),
+                }
+                for name, record in sorted(
+                    (delivery_state.get("branches") or {}).items()
+                )
+            },
+            "newman": [
+                {
+                    "id": run.get("id"),
+                    "status": run.get("status"),
+                    "branch": run.get("branch"),
+                    "source_sha": run.get("source_sha"),
+                }
+                for run in (final.get("runs") or [])
+            ],
+            "receipt": (final.get("receipt") or {}).get("path")
+            if isinstance(final.get("receipt"), dict)
+            else final.get("receipt"),
+        },
+        "originals": {
+            "PRD": str(d / "PRD.md"),
+            "PLAN": str(d / "PLAN.md"),
+            "STATE": str(state_path(root, domain)),
+            "DECISIONS": str(d / "DECISIONS.md"),
+            "PITFALLS": str(d / "PITFALLS.md"),
+            "work_files": sorted(str(path) for path in docs),
+        },
+    }
+    return index_payload
+
+
 def render_request(
     root: Path, args: argparse.Namespace, expected: dict[str, Any]
 ) -> tuple[dict[str, Any], str | None]:
     role = args.render_command
+    if role == "evidence":
+        return {}, None
     if role in {"plan", "finalize"}:
         return {"command": role}, None
     if role == "run":
@@ -5365,6 +5495,20 @@ def render(args: argparse.Namespace) -> int:
     ):
         return reject_render(args.domain, requested, expected_request, "hosted HEAD changed")
     if getattr(args, "check_only", False):
+        return 0
+    if role == "evidence":
+        print(
+            "# DevFlow evidence index\n\n"
+            "Bounded read-only projection of the current action, its verification targets, "
+            "referenced files and failure evidence. It is navigation data, not lifecycle "
+            "authority and not an action packet."
+        )
+        render_yaml_context("Evidence index", evidence_index(root, args.domain, state))
+        print(
+            "\nOpen the cited originals before deciding. Render the authoritative action packet "
+            "with `devflow render <command> <domain>` whenever the action contract itself is "
+            "required, and never treat this index as proof of a lifecycle result."
+        )
         return 0
     if not no_refresh:
         dump_yaml_if_changed(state_path(root, args.domain), state)
@@ -6183,6 +6327,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--task")
     s.add_argument("--phase")
     s.add_argument("--mode", choices=["initial", "closure"], default="initial")
+    s.add_argument("--no-refresh", action="store_true")
+    s.set_defaults(func=render)
+    s = rsub.add_parser("evidence")
+    s.add_argument("domain")
     s.add_argument("--no-refresh", action="store_true")
     s.set_defaults(func=render)
     for render_parser in rsub.choices.values():

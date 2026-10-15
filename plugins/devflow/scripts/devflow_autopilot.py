@@ -1573,11 +1573,13 @@ def should_run_scout(
     scout_before: set[str] | None = None,
     scout_on_retry: set[str] | None = None,
     scout_on_critical: set[str] | None = None,
+    scout_cached: bool = False,
 ) -> bool:
+    """scout_on_retry means "without a current capsule"; a valid one is reused instead."""
     role = str(spec.get("role") or "")
     if role in set(scout_before or set()):
         return True
-    if int(attempt) > 0 and role in set(scout_on_retry or set()):
+    if int(attempt) > 0 and role in set(scout_on_retry or set()) and not scout_cached:
         return True
     return str(spec.get("effective_risk") or "") == "critical" and role in set(
         scout_on_critical or set()

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R09 bounded scout input and capsule freshness
+
+- Add `render evidence`, a bounded read-only navigation projection of the action, its verification targets, referenced files and failure evidence. Scout children receive it instead of the full action packet and open the cited originals on demand.
+- Bind a hosted scout capsule to an evidence digest in addition to the action fingerprint. `scout-validate` records the digest on first success and reports `stale` after the source, verification target, failure evidence or HEAD moves.
+- Define `scout_on_retry` as "no current capsule" and let `dispatch --scout-cached` reuse one. Invalid, stale, same-model and oversized capsules still fall back to the authoritative packet. Protocol remains `1.8.0`.
+
 ## Unreleased - R08 finalization projection and shared digests
 
 - Stop a state projection at the first definitive finalization error and keep the existing `finalize` action and reason. An error-free projection still needs the complete evidence check, and explicit finalization checks, `delivery finalize` and integration validation keep collecting every error.

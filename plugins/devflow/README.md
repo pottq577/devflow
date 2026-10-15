@@ -113,6 +113,19 @@ Each status, render or state projection shares one invocation-local WORK documen
 snapshot. Later calls read fresh WORK and HEAD; prospective mutations build their own overlays.
 Render validates the requested action against that single projection before updating STATE.
 
+`devflow render evidence <domain>` prints a bounded read-only index: the current action and
+fingerprint, the selected WORK objective, acceptance ids, verification commands, premise checks,
+changed files, comment anchor paths, commits, block and external-wait reasons, recorded findings,
+the delivery and Newman index, and the exact original artifact paths. It never inlines the action
+protocol, PRD, PLAN or WORK bodies and never states a lifecycle result. Scout children receive it
+instead of the full action packet.
+
+A hosted scout capsule is reusable only while its text, the action fingerprint and an evidence
+digest over that index agree. `host.py scout-validate` records the digest on first success and
+reports `stale` once the source, verification target, failure evidence or HEAD moves.
+`orchestration.scout_on_retry` asks for a new scout only when no current capsule exists, and
+`dispatch --scout-cached` declares one that still validates.
+
 Finalization state projections stop at the first definitive finalization error and keep the same
 `finalize` action and reason; an error-free projection still runs the complete evidence check before
 it releases an audit or project completion. Newman raw and server log digests are shared only within

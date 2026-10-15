@@ -115,6 +115,10 @@ An accepted render retains the existing derived STATE write contract unless `--n
 Hosted child commands pass `--expected-head <full-sha|unborn>` and `--expected-fingerprint <v2-fingerprint>` from the dispatch projection. Before writing STATE or emitting a packet, render checks the current action fingerprint and both projected and current HEAD. `unborn` explicitly pins the absence of a commit. A mismatch exits `2` without output or mutation; the child stops and returns the blocker to its parent instead of choosing another action.
 `--check-only` runs the same guards and returns zero without STATE writes or packet output. Compact scout-backed children use it before their capsule; other children render once. Neither path needs an initial full status. Read-only roles keep `--no-refresh`; mutating children still run status after their lifecycle changes and return its receipt. Existing manual render calls without expected pins retain their prior behavior.
 
+`render evidence <domain>` is a bounded read-only navigation projection, not an action packet. It prints the current action and fingerprint, the selected WORK objective, acceptance ids, verification commands, premise checks, pitfalls, references, changed files, comment anchor paths, commit and start SHA, block and external-wait reasons, recorded audit findings, the delivery branch, Newman and receipt index, and the exact paths of the original artifacts. It never inlines the action protocol, PRD, PLAN or WORK bodies, and it never states a lifecycle result. A read-only role that needs the action contract renders the matching action packet instead.
+
+A hosted scout capsule is reusable only while its validated text, the action fingerprint and an evidence digest over that index all agree. `host.py scout-validate` records the digest on first success and reports `stale` when the source, verification target, failure evidence or HEAD has moved since. `orchestration.scout_on_retry` therefore asks for a new scout only when the supervisor holds no current capsule, never unconditionally.
+
 ## Peer skill composition
 
 The DevFlow lifecycle stays authoritative even when peer skills are active.
