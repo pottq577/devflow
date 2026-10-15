@@ -109,6 +109,14 @@ Source unrelated to the HTTP surface keeps the existing collected request struct
 while `api_endpoints` stays the same is refused, because the runtime records a structure digest
 with the branch. A declared endpoint change still needs its requests refreshed and covered.
 Regenerate incrementally only the part the source documents or the API contract changed.
+
+That structure digest covers request names, methods and URLs only. A DTO body, authentication
+header, error-response assertion or Postman test script change on the same method and path does
+not change it, so an unchanged `api_endpoints` list is never evidence that the HTTP contract is
+unchanged. The executor reviews the diff for those contract changes, refreshes the affected
+requests and records the reviewed surface in `api_note`; the auditor verifies bodies, auth and
+assertions against that diff instead of trusting the digest. An executed Newman run remains the
+only evidence that actually exercised the contract.
 Protocol 1.8 finalization explicitly executes authorized isolated local/test Newman runs under `finalization.md`.
 `delivery newman` owns the server start, HTTP 200..299 readiness check, Newman execution and
 bounded process-group cleanup. Server liveness is checked after readiness and immediately before

@@ -11,6 +11,61 @@ import test_devflow as fixtures
 
 
 class IncrementalDeliveryTests(test_delivery.DeliveryFixtureMixin, unittest.TestCase):
+    def test_a_same_path_dto_or_auth_change_is_left_to_the_documented_audit(self) -> None:
+        """D05: the structure digest sees names, methods and URLs, never a contract body."""
+        self.prepare()
+        structure = self.runtime.delivery.collection_structure_sha256(self.collection)
+        document = self.read_work()
+        document["items"].append(fixtures.v2_item("P01-I02"))
+        fixtures.dump(self.work_path, document)
+        self.assertEqual(self.cli("work", "start", "sample", "P01-I02").returncode, 0)
+        (self.root / self.source).write_text(
+            "# Keep retries inside one transaction so duplicate submissions share a result.\n"
+            "def execute(sample_id):\n    return sample_id\n"
+        )
+        self.git("add", self.source)
+        self.git("commit", "-qm", "contract change")
+        self.head = self.git("rev-parse", "HEAD")
+        self.write_artifacts(endpoints=["GET /api/sample"])
+        request = self.collection["item"][0]["request"]
+        request["body"] = {"mode": "raw", "raw": '{"sampleId":"1"}'}
+        request["header"] = [{"key": "Authorization", "value": "Bearer {{accessToken}}"}]
+        self.collection["item"][0]["event"][0]["script"]["exec"].append(
+            'pm.test("Error shape", () => pm.expect(pm.response.json().code).to.eql(400));'
+        )
+        document = self.read_work()
+        document["items"][-1]["evidence"]["delivery"]["api_note"] = (
+            "The DTO body, bearer auth and 400 error assertion changed; reviewed against this diff."
+        )
+        fixtures.dump(self.work_path, document)
+        self.collection["info"]["_devflow"] = self.metadata
+        self.postman.write_text(json.dumps(self.collection, indent=2))
+        self.assertEqual(
+            structure, self.runtime.delivery.collection_structure_sha256(self.collection)
+        )
+        # The runtime accepts it, so this evidence must not be reported as a contract pass:
+        # the protocol names the executor and the auditor as the owners of that review.
+        self.assertEqual(self.done(item="P01-I02").returncode, 0)
+        self.assertEqual(self.cli("validate", "sample").returncode, 0)
+        self.assertEqual(
+            self.read_state()["delivery"]["branches"]["feature/sample"][
+                "postman_structure_sha256"
+            ],
+            structure,
+        )
+        record = self.read_state()["delivery"]["branches"]["feature/sample"]
+        self.assertEqual(record["head_sha"], self.head)
+        self.assertEqual(self.collection["info"]["_devflow"]["head_sha"], self.head)
+        self.assertIn(
+            "bearer auth",
+            self.read_work()["items"][-1]["evidence"]["delivery"]["api_note"],
+        )
+        protocol = (test_delivery.HERE.parent / "core/protocol/delivery-artifacts.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("DTO", protocol)
+        self.assertIn("auditor verifies bodies", protocol)
+
     def prepare(self):
         self.start_and_commit()
         self.write_artifacts()
