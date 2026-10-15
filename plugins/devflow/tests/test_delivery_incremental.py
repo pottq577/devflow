@@ -178,6 +178,45 @@ class IncrementalDeliveryTests(test_delivery.DeliveryFixtureMixin, unittest.Test
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn("requires template_sha256", result.stderr)
 
+    def test_legacy_structure_digest_absence_validates_on_stacked_branches(self) -> None:
+        self.start_and_commit()
+        self.write_artifacts()
+        self.assertEqual(self.done().returncode, 0)
+        document = self.read_work()
+        document["items"].append(fixtures.v2_item("P01-I02"))
+        fixtures.dump(self.work_path, document)
+        self.git("switch", "-c", "feature/second")
+        self.assertEqual(self.cli("work", "start", "sample", "P01-I02").returncode, 0)
+        (self.root / self.source).write_text(
+            "# Preserve retry identity across stacked branches.\ndef execute():\n    return 2\n"
+        )
+        self.git("add", self.source)
+        self.git("commit", "-qm", "second branch")
+        self.head = self.git("rev-parse", "HEAD")
+        self.write_artifacts()
+        self.assertEqual(self.done(item="P01-I02").returncode, 0)
+        state = self.read_state()
+        for record in state["delivery"]["branches"].values():
+            record.pop("postman_structure_sha256")
+        fixtures.dump(self.state_path, state)
+        document = self.read_work()
+        for item in document["items"]:
+            (item.get("evidence") or {}).get("delivery", {}).pop(
+                "postman_structure_sha256", None
+            )
+        fixtures.dump(self.work_path, document)
+        state_bytes = self.state_path.read_bytes()
+        work_bytes = self.work_path.read_bytes()
+        for args in (
+            ("delivery", "check", "sample"),
+            ("validate", "sample"),
+            ("delivery", "check", "sample", "--final"),
+        ):
+            result = self.cli(*args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(state_bytes, self.state_path.read_bytes())
+            self.assertEqual(work_bytes, self.work_path.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
