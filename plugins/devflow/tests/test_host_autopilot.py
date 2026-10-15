@@ -76,6 +76,161 @@ class HostAutopilotUnitTests(unittest.TestCase):
             )
             self.assertEqual(result["scout"], expected["scout"])
 
+    def test_route_engine_cache_tracks_policy_changes_and_matches_uncached_baseline(self):
+        state = {
+            "risk_profile": "medium",
+            "next_action": {
+                "role": "architect",
+                "command": "plan",
+                "scope": "project",
+            },
+        }
+        worker_state = copy.deepcopy(state)
+        worker_state["next_action"].update(
+            role="worker",
+            command="run",
+            scope="phase",
+            work_item="P01-I01",
+            item_kind="implementation",
+            item_risk="medium",
+        )
+        policies = {"base": self.policy}
+
+        def variant(name, change):
+            policy = copy.deepcopy(self.policy)
+            change(policy)
+            policies[name] = policy
+
+        variant(
+            "model_alias",
+            lambda p: p["model_registry"]["models"]["frontier"].update(
+                id="changed-frontier-model"
+            ),
+        )
+        variant(
+            "multi_agent",
+            lambda p: p["model_registry"]["models"]["balanced"].update(
+                multi_agent=False
+            ),
+        )
+        variant(
+            "role_profile",
+            lambda p: p["roles"]["architect"].update(profile="economy"),
+        )
+        variant(
+            "role_effort",
+            lambda p: p["roles"]["architect"].update(effort="xhigh"),
+        )
+        variant(
+            "fallback",
+            lambda p: p["escalation"]["retries"].update(
+                worker_stages=[{"attempt": 1, "profile": "alternative", "effort": "xhigh", "replace": True}]
+            ),
+        )
+        variant(
+            "routing_order",
+            lambda p: p["profiles"]["frontier"].update(
+                candidates=["balanced", "frontier"]
+            ),
+        )
+        variant(
+            "backend",
+            lambda p: p["backends"].update(preference=["codex_exec"]),
+        )
+        variant(
+            "root_derived_context",
+            lambda p: p["context"].update(native_fork_turns="auto"),
+        )
+
+        baseline = {}
+        for name, policy in policies.items():
+            self.host._ROUTING_CACHE.clear()
+            baseline[name] = self.host.dispatch_envelope(
+                Path("/repo"), PLUGIN, policy, "sample",
+                worker_state if name == "fallback" else state,
+                attempt=2 if name == "fallback" else 0,
+            )
+        self.assertEqual(baseline["fallback"]["primary"]["route"]["task_id"], "P01-I01")
+        self.assertNotEqual(
+            (
+                baseline["base"]["primary"]["model_alias"],
+                baseline["base"]["primary"]["reasoning_effort"],
+            ),
+            (
+                baseline["fallback"]["primary"]["model_alias"],
+                baseline["fallback"]["primary"]["reasoning_effort"],
+            ),
+        )
+
+        def assert_same_route(actual, expected):
+            self.assertEqual(actual["status"], expected["status"])
+            self.assertEqual(actual["fingerprint"], expected["fingerprint"])
+            for key in ("model", "model_alias", "reasoning_effort", "candidates"):
+                self.assertEqual(actual["primary"][key], expected["primary"][key])
+            actual_route = copy.deepcopy(actual["primary"]["route"])
+            expected_route = copy.deepcopy(expected["primary"]["route"])
+            actual_route.pop("dispatch_id", None)
+            expected_route.pop("dispatch_id", None)
+            self.assertEqual(actual_route, expected_route)
+            if actual["scout"] is None or expected["scout"] is None:
+                self.assertIs(actual["scout"], expected["scout"])
+            else:
+                for key in ("model", "model_alias", "reasoning_effort", "candidates"):
+                    self.assertEqual(actual["scout"][key], expected["scout"][key])
+                actual_route = copy.deepcopy(actual["scout"]["route"])
+                expected_route = copy.deepcopy(expected["scout"]["route"])
+                actual_route.pop("dispatch_id", None)
+                expected_route.pop("dispatch_id", None)
+                self.assertEqual(actual_route, expected_route)
+
+        self.host._ROUTING_CACHE.clear()
+        results = {}
+        for name, policy in policies.items():
+            results[name] = self.host.dispatch_envelope(
+                Path("/repo"), PLUGIN, policy, "sample",
+                worker_state if name == "fallback" else state,
+                attempt=2 if name == "fallback" else 0,
+            )
+            with self.subTest(policy=name):
+                assert_same_route(results[name], baseline[name])
+            repeated = self.host.dispatch_envelope(
+                    Path("/repo"), PLUGIN, policy, "sample",
+                    worker_state if name == "fallback" else state,
+                    attempt=2 if name == "fallback" else 0,
+                )
+            with self.subTest(policy=name, repeat=True):
+                assert_same_route(repeated, baseline[name])
+        # Revisit the base policy after all variants to cover A/B/A reuse.
+        assert_same_route(
+            self.host.dispatch_envelope(Path("/repo"), PLUGIN, self.policy, "sample", state),
+            baseline["base"],
+        )
+        self.assertIs(
+            self.host._host_router(self.policy), self.host._host_router(self.policy)
+        )
+        self.assertEqual(
+            len({id(self.host._host_router(policy)) for policy in policies.values()}),
+            len(policies),
+        )
+        # Each distinct policy builds one engine; A/B/A does not add another.
+        self.host._ROUTING_CACHE.clear()
+        with mock.patch.object(
+            self.host.autopilot, "RouteEngine", wraps=self.host.autopilot.RouteEngine
+        ) as engines:
+            for name, policy in policies.items():
+                self.host.dispatch_envelope(
+                    Path("/repo"), PLUGIN, policy, "sample",
+                    worker_state if name == "fallback" else state,
+                    attempt=2 if name == "fallback" else 0,
+                )
+                self.host.dispatch_envelope(
+                    Path("/repo"), PLUGIN, policy, "sample",
+                    worker_state if name == "fallback" else state,
+                    attempt=2 if name == "fallback" else 0,
+                )
+            self.host.dispatch_envelope(Path("/repo"), PLUGIN, self.policy, "sample", state)
+        self.assertEqual(engines.call_count, len(policies))
+
     def test_a_changed_model_policy_does_not_reuse_the_cached_registry(self):
         policy = copy.deepcopy(self.policy)
         narrowed = copy.deepcopy(policy)

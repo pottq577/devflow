@@ -72,12 +72,14 @@ def _host_registry(policy: dict[str, Any]) -> autopilot.ModelRegistry:
 
 
 def _host_router(policy: dict[str, Any]) -> autopilot.RouteEngine:
-    engine = _ROUTING_CACHE.get("engine")
+    """One engine per routing policy; every policy that can change routing gets its own."""
+    key = "engine:" + json.dumps(policy, ensure_ascii=False, sort_keys=True, default=str)
+    engine = _ROUTING_CACHE.get(key)
     if engine is None:
         host_policy = copy.deepcopy(policy)
         host_policy.setdefault("backends", {})["preference"] = ["native_agent"]
         engine = autopilot.RouteEngine(host_policy, _host_capabilities(host_policy))
-        _ROUTING_CACHE["engine"] = engine
+        _ROUTING_CACHE[key] = engine
     return engine
 
 
