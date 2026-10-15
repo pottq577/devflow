@@ -112,9 +112,7 @@ Each remediation refreshes the affected branch outputs before its own completion
 
 ## Whole-work finalization review
 
-For enabled finalization, apply `finalization.md`.
-Compare the single ELI5 HTML to all WORK and branches, including cancelled/transferred outcomes, cross-branch behavior, final commits and actual test results.
-Verify genuine installed-skill invocation and useful explanation beyond metadata.
-Check Newman target/build isolation, complete request/assertion coverage, raw/summary integrity, secret hygiene and no-HTTP rationale.
-Inspect every failed run's contract-based diagnosis, regression, repair commit and later passing server build.
-Preserve independent audit gates; finalization evidence authorizes handoff, and the Auditor verifies its truth.
+The whole-work review checklist and its acceptance bar live in the rendered audit packet and in
+`core/protocol/finalization.md`.
+The rendered audit packet carries the review checklist; apply it there. Preserve independent audit
+gates: finalization evidence authorizes handoff, and the Auditor verifies its truth.

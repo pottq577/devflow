@@ -65,7 +65,7 @@ Remediation WORK updates the same branch artifacts; local docs need no Git histo
 
 ## Whole-work finalization review
 
-For enabled finalization, apply `finalization.md`.
+For enabled finalization, `core/protocol/finalization.md` owns the evidence and its acceptance bar.
 Compare the single ELI5 HTML to all WORK and branches, including cancelled/transferred outcomes, cross-branch behavior, final commits and actual test results.
 Verify genuine installed-skill invocation and useful explanation beyond metadata.
 Check owned server start, HTTP 200..299 readiness, process liveness before Newman, SIGTERM/SIGKILL cleanup, target/build isolation, complete request/assertion coverage, raw/summary integrity, secret hygiene and no-HTTP proof.

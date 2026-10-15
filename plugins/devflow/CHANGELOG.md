@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R12 role instruction single source
+
+- Add `core/protocol/role-instructions.md` as the ownership matrix: every rule class names one authoritative protocol or schema, and skills and render prompts keep only role steps, boundaries, receipts and pointers.
+- Remove the ELI5/Newman planning obligations duplicated between `core/prompts/plan.md` and `skills/plan/SKILL.md`, and the whole-work review checklist duplicated between `core/prompts/audit.md` and `skills/audit/SKILL.md`. Role input bytes drop and each remaining consumer points at its owner.
+- Preserve every obligation: the finalization protocol still owns the evidence bar, and `skills/run/SKILL.md` keeps its Finalize support. Retain Protocol `1.8.0`.
+
 ## Unreleased - R11 finalizer manifest and role contract
 
 - Replace the whole-work inline WORK dump with a normalized manifest of `id`, `status`, `kind`, `risk`, `phase`, `commit`, `review`, `changed_files`, recorded verification and the exact `work_file`, paged 60 rows at a time through `--manifest-page`.

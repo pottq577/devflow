@@ -4,6 +4,7 @@ DevFlow is a state-based development protocol for agentic coding workflows.
 
 It keeps product and domain intent in PRD, repository implementation intent in PLAN, executable changes in WORK, independent review in AUDIT, accumulated domain traps in PITFALLS, and lifecycle position in STATE.
 The normative runtime contract is `core/protocol/*.md` plus the `core/schemas/` files, because runtime validation derives directly from them.
+[role-instructions.md](core/protocol/role-instructions.md) names the single owner of each rule class, so a skill or render prompt points at a protocol instead of restating it.
 `core/references/vibecoder.md` is the original design rationale and is kept for background, not as the current contract.
 
 The point is that a fresh session reconstructs what to do next by running one command instead of reading a pile of narrative documents, and that the knowledge each cycle bought does not evaporate when the session ends.
