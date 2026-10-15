@@ -106,7 +106,7 @@ Read `core/protocol/delivery-artifacts.md`, already in the rendered packet.
 For enabled domains, verify comment usefulness at the committed anchors, PR template fidelity and correct base/head scope, cumulative coverage across all branch WORK, Postman routes/DTO/auth/error checks and empty credential defaults.
 Confirm every no-HTTP assessment against changed source.
 Keep generated-file validation distinct from actual API execution evidence.
-Run `devflow delivery check <domain>` and, at integration closure, add `--final`.
+Run `devflow delivery check <domain>` for `phase` and `integration` scope, and at integration closure add `--final`. A `work`-scope audit does not re-run the domain-wide `delivery check`; it verifies that item's own source, comments and branch evidence, because `audit apply` runs the full domain-wide validation and rejects the transition.
 Create normal traced WORK for confirmed defects.
 Each remediation refreshes the affected branch outputs before its own completion.
 

@@ -55,13 +55,16 @@ A finding you keep `still_open`, or reopen into a new one, must stay at least at
 
 ## Delivery audit axes
 
-For enabled domains, run `devflow delivery check <domain>`; use `--final` at integration closure.
-Review the appended delivery-artifacts contract.
+Review the appended delivery-artifacts contract, which owns the field-level rules.
 Verify comments explain actual intent/constraints, PR body follows the consuming project's template and source range, and cumulative Postman requests match real routes/DTO/auth/error responses.
 Check credential hygiene, realistic synthetic data, request dependencies and any no-HTTP assessment.
 Structural acceptance verifies only the documented offline profile.
 Credit API execution only when an actual run produced evidence.
 Remediation WORK updates the same branch artifacts; local docs need no Git history.
+
+Scope the run to the audit scope:
+- `work`: verify the selected WORK's own source, comment anchors and branch delivery evidence directly. Do not re-run the domain-wide `delivery check`; `audit apply` runs that full domain-wide validation and rejects the transition.
+- `phase` and `integration`, and any closure that hands off a branch: run `devflow delivery check <domain>`; integration closure adds `--final` for extant branch tips.
 
 ## Whole-work finalization review
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R13 audit-scope delivery checks
+
+- A `work`-scope audit verifies that item's own source, comment anchors and branch delivery evidence instead of repeating the domain-wide `delivery check`. `audit apply` already runs the full domain-wide delivery validation and rejects the transition.
+- `phase` and `integration` audits keep the full `delivery check`, and integration closure keeps `--final` for extant branch tips. Damaged evidence on any item still fails an applied audit.
+- Retain Protocol `1.8.0`: audit obligations, finding taxonomy and gate authority are unchanged; only the redundant instruction is removed.
+
 ## Unreleased - R12 role instruction single source
 
 - Add `core/protocol/role-instructions.md` as the ownership matrix: every rule class names one authoritative protocol or schema, and skills and render prompts keep only role steps, boundaries, receipts and pointers.

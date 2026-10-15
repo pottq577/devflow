@@ -118,6 +118,10 @@ Successful Git inspections pinned to full commit SHAs may be shared within one v
 For attached delivery, the branch tip must still equal the delivered HEAD.
 For detached delivery, an unapplied target branch may remain an ancestor of the delivered HEAD; divergence or commits beyond the delivered HEAD are rejected.
 Integration verification invokes the final checks through normal domain validation.
+Audit scope decides who runs the domain-wide check: `work` scope verifies the selected item's own
+source, comment anchors and branch evidence, and `audit apply` runs the full domain-wide delivery
+validation for every applied audit. `phase` and `integration` scope run `delivery check` directly,
+and integration closure adds `--final`.
 A deleted/merged local branch retains its pinned commit provenance; no checkout or branch recreation is required.
 
 When correcting only generated artifact content or adopting a changed PR template, regenerate it at the same recorded source commit, then run `devflow delivery refresh <domain> --branch <name>`.
