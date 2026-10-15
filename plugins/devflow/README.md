@@ -9,6 +9,20 @@ The normative runtime contract is `core/protocol/*.md` plus the `core/schemas/` 
 
 The point is that a fresh session reconstructs what to do next by running one command instead of reading a pile of narrative documents, and that the knowledge each cycle bought does not evaporate when the session ends.
 
+## Hosted Goal efficiency (0.11.0)
+
+Hosted child dispatches are cheaper without changing any lifecycle gate:
+
+- A read-only Scout or Diagnostician child starts from `devflow render evidence <domain>`, a bounded index of the action, its verification targets, referenced files and failure evidence, and opens the cited originals itself.
+- Every hosted render carries `--expected-head` and `--expected-fingerprint`; a moved action or HEAD exits `2` without output or STATE writes, and `--check-only` runs the same guards while printing nothing.
+- A scout capsule is reusable only while its text, action fingerprint and evidence digest agree; `scout-validate` reports `stale` otherwise, and `scout_on_retry` asks for a new scout only when no current capsule exists.
+- `devflow render finalize` emits a normalized, paged WORK manifest with exact `work_file` paths instead of inlining every WORK document. Scope is unchanged: every disposition and branch still reaches ELI5 and the final gates.
+- `audit apply` still runs the full domain-wide delivery validation, so a `work`-scope audit no longer repeats the domain-wide `delivery check` itself.
+- `dispatch`, `guard-status`, `scout-validate` and `session-status` verify ownership without extending the lease; only lifecycle edges renew it.
+
+`budget.total_tokens` and `concurrency.read_only` are standalone Autopilot settings. Hosted native
+token usage is unmeasured and hosted children run sequentially.
+
 ## Optional peer-skill composition (0.10.2)
 
 The `plan`, `run`, and `audit` skills select relevant installed Vercel, Matt Pocock, or Trail of Bits disciplines through `core/protocol/skill-composition.md`. Selection depends on the current work and changed files. Peer skills cannot select WORK, own routing, add mandatory artifacts, or waive audit requirements. `setup-matt-pocock-skills` requires an explicit out-of-lifecycle request; Trail of Bits standalone review workflows are not invoked inside a DevFlow audit. Absent peer skills do not block ordinary actions.
@@ -358,9 +372,9 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.10.1` ships protocol version `1.8.0`.
+Plugin version `0.11.0` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
-Plugin `0.10.1` preserves the same STATE/WORK schemas, enum values, lifecycle transitions and audit gates. This patch makes the last hosted retry stage reachable and updates regression and release evidence; no artifact migration is required.
+Plugin `0.11.0` preserves the same STATE/WORK schemas, enum values, lifecycle transitions and audit gates. It adds CLI options, one optional branch field (`postman_structure_sha256`) and `core/protocol/role-instructions.md`; no artifact migration is required.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
 It also makes the documented work and plan legacy recovery commands reach an initial audit and lets closed decision findings reference resolved decision records.

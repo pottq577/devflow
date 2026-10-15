@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.0 - 2026-10-15 - Hosted Goal lifecycle efficiency
+
+- Complete the hosted Goal refactoring (roadmap R00-R19) on protocol `1.8.0`. Read-only hosted children start from a bounded evidence index, hosted renders are pinned to the dispatch fingerprint and HEAD, one invocation reuses its WORK snapshot plus its SHA-pinned Git inspections and Newman digests, the finalizer receives a paged WORK manifest with a dedicated role contract, and observation commands no longer extend the lease.
+- Additive surface only: `render evidence`, `render finalize --manifest-page`, `render --expected-head/--expected-fingerprint/--check-only`, `dispatch --scout-cached`, a `stale` scout-capsule verdict, the optional branch field `postman_structure_sha256`, and `core/protocol/role-instructions.md`.
+- Measured on one machine with the committed benchmark (projection `--reps 9`, packets `--reps 3`), before `b3be7af` against this release: one `validate` over 3 delivered WORK with 4 anchors drops from 27 to 14 Git calls; Scout and Diagnostician child input drops from 36,195 to 2,334 bytes; `render finalize` drops 21 percent at 60 WORK, 37 percent at 120, 49 percent at 250 and 53 percent for 60 delivered WORK; status and render p50 at 8/36/120/250 WORK are unchanged within noise; the audit and run packets grow about 3 percent from the pinned-render and audit-scope text.
+- Release gates on this HEAD: `release_gate.py --mode merge` and `--mode release` both `pass` with 547 of 547 tests, 0 failed, 0 skipped and the real Newman profile executed.
+- Not measured here: native hosted Goal end-to-end wall clock, native child token usage, Scout capsule spawn cost and cold-cache Newman re-hashing. Agent token savings are not claimed.
+- Synchronize the Claude marketplace, both plugin manifests and current documentation to `0.11.0`. Lifecycle statuses, audit gates, evidence provenance and every STATE/WORK artifact contract are unchanged, so no protocol migration is required.
+
 ## Unreleased - R18 telemetry cleanup and hosted config boundaries
 
 - Prune settled telemetry inflight files when a new telemetry dispatch starts, preserving only the file whose `step_id` is the live reserved step. An interrupted supervisor no longer accumulates files, and another session's live record is untouched.

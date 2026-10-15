@@ -1,7 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.10.2 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.11.0 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -35,6 +35,19 @@ Existing domains keep their PLAN/WORK documents. Run `devflow delivery enable <d
 adopt the new completion requirements; completed WORK is preserved. New domains enable it by
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
+
+## Version 0.11.0 hosted Goal efficiency
+
+Version 0.11.0 completes the hosted Goal lifecycle refactoring. Read-only hosted children start
+from a bounded `render evidence` index instead of a full action packet, hosted renders are pinned
+to the dispatch fingerprint and HEAD, one invocation reuses its WORK snapshot and its pinned Git
+inspection and Newman digests, the finalizer receives a paged WORK manifest, and observation
+commands no longer extend the lease. Additive CLI options (`render evidence`,
+`--manifest-page`, `--expected-head`, `--expected-fingerprint`, `--check-only`,
+`dispatch --scout-cached`), one optional branch field (`postman_structure_sha256`), and one new
+protocol document (`core/protocol/role-instructions.md`) are the only contract changes. Lifecycle
+statuses, audit gates, evidence provenance and every STATE/WORK artifact contract are unchanged, so
+the artifact protocol remains `1.8.0`.
 
 ## Version 0.10.2 peer-skill composition
 
