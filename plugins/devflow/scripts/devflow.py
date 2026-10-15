@@ -5314,6 +5314,43 @@ def file_fingerprint(path: Path) -> str | None:
             os.close(descriptor)
 
 
+def scoped_git_index(root: Path, paths: set[str]) -> dict[str, list[list[str]]] | None:
+    """Read exact index entries for scoped paths; None means malformed or unavailable."""
+    if not paths:
+        return {}
+    try:
+        result = subprocess.run(
+            ["git", "--literal-pathspecs", "ls-files", "--stage", "-z", "--", *sorted(paths)],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    entries: dict[str, list[list[str]]] = {}
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, raw_path = record.partition(b"\t")
+        fields = metadata.split()
+        if (
+            not separator
+            or len(fields) != 3
+            or not re.fullmatch(rb"[0-7]{6}", fields[0])
+            or not re.fullmatch(rb"[0-9a-f]{40}|[0-9a-f]{64}", fields[1])
+            or fields[2] != b"0"
+        ):
+            return None
+        path = os.fsdecode(raw_path)
+        if path not in paths:
+            return None
+        entries.setdefault(path, []).append([field.decode("ascii") for field in fields])
+    return {path: entries.get(path, []) for path in paths}
+
+
 def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], bool]:
     """Fingerprint authoritative selected evidence, not only its bounded projection."""
     selected = (index.get("work") or {}).get("selected") or {}
@@ -5365,6 +5402,7 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
                 add(evidence.get("changed_files"))
                 add([row.get("path") for row in evidence.get("comments") or [] if isinstance(row, dict)])
                 add_references(item.get("references"))
+                add_explicit_paths(item.get("references"))
                 add_references(item.get("premise_checks"))
                 add_references(item.get("pitfalls"))
                 add_explicit_paths(evidence.get("commands"))
@@ -5418,8 +5456,20 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
         required_by_name[name] = required_by_name.get(name, False) or required
     names = list(required_by_name.items())
 
-    scope: dict[str, str] = {}
     confirmed = True
+    observations: dict[str, tuple[Path, bool, bool]] = {}
+    aliases_by_path: dict[str, set[str]] = {}
+
+    def add_git_alias(candidate: Path, path: Path) -> None:
+        if candidate.is_relative_to(root):
+            aliases_by_path.setdefault(str(path), set()).add(
+                candidate.relative_to(root).as_posix()
+            )
+        if path.is_relative_to(root):
+            aliases_by_path.setdefault(str(path), set()).add(
+                path.relative_to(root).as_posix()
+            )
+
     for name, required in names:
         path = Path(name)
         if ".." in path.parts:
@@ -5436,7 +5486,9 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
                     parent = candidate.parent.resolve(strict=True)
                     path = parent / candidate.name
                     if parent.is_relative_to(root) or parent.is_relative_to(plugin_root):
-                        scope[str(path)] = "f1:absent"
+                        add_git_alias(candidate, path)
+                        prior = observations.get(str(path))
+                        observations[str(path)] = (path, False, required or (prior[2] if prior else False))
                     else:
                         confirmed = False
                 except (OSError, RuntimeError):
@@ -5448,15 +5500,41 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
         if not (path.is_relative_to(root) or path.is_relative_to(plugin_root)):
             confirmed = False
             continue
-        if scope.get(str(path)) not in (None, "f1:absent"):
-            continue
-        fingerprint = file_fingerprint(path)
-        if fingerprint is None:
-            if required:
+        add_git_alias(candidate, path)
+        prior = observations.get(str(path))
+        observations[str(path)] = (path, True, required or (prior[2] if prior else False))
+
+    git_paths = {alias for aliases in aliases_by_path.values() for alias in aliases}
+    index_before = scoped_git_index(root, git_paths)
+    if index_before is None:
+        return {}, False
+
+    scope: dict[str, str] = {}
+    for path_key, (path, exists, required) in observations.items():
+        if exists:
+            content = file_fingerprint(path)
+            if content is None:
                 confirmed = False
-            continue
-        scope[str(path)] = fingerprint
+                continue
+        else:
+            content = "f1:absent"
+        scoped_entries = {
+            alias: index_before.get(alias, [])
+            for alias in sorted(aliases_by_path.get(path_key, set()))
+        }
+        digest_input = json.dumps(
+            {"content": content, "git_index": scoped_entries},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        scope[path_key] = "f1:" + hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+
+    index_after = scoped_git_index(root, git_paths)
+    if index_after is None or index_after != index_before:
+        confirmed = False
     return scope, confirmed
+
 
 
 

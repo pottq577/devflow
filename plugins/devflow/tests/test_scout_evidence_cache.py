@@ -207,6 +207,15 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         self.assertEqual(self.validate(fingerprint)["status"], "valid")
         self.assertNotEqual(self.sidecar().read_bytes(), binding)
 
+    def test_instruction_files_are_part_of_the_reserved_evidence_snapshot(self) -> None:
+        self.selected_work_item()
+        fingerprint = self.current_fingerprint()
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        (self.root / "AGENTS.md").write_text("New root instruction.\n", encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        (self.root / "src/AGENTS.md").write_text("New source instruction.\n", encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
 
     def test_capsule_cannot_be_bound_without_a_completed_scout_step(self) -> None:
         self.selected_work_item()
@@ -263,7 +272,38 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         self.assertEqual(code, 1, stdout.getvalue())
         self.assertEqual(self.sidecar().read_bytes(), binding)
 
+    def test_capsule_citation_outside_the_step_start_scope_cannot_be_added_at_bind(self) -> None:
+        self.selected_work_item()
+        cited = self.root / "src/unindexed.py"
+        cited.write_text("def hidden(): return True\n", encoding="utf-8")
+        self.capsule.write_text(
+            scout_contract_tests.VALID.replace("src/service.py", "src/unindexed.py"),
+            encoding="utf-8",
+        )
+        result = self.bind(self.current_fingerprint())
+        self.assertEqual(result["status"], "stale", result)
+        self.assertFalse(self.sidecar().exists())
 
+    def test_root_level_file_citation_and_work_reference_are_snapshotted(self) -> None:
+        self.selected_work_item()
+        helper = self.root / "helper.py"
+        helper.write_text("def helper(): return True\n", encoding="utf-8")
+        work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
+        document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
+        document["items"][0]["references"] = ["helper.py"]
+        work_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        self.capsule.write_text(
+            scout_contract_tests.VALID.replace(
+                "`src/service.py:42-58`",
+                "`src/service.py:42-58` and `helper.py:1`",
+            ),
+            encoding="utf-8",
+        )
+        fingerprint = self.current_fingerprint()
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        helper.write_text("def helper(): return False\n", encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
 
     def test_capsule_body_replacement_and_damaged_provenance_are_refused(self) -> None:
         self.selected_work_item()
@@ -298,9 +338,125 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         self.capsule.write_bytes(b"\xff\xfe")
         self.assertEqual(self.validate(fingerprint)["status"], "invalid")
 
+    def test_uncommitted_source_moves_invalidate_a_bound_capsule(self) -> None:
+        """D02: the digest covers referenced source bytes, not only index fields."""
+        self.selected_work_item()
+        fingerprint = self.current_fingerprint()
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        (self.root / "notes.txt").write_text("unrelated\n", encoding="utf-8")
+        git(self.root, "add", "notes.txt")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        source = self.root / "src.py"
+        source.write_text("# Explain the retry invariant.\ndef execute():\n    return 2\n")
+        unstaged = self.validate(fingerprint)
+        self.assertEqual(unstaged["status"], "stale", unstaged)
+        git(self.root, "add", "src.py")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        source.write_text("# Explain the retry invariant.\ndef execute():\n    return 1\n")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        source.rename(self.root / "renamed.py")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
 
+    def test_scoped_index_mode_and_removal_invalidate_but_unrelated_staging_does_not(self) -> None:
+        self.selected_work_item()
+        fingerprint = self.current_fingerprint()
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        git(self.root, "update-index", "--chmod=+x", "src.py")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
 
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        git(self.root, "update-index", "--force-remove", "src.py")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
 
+    def test_missing_traversal_symlink_and_raced_evidence_fail_closed(self) -> None:
+        self.selected_work_item()
+        index = self.host.devflow.evidence_index(
+            self.root, "billing", self.host._load_state(self.root, "billing")
+        )
+        scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+        self.assertTrue(confirmed)
+        self.assertIn(str((self.root / "src.py").resolve()), scope)
+        instructions = self.root / "AGENTS.md"
+        instructions.write_text("Optional instruction exists.\n", encoding="utf-8")
+        fingerprint_path = self.host.devflow.file_fingerprint
+        with mock.patch.object(
+            self.host.devflow,
+            "file_fingerprint",
+            side_effect=lambda path: None
+            if path == instructions.resolve()
+            else fingerprint_path(path),
+        ):
+            _scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+        self.assertFalse(confirmed, "an existing unreadable optional source is unconfirmed")
+        work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
+        for changed_file in ("missing.py", "../outside.py"):
+            document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
+            document["items"][0]["evidence"]["changed_files"] = [changed_file]
+            work_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            index = self.host.devflow.evidence_index(
+                self.root, "billing", self.host._load_state(self.root, "billing")
+            )
+            _scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+            self.assertFalse(confirmed, changed_file)
+        outside = self.root.parent / f"{self.root.name}-outside-evidence.py"
+        outside.write_text("secret\n", encoding="utf-8")
+        try:
+            (self.root / "src/escape.py").symlink_to(outside)
+            document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
+            document["items"][0]["evidence"]["changed_files"] = ["src/escape.py"]
+            work_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            index = self.host.devflow.evidence_index(
+                self.root, "billing", self.host._load_state(self.root, "billing")
+            )
+            _scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+            self.assertFalse(confirmed)
+            with mock.patch.object(self.host.devflow, "file_fingerprint", return_value=None):
+                _scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+            self.assertFalse(confirmed)
+        finally:
+            outside.unlink(missing_ok=True)
+
+    def test_command_text_is_not_a_path_but_structured_logs_are_snapshotted(self) -> None:
+        self.selected_work_item()
+        log_file = self.root / "run.log"
+        log_file.write_text("first run\n", encoding="utf-8")
+        work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
+        document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
+        document["items"][0]["evidence"]["commands"] = [
+            "pytest -q -> passed",
+            {"command": "pytest -q --log-file run.log", "log_file": "run.log"},
+        ]
+        work_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        state = self.host._load_state(self.root, "billing")
+        index = self.host.devflow.evidence_index(self.root, "billing", state)
+        scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+        self.assertTrue(confirmed)
+        self.assertIn(str(log_file.resolve()), scope)
+
+        fingerprint = self.host.autopilot.AutopilotController.fingerprint(state["next_action"])
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        log_file.write_text("changed run\n", encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+
+    def test_all_work_documents_are_snapshotted_without_selected_item(self) -> None:
+        self.selected_work_item()
+        state = self.host._load_state(self.root, "billing")
+        index = self.host.devflow.evidence_index(self.root, "billing", state)
+        index["work"]["selected"] = {}
+        scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+        work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
+        self.assertTrue(confirmed)
+        self.assertIn(str(work_file.resolve()), scope)
+        before = scope[str(work_file.resolve())]
+
+        work_file.write_text(work_file.read_text(encoding="utf-8") + "\n# updated\n", encoding="utf-8")
+        updated_scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+        self.assertTrue(confirmed)
+        self.assertNotEqual(before, updated_scope[str(work_file.resolve())])
 
     def test_dispatch_reuses_only_a_host_verified_capsule(self) -> None:
         """D01: --scout-cached is a claim; the host re-verifies before skipping a scout."""

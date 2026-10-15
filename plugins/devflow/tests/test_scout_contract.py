@@ -100,6 +100,15 @@ class ScoutContractTests(unittest.TestCase):
             with self.subTest(key=key, value=value):
                 self.assertEqual(scout.capsule_verdict(VALID, damaged, **args), "stale")
 
+    def test_citation_paths_support_root_files_and_extensionless_nested_paths(self):
+        references = scout.referenced_paths(
+            "Open `helper.py:1`, `src/Makefile`, and `scripts/devflow`."
+        )
+        self.assertEqual(references, ["helper.py", "scripts/devflow", "src/Makefile"])
+        self.assertEqual(scout.referenced_paths("pytest -q -> passed"), [])
+        self.assertEqual(
+            scout.referenced_paths("pytest -q -> 1 passed in 0.03s; Python3.12.1"), []
+        )
 
 
 class ReservedTelemetryContractTests(unittest.TestCase):
