@@ -1263,7 +1263,8 @@ class ContextAssembler:
             )
         elif spec["role"] == "diagnostician":
             parts.append(
-                "## Completion contract\nPerform read-only independent diagnosis of the stalled WORK. "
+                "## Completion contract\nPerform read-only independent diagnosis of the stalled WORK, "
+                "starting from the bounded evidence index and the cited originals. "
                 "Do not mutate lifecycle state, documentation, or source. Return the concrete root cause, "
                 "evidence, and a bounded remediation recommendation for the next worker."
             )

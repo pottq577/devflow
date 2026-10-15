@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased - R10 evidence-first diagnostician input
+
+- Route the read-only Diagnostician child to the bounded evidence index, now carrying recorded verification output, and name the authoritative run packet as an on-demand fallback.
+- Keep `attempt == diagnose_at` routing and the read-only completion contract unchanged. Diagnosis still reads repository sources and command output directly. Protocol remains `1.8.0`.
+
 ## Unreleased - R09 bounded scout input and capsule freshness
 
 - Add `render evidence`, a bounded read-only navigation projection of the action, its verification targets, referenced files and failure evidence. Scout children receive it instead of the full action packet and open the cited originals on demand.

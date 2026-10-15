@@ -475,6 +475,18 @@ def _host_message(
             "or WORK bodies to rediscover navigation facts."
         )
         action_step = 5
+    elif role == "diagnostician":
+        lines.append(
+            "3. Read the bounded evidence index for this stalled WORK with "
+            f"`{_render_command(plugin_root, domain, action, no_refresh=True, expected_head=expected_head, evidence=True)}`."
+        )
+        lines.append(
+            "4. Diagnose from the index's objective, acceptance ids, verification commands, "
+            "recorded verification output, evidence files, block or external-wait reason and "
+            "delivery index, plus the repository sources and command output they cite. Render the "
+            "full authoritative run packet only when you must judge the execution contract itself."
+        )
+        action_step = 5
     else:
         lines.append(
             "3. Render the authoritative action packet and validate the pinned action and HEAD with "

@@ -5325,6 +5325,7 @@ def evidence_index(
             or None,
             "commit": evidence.get("commit"),
             "start_sha": evidence.get("start_sha"),
+            "verification_evidence": evidence.get("commands"),
             "deviations": evidence.get("deviations"),
             "discoveries": evidence.get("discoveries"),
             "external_wait": (evidence.get("external_wait") or {}).get(

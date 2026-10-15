@@ -186,6 +186,48 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         self.assertEqual(cached["fingerprint"], without["fingerprint"])
         self.assertEqual(cached["primary"]["model_alias"], without["primary"]["model_alias"])
 
+    def test_diagnostician_is_routed_once_at_diagnose_at(self) -> None:
+        self.selected_work_item()
+        engine = self.host.autopilot.RouteEngine(
+            self.policy, self.host.autopilot.CapabilityRegistry.assumed(self.policy)
+        )
+        state = self.host._load_state(self.root, "billing")
+        action = state["next_action"]
+        self.assertEqual(action["command"], "run")
+        roles = [engine.resolve(action, state, attempt)["role"] for attempt in range(6)]
+        diagnose_at = int(
+            self.policy["escalation"]["retries"]["diagnose_at"]
+        )
+        self.assertEqual(diagnose_at, 3)
+        self.assertEqual(
+            roles,
+            [
+                "diagnostician" if attempt == diagnose_at else "worker"
+                for attempt in range(6)
+            ],
+        )
+
+    def test_diagnostician_child_gets_evidence_index_without_changing_routing(self) -> None:
+        self.selected_work_item()
+        state = self.projected()
+        message = self.host._host_message(
+            self.root,
+            host_test_helpers.PLUGIN,
+            "billing",
+            state["next_action"],
+            {"role": "diagnostician"},
+            expected_head=state["target_sha"],
+        )
+        renders = [
+            shlex.split(inline)
+            for inline in re.findall(r"`([^`]+)`", message)
+            if " render " in inline
+        ]
+        self.assertEqual(len(renders), 1, message)
+        self.assertIn("evidence", renders[0])
+        self.assertIn("--no-refresh", renders[0])
+        self.assertFalse([argv for argv in commands(message) if argv[2] == "status"])
+
     def test_scout_child_reads_the_evidence_index_not_the_full_packet(self) -> None:
         self.selected_work_item()
         state = self.projected()
@@ -208,6 +250,16 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         self.assertIn("--expected-head", renders[0])
         self.assertIn("--expected-fingerprint", renders[0])
         self.assertNotIn(" status ", " ".join(" ".join(argv[3:]) for argv in renders))
+
+
+def commands(message: str) -> list[list[str]]:
+    """Extract the concrete lifecycle CLI invocations a child is told to run."""
+    found = []
+    for inline in re.findall(r"`([^`]+)`", message):
+        argv = shlex.split(inline)
+        if len(argv) >= 3 and Path(argv[1]).resolve() == CLI.resolve():
+            found.append(argv)
+    return found
 
 
 def item_commands(root: Path) -> list[str]:

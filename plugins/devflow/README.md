@@ -118,7 +118,8 @@ fingerprint, the selected WORK objective, acceptance ids, verification commands,
 changed files, comment anchor paths, commits, block and external-wait reasons, recorded findings,
 the delivery and Newman index, and the exact original artifact paths. It never inlines the action
 protocol, PRD, PLAN or WORK bodies and never states a lifecycle result. Scout children receive it
-instead of the full action packet.
+instead of the full action packet. The Diagnostician child receives the same index and renders the
+authoritative run packet only when it must judge the execution contract itself.
 
 A hosted scout capsule is reusable only while its text, the action fingerprint and an evidence
 digest over that index agree. `host.py scout-validate` records the digest on first success and
