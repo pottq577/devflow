@@ -4,10 +4,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,6 +35,7 @@ import devflow_autopilot as autopilot
 import devflow_delivery as delivery
 import devflow_finalization as finalization
 import devflow_newman as newman
+import devflow_scout as scout_contract
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
@@ -5276,6 +5279,185 @@ def render_yaml_context(title: str, data: Any) -> None:
 def render_closure_audit(title: str, path: Path, mode: str) -> None:
     if mode == "closure" and path.exists():
         render_markdown_file(title, path)
+
+
+def file_fingerprint(path: Path) -> str | None:
+    """Hash one stable regular-file read; None means the observation was unsafe."""
+    descriptor = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            return None
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := os.read(descriptor, 65536):
+            size += len(chunk)
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        path_after = path.stat(follow_symlinks=False)
+        identity = lambda value: (
+            value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
+        )
+        if (
+            size != before.st_size
+            or identity(before) != identity(after)
+            or identity(after) != identity(path_after)
+            or not stat.S_ISREG(path_after.st_mode)
+        ):
+            return None
+        return "f1:" + digest.hexdigest()
+    except OSError:
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], bool]:
+    """Fingerprint authoritative selected evidence, not only its bounded projection."""
+    selected = (index.get("work") or {}).get("selected") or {}
+    originals = index.get("originals") or {}
+    root = root.resolve(strict=True)
+    names: list[tuple[str, bool]] = []
+    def add(value: Any, required: bool = True) -> None:
+        if isinstance(value, str) and value.strip():
+            names.append((value.strip(), required))
+        elif isinstance(value, list):
+            for entry in value:
+                add(entry, required)
+        elif isinstance(value, dict):
+            for key, entry in value.items():
+                if key in {"path", "file", "log", "log_file", "output_file"}:
+                    add(entry, required)
+    def add_references(value: Any) -> None:
+        if isinstance(value, str):
+            for reference in scout_contract.referenced_paths(value):
+                add(reference)
+        elif isinstance(value, list):
+            for entry in value:
+                add_references(entry)
+        elif isinstance(value, dict):
+            for entry in value.values():
+                add_references(entry)
+
+    def add_explicit_paths(value: Any) -> None:
+        if isinstance(value, list):
+            for entry in value:
+                add_explicit_paths(entry)
+        elif isinstance(value, dict):
+            for key, entry in value.items():
+                if key in {"path", "file", "log", "log_file", "output_file"}:
+                    add(entry)
+                else:
+                    add_explicit_paths(entry)
+
+    domain = index.get("domain")
+    item_id = selected.get("id")
+    if isinstance(domain, str):
+        try:
+            work_docs, _work_index, _errors = load_work_index(domain_dir(root, domain))
+            add([str(path) for path in work_docs])
+            if isinstance(item_id, str):
+                selected_path, _document, item = find_item(root, domain, item_id)
+                add(str(selected_path))
+                evidence = item.get("evidence") or {}
+                add(evidence.get("changed_files"))
+                add([row.get("path") for row in evidence.get("comments") or [] if isinstance(row, dict)])
+                add_references(item.get("references"))
+                add_references(item.get("premise_checks"))
+                add_references(item.get("pitfalls"))
+                add_explicit_paths(evidence.get("commands"))
+                add_references(evidence.get("commands"))
+        except (KeyError, OSError, ValueError):
+            return {}, False
+    for key in ("PRD", "PLAN", "STATE"):
+        add(originals.get(key))
+    for key in ("DECISIONS", "PITFALLS"):
+        add(originals.get(key), required=False)
+
+    plugin_root = Path(__file__).resolve().parents[1]
+    for path in (
+        root / ".devflow" / "routing.yaml",
+        root / ".devflow" / "models.yaml",
+        plugin_root / "core" / "routing" / "default.yaml",
+        plugin_root / "core" / "routing" / "models.yaml",
+        plugin_root / "skills" / "goal" / "SKILL.md",
+        plugin_root / "core" / "prompts" / "scout.md",
+        plugin_root / "core" / "protocol" / "authority.md",
+        plugin_root / "core" / "protocol" / "lifecycle.md",
+        plugin_root / "core" / "protocol" / "work-item-contract.md",
+    ):
+        add(str(path), required=False)
+    for path in (root / "AGENTS.md", root / "CLAUDE.md"):
+        add(str(path), required=False)
+
+    # File references inside recorded verification output and failure logs are source inputs too.
+    add_references(selected.get("verification_evidence"))
+    add_references(selected.get("references"))
+
+    for name, _required in list(names):
+        candidate = Path(name)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        parent = candidate.parent
+        allowed_root = next(
+            (base for base in (root, plugin_root) if parent == base or parent.is_relative_to(base)),
+            None,
+        )
+        if allowed_root is not None:
+            while parent.is_relative_to(allowed_root):
+                add(str(parent / "AGENTS.md"), required=False)
+                add(str(parent / "CLAUDE.md"), required=False)
+                if parent == allowed_root:
+                    break
+                parent = parent.parent
+
+    required_by_name: dict[str, bool] = {}
+    for name, required in names:
+        required_by_name[name] = required_by_name.get(name, False) or required
+    names = list(required_by_name.items())
+
+    scope: dict[str, str] = {}
+    confirmed = True
+    for name, required in names:
+        path = Path(name)
+        if ".." in path.parts:
+            confirmed = False
+            continue
+        candidate = path if path.is_absolute() else root / path
+        try:
+            path = candidate.resolve(strict=True)
+        except FileNotFoundError:
+            if required:
+                confirmed = False
+            else:
+                try:
+                    parent = candidate.parent.resolve(strict=True)
+                    path = parent / candidate.name
+                    if parent.is_relative_to(root) or parent.is_relative_to(plugin_root):
+                        scope[str(path)] = "f1:absent"
+                    else:
+                        confirmed = False
+                except (OSError, RuntimeError):
+                    confirmed = False
+            continue
+        except (OSError, RuntimeError):
+            confirmed = False
+            continue
+        if not (path.is_relative_to(root) or path.is_relative_to(plugin_root)):
+            confirmed = False
+            continue
+        if scope.get(str(path)) not in (None, "f1:absent"):
+            continue
+        fingerprint = file_fingerprint(path)
+        if fingerprint is None:
+            if required:
+                confirmed = False
+            continue
+        scope[str(path)] = fingerprint
+    return scope, confirmed
+
 
 
 def evidence_index(

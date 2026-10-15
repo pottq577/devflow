@@ -181,7 +181,7 @@ def checkpoint(
 def begin(
     runtime_dir: Path, session_id: str, fingerprint: str,
     policy: dict[str, Any], *, kind: str, expected_attempt: int,
-    candidate_alias: str,
+    candidate_alias: str, metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if kind not in {"bootstrap", "scout", "primary"}:
         raise ValueError("hosted step kind must be bootstrap, scout or primary")
@@ -197,6 +197,7 @@ def begin(
         if result["attempt"] != expected_attempt:
             raise GuardBlocked("hosted_stale_attempt")
         _observe(value, fingerprint)
+        value["last_step"] = None
         step_id = secrets.token_hex(16)
         value["steps"] += 1
         value["inflight"] = {
@@ -206,6 +207,8 @@ def begin(
             "attempt": expected_attempt,
             "candidate_alias": candidate_alias,
         }
+        if metadata is not None:
+            value["inflight"]["metadata"] = copy.deepcopy(metadata)
         _save(connection, session_id, value)
         return {
             "status": "started",
@@ -229,7 +232,16 @@ def finish(
     with session.coordinator(runtime_dir) as connection:
         _owner(connection, session_id)
         value = _load(connection, session_id)
+        pending = copy.deepcopy(value.get("inflight"))
         result = _finish(value, step_id, after_fingerprint, bounds, outcome=outcome)
+        value["last_step"] = {
+            **(pending or {}),
+            "session_id": session_id,
+            "step_id": step_id,
+            "after_fingerprint": after_fingerprint,
+            "outcome": outcome,
+            "finished_at": time.time(),
+        }
         _save(connection, session_id, value)
         return result
 
@@ -376,3 +388,47 @@ def assert_idle(runtime_dir: Path, session_id: str) -> None:
         _owner(connection, session_id)
         if _load(connection, session_id)["inflight"]:
             raise GuardBlocked("hosted_step_inflight")
+
+
+def consume_scout_step(
+    runtime_dir: Path, session_id: str, step_id: str, *,
+    fingerprint: str, candidate_alias: str,
+) -> dict[str, Any]:
+    """Consume the exact completed Scout reservation once as capsule provenance."""
+    with session.coordinator(runtime_dir) as connection:
+        _owner(connection, session_id)
+        progress = _load(connection, session_id)
+        if progress["inflight"] is not None:
+            raise GuardBlocked("hosted_step_inflight")
+        receipt = progress.get("last_step")
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("session_id") != session_id
+            or receipt.get("step_id") != step_id
+            or receipt.get("fingerprint") != fingerprint
+            or receipt.get("kind") != "scout"
+            or receipt.get("candidate_alias") != candidate_alias
+            or receipt.get("after_fingerprint") != fingerprint
+            or receipt.get("outcome") != "completed"
+            or receipt.get("consumed") is True
+            or not isinstance(receipt.get("metadata"), dict)
+        ):
+            raise GuardBlocked("hosted_scout_step_mismatch")
+        metadata = receipt["metadata"]
+        if (
+            not isinstance(metadata.get("evidence_digest"), str)
+            or not metadata["evidence_digest"].startswith("ev1:")
+            or type(metadata.get("scope_confirmed")) is not bool
+            or not isinstance(metadata.get("scope"), dict)
+            or any(
+                not isinstance(path, str) or not path.strip()
+                or not isinstance(digest, str) or not digest.startswith("f1:")
+                for path, digest in metadata["scope"].items()
+            )
+            or metadata.get("head_sha") is not None
+            and not isinstance(metadata.get("head_sha"), str)
+        ):
+            raise GuardBlocked("hosted_scout_step_mismatch")
+        receipt["consumed"] = True
+        _save(connection, session_id, progress)
+        return copy.deepcopy(receipt)

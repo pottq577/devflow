@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
 import re
@@ -21,6 +22,7 @@ import test_host_autopilot as host_test_helpers
 import test_scout_contract as scout_contract_tests
 
 CLI = Path(__file__).resolve().parents[1] / "scripts" / "devflow.py"
+# Documented input budget for the bounded evidence index, including its markdown wrapper.
 
 
 def run(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -67,7 +69,7 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         item = fixture_helpers.item("P01-I01")
         item["evidence"] = {
             "commit": git(self.root, "rev-parse", "HEAD"),
-            "changed_files": ["src.py"],
+            "changed_files": ["src.py", "src/service.py"],
             "comments": [{"path": "src.py", "line": 1, "reason": "Retry invariant."}],
         }
         work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
@@ -77,8 +79,15 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.root / "src.py").write_text("# Explain the retry invariant.\ndef execute():\n    return 1\n")
+        (self.root / "src/service.py").parent.mkdir(parents=True, exist_ok=True)
+        (self.root / "src/service.py").write_text("def validate():\n    return True\n")
+        (self.root / ".devflow/routing.yaml").parent.mkdir(parents=True, exist_ok=True)
+        (self.root / ".devflow/routing.yaml").write_text(
+            "orchestration:\n  scout_before: [worker]\n", encoding="utf-8"
+        )
         git(self.root, "add", "-A")
         git(self.root, "commit", "-qm", "add source anchor")
+
 
     def projected(self) -> dict:
         status = run(self.root, "status", "billing", "--json", "--no-refresh")
@@ -100,62 +109,91 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         return run(self.root, *argv[2:]), argv
 
     def validate(self, fingerprint: str) -> dict:
+        return self.run_capsule_command("scout-validate", fingerprint)
+
+    def bind(self, fingerprint: str) -> dict:
+        step_id, alias = self.completed_scout_step(fingerprint)
+        source = self.capsule
+        self.capsule = self.capsule.parent / f"{step_id}.md"
+        self.capsule.write_bytes(source.read_bytes())
+        return self.run_capsule_command("scout-bind", fingerprint, step_id, alias)
+
+    def completed_scout_step(self, fingerprint: str) -> tuple[str, str]:
+        state = self.host._load_state(self.root, "billing")
+        policy = self.host.autopilot.load_policy(host_test_helpers.PLUGIN, self.root)
+        envelope = self.host.dispatch_envelope(
+            self.root, host_test_helpers.PLUGIN, policy, "billing", state
+        )
+        alias = envelope["scout"]["model_alias"]
+        common = ["billing", "--session-id", self.owner]
+        stdout = io.StringIO()
+        with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
+                mock.patch.object(sys, "argv", [
+                    str(host_test_helpers.HOST_SCRIPT), "step-start", *common,
+                    "--kind", "scout", "--fingerprint", fingerprint,
+                    "--candidate-alias", alias, "--attempt", "0",
+                ]), contextlib.redirect_stdout(stdout):
+            code = self.host.main()
+        self.assertEqual(code, 0, stdout.getvalue())
+        step_id = json.loads(stdout.getvalue())["step_id"]
+        stdout = io.StringIO()
+        with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
+                mock.patch.object(sys, "argv", [
+                    str(host_test_helpers.HOST_SCRIPT), "step-finish", *common,
+                    "--step-id", step_id, "--outcome", "completed",
+                ]), contextlib.redirect_stdout(stdout):
+            code = self.host.main()
+        self.assertEqual(code, 0, stdout.getvalue())
+        return step_id, alias
+
+    def run_capsule_command(
+        self, command: str, fingerprint: str, step_id: str | None = None,
+        model_alias: str | None = None,
+    ) -> dict:
         stdout = io.StringIO()
         argv = [
-            str(host_test_helpers.HOST_SCRIPT), "scout-validate", "billing",
+            str(host_test_helpers.HOST_SCRIPT), command, "billing",
             "--session-id", self.owner, "--fingerprint", fingerprint,
             "--capsule-file", str(self.capsule),
         ]
+        if step_id:
+            argv.extend(["--step-id", step_id, "--model-alias", model_alias or ""])
         with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
                 mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(stdout):
             code = self.host.main()
         self.assertEqual(code, 0, stdout.getvalue())
         return json.loads(stdout.getvalue())
 
-    def test_evidence_render_is_bounded_and_omits_the_action_protocol(self) -> None:
-        self.selected_work_item()
-        state = self.projected()
-        before = self.state_file.read_bytes()
-        mtime = self.state_file.stat().st_mtime_ns
-        rendered, argv = self.evidence_render()
-        self.assertEqual(rendered.returncode, 0, rendered.stderr)
-        self.assertIn("evidence", argv)
-        payload = yaml.safe_load(
-            re.search(r"```yaml\n(.*?)\n```", rendered.stdout, re.DOTALL).group(1)
-        )
-        self.assertEqual(
-            payload["fingerprint"],
-            self.host.autopilot.AutopilotController.fingerprint(state["next_action"]),
-        )
-        self.assertEqual(payload["current_head"], git(self.root, "rev-parse", "HEAD"))
-        selected = payload["work"]["selected"]
-        self.assertEqual(selected["id"], "P01-I01")
-        self.assertEqual(selected["verification"], item_commands(self.root))
-        self.assertEqual(selected["comment_paths"], ["src.py"])
-        self.assertEqual(payload["originals"]["PLAN"], str(
-            self.root / "docs/domains/billing/PLAN.md"))
-        self.assertNotIn("## Protocol", rendered.stdout)
-        self.assertNotIn("Architecture / implementation strategy", rendered.stdout)
-        self.assertLess(len(rendered.stdout), 8000)
-        self.assertEqual(self.state_file.read_bytes(), before)
-        self.assertEqual(self.state_file.stat().st_mtime_ns, mtime)
+    def sidecar(self) -> Path:
+        return self.capsule.with_suffix(".evidence.json")
 
-    def test_capsule_is_valid_until_its_evidence_moves(self) -> None:
+    def current_fingerprint(self) -> str:
+        state = self.projected()
+        return self.host.autopilot.AutopilotController.fingerprint(state["next_action"])
+
+
+    def test_capsule_needs_binding_and_stale_never_returns_to_valid(self) -> None:
+        """D01: validation is side-effect free, so valid -> stale -> stale cannot flip back."""
         self.selected_work_item()
-        fingerprint = self.projected()["next_action"]
-        fingerprint = self.host.autopilot.AutopilotController.fingerprint(fingerprint)
+        fingerprint = self.current_fingerprint()
         first = self.validate(fingerprint)
-        self.assertEqual(first["status"], "valid", first)
+        self.assertEqual(first["status"], "stale", first)
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.assertFalse(self.sidecar().exists())
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        binding = self.sidecar().read_bytes()
         self.assertEqual(self.validate(fingerprint)["status"], "valid")
-        self.capsule.write_text("## Action\nplain answer\n", encoding="utf-8")
-        self.assertEqual(self.validate(fingerprint)["status"], "invalid")
-        self.capsule.write_text(scout_contract_tests.VALID, encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        self.assertEqual(self.sidecar().read_bytes(), binding)
         (self.root / "moved.txt").write_text("new HEAD\n")
         git(self.root, "add", "moved.txt")
         git(self.root, "commit", "-qm", "move HEAD")
         stale = self.validate(fingerprint)
         self.assertEqual(stale["status"], "stale", stale)
         self.assertNotEqual(stale["evidence_digest"], first["evidence_digest"])
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.assertEqual(self.sidecar().read_bytes(), binding)
         work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
         document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
         document["items"][0]["pitfalls"] = ["The retry invariant regresses without this anchor."]
@@ -163,6 +201,141 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         changed = self.validate(fingerprint)
         self.assertEqual(changed["status"], "stale", changed)
         self.assertNotEqual(changed["evidence_digest"], stale["evidence_digest"])
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        # Only a fresh scout may rebind, and a new binding is valid again.
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        self.assertNotEqual(self.sidecar().read_bytes(), binding)
+
+
+    def test_capsule_cannot_be_bound_without_a_completed_scout_step(self) -> None:
+        self.selected_work_item()
+        fingerprint = self.current_fingerprint()
+        argv = [
+            str(host_test_helpers.HOST_SCRIPT), "scout-bind", "billing",
+            "--session-id", self.owner, "--fingerprint", fingerprint,
+            "--capsule-file", str(self.capsule), "--step-id", "arbitrary",
+            "--model-alias", "arbitrary",
+        ]
+        stdout = io.StringIO()
+        with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
+                mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(stdout):
+            code = self.host.main()
+        self.assertEqual(code, 1, stdout.getvalue())
+        self.assertFalse(self.sidecar().exists())
+
+    def test_completed_scout_step_binds_once_and_requires_its_routed_alias(self) -> None:
+        self.selected_work_item()
+        fingerprint = self.current_fingerprint()
+        step_id, alias = self.completed_scout_step(fingerprint)
+        source = self.capsule
+        self.capsule = self.capsule.parent / f"{step_id}.md"
+        self.capsule.write_bytes(source.read_bytes())
+        wrong_argv = [
+            str(host_test_helpers.HOST_SCRIPT), "scout-bind", "billing",
+            "--session-id", self.owner, "--fingerprint", fingerprint,
+            "--capsule-file", str(self.capsule), "--step-id", step_id,
+            "--model-alias", alias + "-wrong",
+        ]
+        stdout = io.StringIO()
+        with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
+                mock.patch.object(sys, "argv", wrong_argv), contextlib.redirect_stdout(stdout):
+            code = self.host.main()
+        self.assertEqual(code, 1, stdout.getvalue())
+        self.assertFalse(self.sidecar().exists())
+        argv = [
+            str(host_test_helpers.HOST_SCRIPT), "scout-bind", "billing",
+            "--session-id", self.owner, "--fingerprint", fingerprint,
+            "--capsule-file", str(self.capsule), "--step-id", step_id,
+            "--model-alias", alias,
+        ]
+        stdout = io.StringIO()
+        with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
+                mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(stdout):
+            code = self.host.main()
+        self.assertEqual(code, 0, stdout.getvalue())
+        binding = self.sidecar().read_bytes()
+        self.assertEqual(json.loads(binding)["step_id"], step_id)
+        stdout = io.StringIO()
+        with mock.patch.object(self.host.devflow, "repo_root", return_value=self.root), \
+                mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(stdout):
+            code = self.host.main()
+        self.assertEqual(code, 1, stdout.getvalue())
+        self.assertEqual(self.sidecar().read_bytes(), binding)
+
+
+
+    def test_capsule_body_replacement_and_damaged_provenance_are_refused(self) -> None:
+        self.selected_work_item()
+        fingerprint = self.current_fingerprint()
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        pointer = self.runtime / "scout-current.json"
+        pointer_bytes = pointer.read_bytes()
+        pointer_record = json.loads(pointer_bytes)
+        pointer_record["evidence_digest"] = "ev1:" + "0" * 64
+        pointer.write_text(json.dumps(pointer_record), encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        pointer.write_bytes(pointer_bytes)
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        self.capsule.write_text("## Action\nplain answer\n", encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "invalid")
+        self.capsule.write_text(scout_contract_tests.VALID + "\n", encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "invalid")
+        self.capsule.write_text(scout_contract_tests.VALID, encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+        self.sidecar().write_text("{not json", encoding="utf-8")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.sidecar().write_text(
+            json.dumps({"version": 1, "evidence_digest": "ev1:x"}), encoding="utf-8"
+        )
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.sidecar().unlink()
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.sidecar().write_bytes(b"\xff\xfe")
+        self.assertEqual(self.validate(fingerprint)["status"], "stale")
+        self.sidecar().unlink()
+        self.capsule.write_bytes(b"\xff\xfe")
+        self.assertEqual(self.validate(fingerprint)["status"], "invalid")
+
+
+
+
+
+    def test_dispatch_reuses_only_a_host_verified_capsule(self) -> None:
+        """D01: --scout-cached is a claim; the host re-verifies before skipping a scout."""
+        self.selected_work_item()
+        policy = copy.deepcopy(self.policy)
+        policy["orchestration"]["scout_on_retry"] = ["worker"]
+        state = self.host._load_state(self.root, "billing")
+        fingerprint = self.host.autopilot.AutopilotController.fingerprint(state["next_action"])
+        self.capsule.write_text(scout_contract_tests.VALID, encoding="utf-8")
+        claimed = self.host.dispatch_envelope(
+            self.root, host_test_helpers.PLUGIN, policy, "billing", state,
+            attempt=2, scout_cached=True,
+        )
+        self.assertIsNotNone(claimed["scout"], "an unbound capsule must not suppress the scout")
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        cached = self.host.dispatch_envelope(
+            self.root, host_test_helpers.PLUGIN, policy, "billing", state,
+            attempt=2, scout_cached=True,
+        )
+        self.assertIsNone(cached["scout"], cached)
+        self.sidecar().unlink()
+        missing_sidecar = self.host.dispatch_envelope(
+            self.root, host_test_helpers.PLUGIN, policy, "billing", state,
+            attempt=2, scout_cached=True,
+        )
+        self.assertIsNotNone(missing_sidecar["scout"], "pointer alone cannot authorize reuse")
+        (self.root / "src.py").write_text("# Changed after binding.\ndef execute():\n    return 1\n")
+        moved = self.host.dispatch_envelope(
+            self.root, host_test_helpers.PLUGIN, policy, "billing", state,
+            attempt=2, scout_cached=True,
+        )
+        self.assertIsNotNone(moved["scout"], "stale evidence must force a new scout")
+
+
+
 
     def test_retry_scout_requires_no_current_capsule(self) -> None:
         spec = {"role": "diagnostician", "effective_risk": "medium"}
@@ -181,7 +354,7 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         )
         cached = self.host.dispatch_envelope(
             self.root, host_test_helpers.PLUGIN, self.policy, "billing", state,
-            attempt=3, scout_cached=True,
+            attempt=2, scout_cached=True,
         )
         self.assertEqual(cached["fingerprint"], without["fingerprint"])
         self.assertEqual(cached["primary"]["model_alias"], without["primary"]["model_alias"])

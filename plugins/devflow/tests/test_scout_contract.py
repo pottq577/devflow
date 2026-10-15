@@ -69,6 +69,38 @@ class ScoutContractTests(unittest.TestCase):
         self.assertIsNone(scout.validated_capsule("done\n" + VALID))
         self.assertIsNone(scout.validated_capsule(VALID + "\n## Evidence map\n- `a/b.py`"))
 
+    def test_capsule_binding_requires_creation_provenance(self):
+        binding = scout.capsule_binding(
+            VALID, fingerprint="v2:" + "a" * 64, digest="ev1:" + "b" * 64,
+            scope_confirmed=True, head_sha="c" * 40, step_id="d" * 32,
+            model_alias="balanced", bound_at="2026-10-16T00:00:00+00:00",
+        )
+        args = {
+            "fingerprint": binding["fingerprint"],
+            "digest": binding["evidence_digest"],
+            "scope_confirmed": True,
+        }
+        self.assertEqual(scout.capsule_verdict(VALID, binding, **args), "valid")
+        unborn = scout.capsule_binding(
+            VALID, fingerprint=binding["fingerprint"], digest=binding["evidence_digest"],
+            scope_confirmed=True, head_sha="unborn", step_id="e" * 32,
+            model_alias="balanced", bound_at="2026-10-16T00:00:00+00:00",
+        )
+        self.assertEqual(scout.capsule_verdict(VALID, unborn, **args), "valid")
+        for key in ("step_id", "model_alias", "head_sha", "bound_at"):
+            damaged = dict(binding)
+            damaged.pop(key)
+            with self.subTest(key=key):
+                self.assertEqual(scout.capsule_verdict(VALID, damaged, **args), "stale")
+        for key, value in (
+            ("step_id", ""), ("model_alias", " "), ("head_sha", "short"),
+            ("bound_at", "not-a-date"),
+        ):
+            damaged = {**binding, key: value}
+            with self.subTest(key=key, value=value):
+                self.assertEqual(scout.capsule_verdict(VALID, damaged, **args), "stale")
+
+
 
 class ReservedTelemetryContractTests(unittest.TestCase):
     def setUp(self):
