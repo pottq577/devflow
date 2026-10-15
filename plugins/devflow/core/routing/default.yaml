@@ -85,6 +85,8 @@ context:
   native_fork_turns: none
 concurrency:
   mutating: 1
+  # Standalone only. The hosted supervisor drives children sequentially, so this value does not
+  # limit hosted read-only children and must not be read as hosted parallelism.
   read_only: 2
 orchestration:
   scout_before: [integration_auditor, diagnostician]
@@ -96,6 +98,8 @@ orchestration:
     max_steps: 100
     max_action_visits: 4
 budget:
+  # Standalone Autopilot only. Hosted native child token usage is unmeasured, so no token
+  # ceiling is enforced or claimed for hosted /goal dispatches.
   total_tokens: 1000000
   planning_percent: 15
   implementation_percent: 45

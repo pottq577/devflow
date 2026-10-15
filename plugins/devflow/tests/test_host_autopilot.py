@@ -255,6 +255,55 @@ class HostAutopilotUnitTests(unittest.TestCase):
         self.assertIn("--mode closure", command)
 
 
+class HostConfigBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.host = load_host()
+        self.policy = self.host.autopilot.load_policy(PLUGIN, None)
+
+    def test_settled_inflight_files_are_pruned_and_the_live_step_survives(self):
+        import tempfile
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        runtime = Path(temporary.name)
+        inflight = runtime / self.host.TELEMETRY_INFLIGHT_DIR
+        inflight.mkdir(parents=True)
+        live = inflight / ("a" * 24 + ".json")
+        live.write_text(json.dumps({"step_id": "step-live"}), encoding="utf-8")
+        for index in range(5):
+            (inflight / f"{index:024d}.json").write_text(
+                json.dumps({"step_id": f"step-old-{index}"}), encoding="utf-8"
+            )
+        (inflight / "corrupt.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(self.host.prune_telemetry_inflight(runtime, "step-live"), 6)
+        self.assertTrue(live.is_file())
+        self.assertEqual(sorted(path.name for path in inflight.glob("*.json")), [live.name])
+        self.assertEqual(self.host.prune_telemetry_inflight(runtime, None), 1)
+        self.assertEqual(list(inflight.glob("*.json")), [])
+        self.assertEqual(self.host.prune_telemetry_inflight(runtime / "absent", None), 0)
+
+    def test_hosted_budget_and_read_only_concurrency_are_documented_as_standalone_only(self):
+        schema = (PLUGIN / "core" / "schemas" / "routing.schema.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("budget.total_tokens and its percentage buckets therefore apply to standalone", schema)
+        self.assertIn("concurrency.read_only is a standalone Autopilot setting", schema)
+        protocol = (PLUGIN / "core" / "protocol" / "host-telemetry.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("enforce nothing for hosted `/goal`", protocol)
+        self.assertIn("dispatched sequentially", protocol)
+        defaults = (PLUGIN / "core" / "routing" / "default.yaml").read_text(
+            encoding="utf-8"
+        )
+        budget_block = defaults.split("budget:", 1)[1]
+        concurrency_block = defaults.split("concurrency:", 1)[1].split("orchestration:", 1)[0]
+        self.assertIn("Standalone Autopilot only", budget_block)
+        self.assertIn("does not", concurrency_block)
+        self.assertNotIn("total_tokens", concurrency_block)
+        self.assertNotIn("read_only", budget_block.split("backends:", 1)[0].split("orchestration:", 1)[0])
+
+
 class HostTelemetryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

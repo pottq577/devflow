@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R18 telemetry cleanup and hosted config boundaries
+
+- Prune settled telemetry inflight files when a new telemetry dispatch starts, preserving only the file whose `step_id` is the live reserved step. An interrupted supervisor no longer accumulates files, and another session's live record is untouched.
+- State next to the settings that `budget.total_tokens` and `concurrency.read_only` apply to standalone Autopilot only: hosted native token usage is unmeasured and hosted children are dispatched sequentially. Read-only roles keep read-only permissions; no hosted read-only parallelism is introduced.
+- Retain Protocol `1.8.0`.
+
 ## Unreleased - R16 in-process routing reuse
 
 - Build the hosted model registry, capability registry and route engine once per CLI process and share them across the primary, Scout and candidate routes of one dispatch. Model selection, effort, candidate order and capability fallback are unchanged.

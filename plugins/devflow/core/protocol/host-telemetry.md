@@ -47,6 +47,17 @@ Protocol version remains 1.8.0: this operational format adds no STATE/WORK field
 lifecycle artifact, transition or approval requirement. Native token accounting,
 including hosted token-budget enforcement, remains outside this contract.
 
+Starting telemetry prunes settled inflight files under `host-dispatch-inflight/`, keeping only
+the file whose `step_id` is the live reserved step. A supervisor that crashed between start and
+finish therefore cannot accumulate files without bound, and another session's live record is never
+removed because only one owner holds the domain lease.
+
+Hosted-only configuration boundaries: `budget.total_tokens` and its buckets are standalone
+Autopilot settings and enforce nothing for hosted `/goal`, whose native child token usage is
+unmeasured. `concurrency.read_only` is likewise a standalone setting; hosted children are
+dispatched sequentially, so the value does not limit them and read-only roles keep read-only
+permissions instead of parallelism.
+
 ## Hosted session fencing and administrator recovery
 
 Hosted ownership and persisted execution progress share a SQLite coordinator. Acquisition,

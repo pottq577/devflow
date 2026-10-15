@@ -216,6 +216,28 @@ def _telemetry_inflight_path(root: Path, domain: str, dispatch_id: str) -> Path:
     return _telemetry_dir(root, domain) / TELEMETRY_INFLIGHT_DIR / f"{dispatch_id}.json"
 
 
+def prune_telemetry_inflight(runtime_dir: Path, keep_step_id: str | None) -> int:
+    """Drop settled telemetry inflight files; the live reserved step is always preserved."""
+    directory = runtime_dir / TELEMETRY_INFLIGHT_DIR
+    if not directory.is_dir():
+        return 0
+    removed = 0
+    for path in sorted(directory.glob("*.json")):
+        if keep_step_id:
+            try:
+                record = strict_json(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            if isinstance(record, dict) and record.get("step_id") == keep_step_id:
+                continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        removed += 1
+    return removed
+
+
 def _utc_timestamp(epoch_seconds: float) -> str:
     return (
         datetime.fromtimestamp(epoch_seconds, timezone.utc)
@@ -340,6 +362,7 @@ def telemetry_start(
         candidate_alias=candidate["alias"],
     )
     started_epoch = time.time()
+    prune_telemetry_inflight(_telemetry_dir(root, domain), step_id)
     dispatch_id = hashlib.sha256(
         (
             f"{envelope['fingerprint']}|{attempt}|{kind}|"
