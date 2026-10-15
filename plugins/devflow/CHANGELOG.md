@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R11 finalizer manifest and role contract
+
+- Replace the whole-work inline WORK dump with a normalized manifest of `id`, `status`, `kind`, `risk`, `phase`, `commit`, `review`, `changed_files`, recorded verification and the exact `work_file`, paged 60 rows at a time through `--manifest-page`.
+- Add `core/prompts/finalize-role.md` as the finalizer's own contract, carrying the run skill's finalize rules and the Newman-before-ELI5 order. The run skill keeps its Finalize support, and both still render the same `finalize` packet and `finalization` protocol.
+- Preserve whole-work scope: the finalization scope hash, ELI5 metadata, all WORK dispositions and all branch evidence are unchanged. Protocol remains `1.8.0`.
+
 ## Unreleased - R10 evidence-first diagnostician input
 
 - Route the read-only Diagnostician child to the bounded evidence index, now carrying recorded verification output, and name the authoritative run packet as an on-demand fallback.

@@ -102,6 +102,11 @@ Plan render includes the full approved PRD.
 Run render includes the selected WORK plus exact origin-linked PRD and PLAN sections.
 Work and phase audit render include scope-linked WORK and origin context.
 Integration render supplies the current PLAN, phase manifest, audit paths, and integration WORK without inlining every phase WORK body.
+Finalize render supplies the whole-work scope and HTML metadata plus a normalized WORK manifest of
+`id`, `status`, `kind`, `risk`, `phase`, `commit`, `review`, `changed_files`, recorded verification
+and each item's exact `work_file`, 60 rows per page. Fetch more with `--manifest-page <n>` and read
+an item's full original document when its summary is not enough. Every WORK disposition and branch
+stays in scope for ELI5 and the final gates.
 This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
 
 Use `devflow status <domain> --no-refresh` or `devflow render <action> <domain> --no-refresh`

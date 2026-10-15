@@ -36,6 +36,7 @@ import devflow_newman as newman
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
+FINALIZE_MANIFEST_PAGE = 60
 REQ_PATTERN = re.compile(
     r"\b(?:REQ|RULE|AC|IDEM|SEC|NFR|DEC)-[A-Z0-9-]+\b", re.IGNORECASE
 )
@@ -5473,6 +5474,30 @@ def reject_render(
 
 
 @_work_snapshot()
+def work_manifest(root: Path, docs: dict[Path, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalized whole-work summary; the original WORK documents stay on disk."""
+    rows = []
+    for path, doc in sorted(docs.items(), key=lambda entry: str(entry[0])):
+        for item in doc.get("items", []) or []:
+            evidence = item.get("evidence") or {}
+            rows.append(
+                {
+                    "id": item.get("id"),
+                    "status": item.get("status"),
+                    "kind": item.get("kind"),
+                    "risk": risk_level(item),
+                    "phase": str(doc.get("phase")),
+                    "commit": evidence.get("commit"),
+                    "review": effective_review(item).get("status"),
+                    "changed_files": evidence.get("changed_files") or [],
+                    "verification": evidence.get("commands") or [],
+                    "work_file": str(path.relative_to(root)),
+                }
+            )
+    return sorted(rows, key=lambda row: str(row["id"]))
+
+
+@_work_snapshot()
 def render(args: argparse.Namespace) -> int:
     root = repo_root()
     d = domain_dir(root, args.domain)
@@ -5707,8 +5732,31 @@ def render(args: argparse.Namespace) -> int:
             "Whole-work scope and HTML metadata",
             finalization.scope(root, args.domain, state, docs, d),
         )
-        for work_path, work_doc in docs.items():
-            render_yaml_context(str(work_path.relative_to(root)), work_doc)
+        manifest = work_manifest(root, docs)
+        page = int(getattr(args, "manifest_page", 1))
+        page_size = FINALIZE_MANIFEST_PAGE
+        pages = max(1, -(-len(manifest) // page_size))
+        if page < 1 or page > pages:
+            print(
+                f"DevFlow error: manifest page {page} is out of range (1..{pages})",
+                file=sys.stderr,
+            )
+            return 2
+        render_yaml_context(
+            f"WORK manifest page {page}/{pages}",
+            {
+                "total_work_items": len(manifest),
+                "page": page,
+                "pages": pages,
+                "items": manifest[(page - 1) * page_size : page * page_size],
+            },
+        )
+        print(
+            f"\nEvery WORK item and branch is in scope for ELI5 and the final gates. "
+            f"Fetch remaining manifest pages with `--manifest-page <n>`, and read one "
+            f"item's full original document from the `work_file` path above when its summary "
+            f"is not enough."
+        )
 
     for name in prompt_protocols(
         role,
@@ -6310,6 +6358,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = rsub.add_parser("finalize")
     s.add_argument("domain")
     s.add_argument("--no-refresh", action="store_true")
+    s.add_argument("--manifest-page", type=int, default=1)
     s.set_defaults(func=render)
     s = rsub.add_parser("plan")
     s.add_argument("domain")

@@ -1147,7 +1147,7 @@ ROLE_CONTRACTS = {
     "auditor": ("skill", "audit"),
     "integration_auditor": ("skill", "audit"),
     "diagnostician": ("prompt", "diagnose.md"),
-    "finalizer": ("skill", "run"),
+    "finalizer": ("prompt", "finalize-role.md"),
     "scout": ("prompt", "scout.md"),
 }
 

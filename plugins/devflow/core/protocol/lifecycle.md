@@ -241,4 +241,10 @@ liveness evidence. Only a collection with no HTTP requests and no declared endpo
 The optional `delivery.finalization` field is adopted idempotently with `delivery enable`.
 
 `status` can report `next.command: finalize`; `render finalize` supplies its entire-domain packet.
+The packet carries the whole-work scope and HTML metadata plus a normalized WORK manifest of
+`id`, `status`, `kind`, `risk`, `phase`, `commit`, `review`, `changed_files`, recorded verification
+and each item's exact `work_file`. It is paged 60 rows per page through `--manifest-page <n>`, and
+an out-of-range page is rejected. The original WORK documents stay on disk and are read on demand.
+Paging bounds what is read per page, never what is in scope: every WORK disposition and every
+branch evidence still reaches the ELI5 explanation and the final gates.
 `next` remains the one-WORK selector and returns nonzero when the next action is finalization.
