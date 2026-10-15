@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R14 incremental PR/Postman refresh
+
+- Record a Postman request-structure digest with each delivered branch and refuse a later WORK on that branch that rewrites the structure while `api_endpoints` is unchanged. Source unrelated to the HTTP surface no longer regenerates unrelated requests.
+- Refresh `head_sha`, `base_sha`, branch range, PR body, test results, content hashes and provenance on every WORK as before, and keep declared-endpoint coverage as the change signal for the requests themselves.
+- Add the optional `postman_structure_sha256` branch field. Legacy branch records without it stay valid and are compared only once recorded. Retain Protocol `1.8.0`.
+
 ## Unreleased - R13 audit-scope delivery checks
 
 - A `work`-scope audit verifies that item's own source, comment anchors and branch delivery evidence instead of repeating the domain-wide `delivery check`. `audit apply` already runs the full domain-wide delivery validation and rejects the transition.

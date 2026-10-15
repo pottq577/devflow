@@ -10,6 +10,7 @@ import ast
 import contextlib
 import hashlib
 import io
+import json
 import re
 import subprocess
 import tokenize
@@ -402,6 +403,33 @@ def metadata_errors(actual: Any, expected: dict[str, str], label: str) -> list[s
     ]
 
 
+def collection_structure_sha256(collection: Any) -> str:
+    """Digest the request structure only; provenance and prose are refreshed every WORK."""
+
+    def walk(items: Any) -> list[Any]:
+        rows: list[Any] = []
+        for entry in items if isinstance(items, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            rows.append(
+                {
+                    "name": entry.get("name"),
+                    "method": (entry.get("request") or {}).get("method")
+                    if isinstance(entry.get("request"), dict)
+                    else None,
+                    "url": (entry.get("request") or {}).get("url")
+                    if isinstance(entry.get("request"), dict)
+                    else None,
+                    "items": walk(entry.get("item")),
+                }
+            )
+        return rows
+
+    body = collection.get("item") if isinstance(collection, dict) else None
+    payload = json.dumps(walk(body), ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def inspect_artifacts(
     root: Path, domain: str, branch: str, record: dict[str, Any], sections: Callable
 ) -> dict[str, str]:
@@ -461,6 +489,7 @@ def inspect_artifacts(
         "template_sha256": template_hash,
         "pr_sha256": pr_hash,
         "postman_sha256": postman_hash,
+        "postman_structure_sha256": collection_structure_sha256(collection),
     }
 
 
@@ -561,6 +590,18 @@ def prepare_completion(
             )
         record["branch_start_sha"] = branch_start
     record.update(inspect_artifacts(root, domain, branch, record, sections))
+    # One change signal plus one diff check: an unchanged API surface must keep the collected
+    # request structure, and a changed one must not keep a stale structure.
+    prior_structure = previous.get("postman_structure_sha256")
+    if prior_structure:
+        same_surface = sorted(record["api_endpoints"] or []) == sorted(
+            previous.get("api_endpoints") or []
+        )
+        if same_surface and record["postman_structure_sha256"] != prior_structure:
+            raise ValueError(
+                "delivery Postman request structure changed while api_endpoints stayed the "
+                "same; regenerate only the changed HTTP surface, not the whole collection"
+            )
     ids = list(previous.get("work_ids", []))
     if item["id"] not in ids:
         ids.append(item["id"])

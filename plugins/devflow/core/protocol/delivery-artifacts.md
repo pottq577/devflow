@@ -100,6 +100,15 @@ The auditor verifies this assessment against the diff.
 
 Generation itself sends no requests.
 Mark write/payment/deletion/notification scenarios clearly and document test-only preconditions and cleanup.
+
+### Incremental refresh on an existing branch
+
+A later WORK on the same branch updates the cumulative PR body, branch range, `head_sha`,
+`base_sha`, recorded test results, content hashes and provenance to the current HEAD every time.
+Source unrelated to the HTTP surface keeps the existing collected request structure: rewriting it
+while `api_endpoints` stays the same is refused, because the runtime records a structure digest
+with the branch. A declared endpoint change still needs its requests refreshed and covered.
+Regenerate incrementally only the part the source documents or the API contract changed.
 Protocol 1.8 finalization explicitly executes authorized isolated local/test Newman runs under `finalization.md`.
 `delivery newman` owns the server start, HTTP 200..299 readiness check, Newman execution and
 bounded process-group cleanup. Server liveness is checked after readiness and immediately before

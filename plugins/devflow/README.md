@@ -412,6 +412,9 @@ docs/postman/<domain-slug-hash>/<branch-slug-hash>.postman_collection.json
 The source template is the actual project file `docs/PR/templates.md`.
 Preserve its headings and order, fill the branch diff and executed evidence, and keep the template unchanged.
 Outputs are cumulative per branch and refresh after every WORK/remediation; final integration checks their freshness.
+Provenance, branch range, PR body, test results and hashes refresh every WORK. A later WORK whose
+source does not change `api_endpoints` keeps the collected Postman request structure; rewriting it
+without a declared endpoint change is refused by a recorded structure digest.
 Missing templates or files stop completion with a diagnostic.
 `delivery paths --branch` can preview filenames; use actual source commits in artifacts once the branch exists.
 

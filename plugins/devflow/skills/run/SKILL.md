@@ -56,6 +56,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
 10. Commit the verified source/test changes first.
     1. Read the actual `docs/PR/templates.md`, then run `devflow delivery paths <domain> --branch <evidence.delivery.branch>` and generate/update the cumulative PR body and Postman v2.1 collection at those paths against this HEAD.
     2. Preserve the captured delivery branch, actual branch base, template headings, prior WORK coverage, empty credential variables and honest execution status.
+    2a. On a branch that already delivered, refresh provenance, branch range, PR body, test results and hashes, and keep the existing collected request structure when this WORK does not change `api_endpoints`. Regenerate only the HTTP surface the source documents or API contract actually changed; a structure rewrite without a declared endpoint change is refused.
     3. Follow the full `delivery-artifacts` protocol in the rendered packet.
     4. Fill the remaining `evidence.delivery` fields and comment anchors in WORK without replacing its machine-owned `branch`.
     5. Keep derived output local/ignored; do not alter the source PR template.
