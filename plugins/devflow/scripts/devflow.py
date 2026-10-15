@@ -5281,6 +5281,40 @@ def render_closure_audit(title: str, path: Path, mode: str) -> None:
         render_markdown_file(title, path)
 
 
+EVIDENCE_TEXT_LIMIT = 400
+EVIDENCE_ROW_LIMIT = 40
+EVIDENCE_VERIFICATION_LIMIT = 12
+EVIDENCE_BYTE_LIMIT = 32768
+
+
+def bounded_evidence(value: Any, limit: int = EVIDENCE_TEXT_LIMIT) -> Any:
+    """Shorten oversized free text only; ids, reasons, structure and references survive.
+
+    A shortened value stays a mapping carrying its own byte size, so YAML/JSON never breaks
+    and a child knows the full record lives in the named original artifact.
+    """
+    if isinstance(value, str):
+        if len(value) <= limit:
+            return value
+        return {"summary": value[:limit], "chars": len(value), "truncated": True}
+    if isinstance(value, list):
+        rows = [bounded_evidence(entry, limit) for entry in value[:EVIDENCE_ROW_LIMIT]]
+        if len(value) > EVIDENCE_ROW_LIMIT:
+            rows.append({
+                "omitted": len(value) - EVIDENCE_ROW_LIMIT,
+                "open_original": "work.selected.work_file",
+            })
+        return rows
+    if isinstance(value, dict):
+        return {key: bounded_evidence(entry, limit) for key, entry in value.items()}
+    return value
+
+
+def bounded_rows(rows: list[Any], limit: int = EVIDENCE_ROW_LIMIT) -> list[Any]:
+    """Keep the first `limit` rows and report what the child must open on demand."""
+    return [bounded_evidence(row) for row in rows[:limit]]
+
+
 def file_fingerprint(path: Path) -> str | None:
     """Hash one stable regular-file read; None means the observation was unsafe."""
     descriptor = None
@@ -5536,8 +5570,6 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
     return scope, confirmed
 
 
-
-
 def evidence_index(
     root: Path, domain: str, state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -5559,8 +5591,8 @@ def evidence_index(
             "status": item.get("status"),
             "kind": item.get("kind"),
             "risk": risk_level(item),
-            "objective": item.get("objective"),
-            "requirements": item.get("requirements"),
+            "objective": bounded_evidence(item.get("objective")),
+            "requirements": bounded_evidence(item.get("requirements")),
             "acceptance_ids": [
                 str(entry.get("id"))
                 for entry in (item.get("acceptance") or [])
@@ -5572,30 +5604,32 @@ def evidence_index(
                 for entry in (item.get("verification") or [])
                 if isinstance(entry, dict)
             ],
-            "premise_checks": item.get("premise_checks"),
-            "pitfalls": item.get("pitfalls"),
-            "references": item.get("references"),
-            "changed_files": evidence.get("changed_files"),
-            "comment_paths": sorted(
+            "premise_checks": bounded_evidence(item.get("premise_checks")),
+            "pitfalls": bounded_evidence(item.get("pitfalls")),
+            "references": bounded_evidence(item.get("references")),
+            "changed_files": bounded_rows(list(evidence.get("changed_files") or [])),
+            "comment_paths": bounded_rows(sorted(
                 {
                     str(anchor.get("path"))
                     for anchor in (evidence.get("comments") or [])
                     if isinstance(anchor, dict) and anchor.get("path")
                 }
-            )
+            ))
             or None,
             "commit": evidence.get("commit"),
             "start_sha": evidence.get("start_sha"),
-            "verification_evidence": evidence.get("commands"),
-            "deviations": evidence.get("deviations"),
-            "discoveries": evidence.get("discoveries"),
-            "external_wait": (evidence.get("external_wait") or {}).get(
-                "missing_evidence"
-            )
-            if isinstance(evidence.get("external_wait"), dict)
-            else None,
+            "verification_evidence": bounded_rows(
+                list(evidence.get("commands") or []), EVIDENCE_VERIFICATION_LIMIT
+            ),
+            "deviations": bounded_evidence(evidence.get("deviations")),
+            "discoveries": bounded_evidence(evidence.get("discoveries")),
+            "external_wait": bounded_evidence(
+                (evidence.get("external_wait") or {}).get("missing_evidence")
+                if isinstance(evidence.get("external_wait"), dict)
+                else None
+            ),
             "block_kind": item.get("block_kind"),
-            "block_reason": item.get("block_reason"),
+            "block_reason": bounded_evidence(item.get("block_reason")),
             "review": {
                 "required": review.get("required"),
                 "status": review.get("status"),
@@ -5610,6 +5644,23 @@ def evidence_index(
         }
     delivery_state = state.get("delivery") or {}
     final = finalization.policy(state) if finalization.active(state) else {}
+    open_rows = [
+        {"id": key, "status": index[key][1].get("status")}
+        for key in sorted(index)
+        if index[key][1].get("status") not in TERMINAL_STATUSES
+    ]
+    decisions = list(state.get("unresolved_decisions") or [])
+    newman_runs = [
+        {
+            "id": run.get("id"),
+            "status": run.get("status"),
+            "branch": run.get("branch"),
+            "source_sha": run.get("source_sha"),
+        }
+        for run in (final.get("runs") or [])
+    ]
+    work_files = sorted(str(path) for path in docs)
+    branches = sorted((delivery_state.get("branches") or {}).items())
     index_payload = {
         "domain": domain,
         "fingerprint": autopilot.AutopilotController.fingerprint(action),
@@ -5619,14 +5670,11 @@ def evidence_index(
         "baseline_sha": state.get("baseline_sha"),
         "target_sha": state.get("target_sha"),
         "current_head": current_sha(root),
-        "unresolved_decisions": state.get("unresolved_decisions") or [],
+        "unresolved_decisions": bounded_rows(decisions),
         "work": {
             "total": len(index),
-            "open": [
-                {"id": key, "status": index[key][1].get("status")}
-                for key in sorted(index)
-                if index[key][1].get("status") not in TERMINAL_STATUSES
-            ],
+            "open": bounded_rows(open_rows),
+            "open_omitted": max(0, len(open_rows) - EVIDENCE_ROW_LIMIT),
             "selected": selected,
         },
         "delivery": {
@@ -5638,19 +5686,11 @@ def evidence_index(
                     "pr_file": record.get("pr_file"),
                     "postman_file": record.get("postman_file"),
                 }
-                for name, record in sorted(
-                    (delivery_state.get("branches") or {}).items()
-                )
+                for name, record in branches[:EVIDENCE_ROW_LIMIT]
             },
-            "newman": [
-                {
-                    "id": run.get("id"),
-                    "status": run.get("status"),
-                    "branch": run.get("branch"),
-                    "source_sha": run.get("source_sha"),
-                }
-                for run in (final.get("runs") or [])
-            ],
+            "branches_omitted": max(0, len(branches) - EVIDENCE_ROW_LIMIT),
+            "newman": bounded_rows(newman_runs),
+            "newman_omitted": max(0, len(newman_runs) - EVIDENCE_ROW_LIMIT),
             "receipt": (final.get("receipt") or {}).get("path")
             if isinstance(final.get("receipt"), dict)
             else final.get("receipt"),
@@ -5661,10 +5701,111 @@ def evidence_index(
             "STATE": str(state_path(root, domain)),
             "DECISIONS": str(d / "DECISIONS.md"),
             "PITFALLS": str(d / "PITFALLS.md"),
-            "work_files": sorted(str(path) for path in docs),
+            "work_files": bounded_rows(work_files),
+            "work_files_omitted": max(0, len(work_files) - EVIDENCE_ROW_LIMIT),
+        },
+        "limits": {
+            "text_chars": EVIDENCE_TEXT_LIMIT,
+            "rows": EVIDENCE_ROW_LIMIT,
+            "verification_rows": EVIDENCE_VERIFICATION_LIMIT,
+            "output_utf8_bytes": EVIDENCE_BYTE_LIMIT,
+            "decisions_omitted": max(0, len(decisions) - EVIDENCE_ROW_LIMIT),
+            "omitted_entry": {"summary": "...", "chars": 0, "truncated": True},
+            "note": (
+                "Omitted rows and shortened text stay readable in the originals below and "
+                "in STATE; open them on demand instead of trusting this index."
+            ),
         },
     }
+    index_payload["originals"]["work_files_pattern"] = str(
+        d / "work" / "*.yaml"
+    )
     return index_payload
+
+
+def render_evidence_index(index: dict[str, Any]) -> str:
+    """Render the full navigation index when it fits, otherwise keep core blocker access."""
+    heading = (
+        "# DevFlow evidence index\n\n"
+        "Bounded read-only projection of the current action, its verification targets, "
+        "referenced files and failure evidence. It is navigation data, not lifecycle "
+        "authority and not an action packet.\n\n"
+        "## Evidence index\n```yaml\n"
+    )
+    ending = (
+        "\n```\n\nOpen the cited originals before deciding. Render the authoritative action packet "
+        "with `devflow render <command> <domain>` whenever the action contract itself is "
+        "required, and never treat this index as proof of a lifecycle result.\n"
+    )
+
+    def output(payload: dict[str, Any]) -> str:
+        return heading + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True).rstrip() + ending
+
+    rendered = output(index)
+    if len(rendered.encode("utf-8")) <= EVIDENCE_BYTE_LIMIT:
+        return rendered
+
+    selected = ((index.get("work") or {}).get("selected") or {})
+    originals = index.get("originals") or {}
+    compact = {
+        "domain": index.get("domain"),
+        "fingerprint": index.get("fingerprint"),
+        "action": index.get("action"),
+        "risk_profile": index.get("risk_profile"),
+        "phase": index.get("phase"),
+        "current_head": index.get("current_head"),
+        "work": {
+            "total": (index.get("work") or {}).get("total"),
+            "selected": {
+                key: selected.get(key)
+                for key in (
+                    "id", "work_file", "status", "kind", "risk", "block_kind",
+                    "block_reason", "external_wait", "review", "audit_findings",
+                    "verification", "verification_evidence", "comment_paths",
+                )
+                if selected.get(key) is not None
+            },
+        },
+        "delivery": {
+            "enabled": (index.get("delivery") or {}).get("enabled"),
+            "receipt": (index.get("delivery") or {}).get("receipt"),
+        },
+        "originals": {
+            key: originals.get(key)
+            for key in ("PRD", "PLAN", "STATE", "DECISIONS", "PITFALLS", "work_files_pattern")
+            if originals.get(key) is not None
+        },
+        "limits": {
+            **index["limits"],
+            "index_omitted": True,
+            "omitted_source": "Open selected WORK, STATE, and named originals for omitted detail.",
+        },
+    }
+    rendered = output(compact)
+    if len(rendered.encode("utf-8")) <= EVIDENCE_BYTE_LIMIT:
+        return rendered
+
+    # Paths, action pins and the selected block reason are the minimum useful fallback.
+    minimal = {
+        "domain": index.get("domain"),
+        "fingerprint": index.get("fingerprint"),
+        "action": index.get("action"),
+        "current_head": index.get("current_head"),
+        "work": {
+            "total": (index.get("work") or {}).get("total"),
+            "selected": {
+                key: selected.get(key)
+                for key in ("id", "work_file", "status", "block_kind", "block_reason")
+                if selected.get(key) is not None
+            },
+        },
+        "originals": compact["originals"],
+        "limits": {"output_utf8_bytes": EVIDENCE_BYTE_LIMIT, "index_omitted": True},
+    }
+    rendered = output(minimal)
+    if len(rendered.encode("utf-8")) > EVIDENCE_BYTE_LIMIT:
+        raise ValueError("evidence index fallback exceeds its UTF-8 byte budget")
+    return rendered
 
 
 def render_request(
@@ -5783,18 +5924,7 @@ def render(args: argparse.Namespace) -> int:
     if getattr(args, "check_only", False):
         return 0
     if role == "evidence":
-        print(
-            "# DevFlow evidence index\n\n"
-            "Bounded read-only projection of the current action, its verification targets, "
-            "referenced files and failure evidence. It is navigation data, not lifecycle "
-            "authority and not an action packet."
-        )
-        render_yaml_context("Evidence index", evidence_index(root, args.domain, state))
-        print(
-            "\nOpen the cited originals before deciding. Render the authoritative action packet "
-            "with `devflow render <command> <domain>` whenever the action contract itself is "
-            "required, and never treat this index as proof of a lifecycle result."
-        )
+        print(render_evidence_index(evidence_index(root, args.domain, state)), end="")
         return 0
     if not no_refresh:
         dump_yaml_if_changed(state_path(root, args.domain), state)

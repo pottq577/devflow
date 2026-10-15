@@ -23,6 +23,7 @@ import test_scout_contract as scout_contract_tests
 
 CLI = Path(__file__).resolve().parents[1] / "scripts" / "devflow.py"
 # Documented input budget for the bounded evidence index, including its markdown wrapper.
+EVIDENCE_BYTE_BUDGET = 32768
 
 
 def run(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -88,6 +89,30 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         git(self.root, "add", "-A")
         git(self.root, "commit", "-qm", "add source anchor")
 
+    def scale_domain(self, *, files: int = 60, per_file: int = 4) -> int:
+        """Grow the domain to a size where only explicit bounds keep the index readable."""
+        work = self.root / "docs/domains/billing/work"
+        total = 1
+        for number in range(2, files + 1):
+            phase = f"{number:02d}"
+            items = [
+                fixture_helpers.item(f"P{phase}-I{offset + 1:02d}")
+                for offset in range(per_file)
+            ]
+            total += per_file
+            (work / f"phase-{phase}.yaml").write_text(
+                yaml.safe_dump(fixture_helpers.work(phase, *items), sort_keys=False),
+                encoding="utf-8",
+            )
+        document = yaml.safe_load((work / "phase-01.yaml").read_text(encoding="utf-8"))
+        document["items"][0]["evidence"]["commands"] = [
+            {"command": "pytest -q tests", "exit_code": 1, "output": "x" * 5000}
+        ]
+        document["items"][0]["pitfalls"] = ["y" * 2000]
+        (work / "phase-01.yaml").write_text(
+            yaml.safe_dump(document, sort_keys=False), encoding="utf-8"
+        )
+        return total
 
     def projected(self) -> dict:
         status = run(self.root, "status", "billing", "--json", "--no-refresh")
@@ -171,6 +196,33 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         state = self.projected()
         return self.host.autopilot.AutopilotController.fingerprint(state["next_action"])
 
+    def test_evidence_render_is_bounded_and_omits_the_action_protocol(self) -> None:
+        self.selected_work_item()
+        state = self.projected()
+        before = self.state_file.read_bytes()
+        mtime = self.state_file.stat().st_mtime_ns
+        rendered, argv = self.evidence_render()
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        self.assertIn("evidence", argv)
+        payload = yaml.safe_load(
+            re.search(r"```yaml\n(.*?)\n```", rendered.stdout, re.DOTALL).group(1)
+        )
+        self.assertEqual(
+            payload["fingerprint"],
+            self.host.autopilot.AutopilotController.fingerprint(state["next_action"]),
+        )
+        self.assertEqual(payload["current_head"], git(self.root, "rev-parse", "HEAD"))
+        selected = payload["work"]["selected"]
+        self.assertEqual(selected["id"], "P01-I01")
+        self.assertEqual(selected["verification"], item_commands(self.root))
+        self.assertEqual(selected["comment_paths"], ["src.py"])
+        self.assertEqual(payload["originals"]["PLAN"], str(
+            self.root / "docs/domains/billing/PLAN.md"))
+        self.assertNotIn("## Protocol", rendered.stdout)
+        self.assertNotIn("Architecture / implementation strategy", rendered.stdout)
+        self.assertLess(len(rendered.stdout), 8000)
+        self.assertEqual(self.state_file.read_bytes(), before)
+        self.assertEqual(self.state_file.stat().st_mtime_ns, mtime)
 
     def test_capsule_needs_binding_and_stale_never_returns_to_valid(self) -> None:
         """D01: validation is side-effect free, so valid -> stale -> stale cannot flip back."""
@@ -490,8 +542,82 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         )
         self.assertIsNotNone(moved["scout"], "stale evidence must force a new scout")
 
+    def test_evidence_index_stays_bounded_at_scale(self) -> None:
+        """D04: row and text bounds are explicit, reported, and keep the originals reachable."""
+        self.selected_work_item()
+        total = self.scale_domain(files=64)
+        self.assertGreaterEqual(total, 250)
+        rendered, _argv = self.evidence_render()
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        payload = yaml.safe_load(
+            re.search(r"```yaml\n(.*?)\n```", rendered.stdout, re.DOTALL).group(1)
+        )
+        limits = payload["limits"]
+        self.assertEqual(limits["text_chars"], 400)
+        self.assertEqual(payload["work"]["total"], total)
+        self.assertEqual(len(payload["work"]["open"]), limits["rows"])
+        self.assertEqual(payload["work"]["open_omitted"], total - limits["rows"])
+        self.assertEqual(
+            len(payload["originals"]["work_files"]), limits["rows"]
+        )
+        self.assertEqual(payload["originals"]["work_files_omitted"], 64 - limits["rows"])
+        recorded = payload["work"]["selected"]["verification_evidence"][0]
+        self.assertEqual(recorded["command"], "pytest -q tests")
+        self.assertTrue(recorded["output"]["truncated"])
+        self.assertEqual(recorded["output"]["chars"], 5000)
+        self.assertTrue(payload["work"]["selected"]["pitfalls"][0]["truncated"])
+        self.assertEqual(
+            payload["work"]["selected"]["work_file"],
+            "docs/domains/billing/work/phase-01.yaml",
+        )
+        self.assertLessEqual(len(rendered.stdout), EVIDENCE_BYTE_BUDGET)
+        # A request beyond the bounds is answered by the named original, never by silence.
+        self.assertIn(payload["originals"]["PLAN"], rendered.stdout)
 
+    def test_evidence_index_hard_utf8_budget_for_large_unicode_lists(self) -> None:
+        self.selected_work_item()
+        work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
+        document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
+        document["items"][0]["requirements"] = ["회귀 기준 설명" * 90 for _ in range(1200)]
+        document["items"][0]["block_kind"] = "execution"
+        document["items"][0]["block_reason"] = "핵심 차단 사유 " * 200
+        work_file.write_text(yaml.safe_dump(document, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        rendered, _argv = self.evidence_render()
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        self.assertLessEqual(len(rendered.stdout.encode("utf-8")), EVIDENCE_BYTE_BUDGET)
+        payload = yaml.safe_load(
+            re.search(r"```yaml\n(.*?)\n```", rendered.stdout, re.DOTALL).group(1)
+        )
+        self.assertEqual(payload["work"]["selected"]["block_kind"], "execution")
+        self.assertTrue(payload["limits"].get("index_omitted"))
+        self.assertIn(payload["work"]["selected"]["work_file"], rendered.stdout)
 
+    def test_evidence_row_budgets_cover_8_36_120_and_250_work_items(self) -> None:
+        self.selected_work_item()
+        work_dir = self.root / "docs/domains/billing/work"
+        custom_work = work_dir / "custom.yaml"
+        custom_work.write_text(
+            yaml.safe_dump(
+                fixture_helpers.work("03", fixture_helpers.item("P03-I001")),
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        for total in (8, 36, 120, 250):
+            items = [fixture_helpers.item(f"P02-I{number:03d}") for number in range(1, total)]
+            (work_dir / "phase-02.yaml").write_text(
+                yaml.safe_dump(fixture_helpers.work("02", *items), sort_keys=False),
+                encoding="utf-8",
+            )
+            rendered, _argv = self.evidence_render()
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            self.assertLessEqual(len(rendered.stdout.encode("utf-8")), EVIDENCE_BYTE_BUDGET)
+            if total == 250:
+                payload = yaml.safe_load(
+                    re.search(r"```yaml\n(.*?)\n```", rendered.stdout, re.DOTALL).group(1)
+                )
+                pattern = Path(payload["originals"]["work_files_pattern"])
+                self.assertIn(custom_work, pattern.parent.glob(pattern.name))
 
     def test_retry_scout_requires_no_current_capsule(self) -> None:
         spec = {"role": "diagnostician", "effective_risk": "medium"}
