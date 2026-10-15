@@ -905,8 +905,11 @@ def main() -> int:
         policy = autopilot.load_policy(plugin_root, root)
 
         runtime_dir = _telemetry_dir(root, args.domain)
-        if args.command in {"dispatch", "bootstrap", "bootstrap-finalize", "step-start", "step-finish", "guard-status", "scout-validate"}:
+        # Observation verifies ownership without extending the lease; a lifecycle edge renews it.
+        if args.command in {"dispatch", "guard-status", "scout-validate"}:
             session.require(runtime_dir, args.session_id)
+        if args.command in {"bootstrap", "bootstrap-finalize", "step-start", "step-finish"}:
+            session.renew(runtime_dir, args.session_id)
 
         if args.command == "session-start":
             result = session.start(runtime_dir, session_id=args.session_id)

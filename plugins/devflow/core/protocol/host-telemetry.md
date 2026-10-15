@@ -57,6 +57,13 @@ pending/counter fields, refuses acquisition and release without changing the dat
 owner may renew its lease while its child runs. `session-end` validates idle progress and deletes
 ownership atomically; there is no gap permitting a new reservation between those operations.
 
+Ownership verification and health projections are read-only: they open a deferred transaction,
+verify the current owner and the pending-child fence, and never extend the lease. Only the lifecycle
+edges `bootstrap`, `bootstrap-finalize`, `step-start`, `step-finish`, `session-start`,
+`session-checkpoint` and `session-recover` write `expires_at`. Polling `dispatch`, `guard-status`,
+`scout-validate` or `session-status` therefore cannot keep a dead owner alive, and still refuses a
+foreign, orphan or expired owner exactly as before.
+
 `session-recover <domain> --session-id <original_owner> --step-id <exact_step>` additionally
 requires `--outcome completed|failed|cancelled|capability_blocked`, `--confirm-child-terminated`
 and nonblank `--termination-evidence`. This is a trusted administrator's

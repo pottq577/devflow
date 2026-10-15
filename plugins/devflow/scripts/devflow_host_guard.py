@@ -50,6 +50,11 @@ def _owner(connection: Any, session_id: str) -> None:
     if not session_id:
         raise session.SessionConflict("hosted Goal commands require --session-id")
     row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_session'"
+    ).fetchone()
+    if not row:
+        raise session.SessionConflict("hosted Goal session has expired or ownership changed")
+    row = connection.execute(
         "SELECT session_id, expires_at FROM hosted_session WHERE slot = 1"
     ).fetchone()
     if not row or row[0] != session_id or row[1] <= time.time():
@@ -135,7 +140,7 @@ def inspect(
     policy: dict[str, Any], *, terminal: bool = False,
 ) -> dict[str, Any]:
     bounds = limits(policy)
-    with session.coordinator(runtime_dir) as connection:
+    with session.coordinator(runtime_dir, write=False) as connection:
         _owner(connection, session_id)
         return _projection(_load(connection, session_id), fingerprint, bounds, terminal=terminal)
 

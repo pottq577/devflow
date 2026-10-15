@@ -87,8 +87,14 @@ def read_progress(connection: sqlite3.Connection) -> tuple[str, dict] | None:
 
 
 @contextmanager
-def coordinator(runtime_dir: Path) -> Iterator[sqlite3.Connection]:
-    """Hold a short, transactional cross-process lock around lease transitions."""
+def coordinator(
+    runtime_dir: Path, *, write: bool = True
+) -> Iterator[sqlite3.Connection]:
+    """Hold a short, transactional cross-process lock around lease transitions.
+
+    `write=False` opens a read-only transaction: ownership checks and health projections
+    verify the owner without extending the lease or taking the write lock.
+    """
     leases = runtime_dir / "leases"
     leases.mkdir(parents=True, exist_ok=True, mode=0o700)
     if os.name == "posix":
@@ -98,15 +104,17 @@ def coordinator(runtime_dir: Path) -> Iterator[sqlite3.Connection]:
     if os.name == "posix":
         db_path.chmod(0o600)
     try:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS hosted_session ("
-            "slot INTEGER PRIMARY KEY CHECK (slot = 1), "
-            "session_id TEXT NOT NULL, acquired_at REAL NOT NULL, "
-            "expires_at REAL NOT NULL)"
-        )
+        connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+        if write:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS hosted_session ("
+                "slot INTEGER PRIMARY KEY CHECK (slot = 1), "
+                "session_id TEXT NOT NULL, acquired_at REAL NOT NULL, "
+                "expires_at REAL NOT NULL)"
+            )
         yield connection
-        connection.commit()
+        if write:
+            connection.commit()
     except BaseException:
         connection.rollback()
         raise
@@ -116,6 +124,10 @@ def coordinator(runtime_dir: Path) -> Iterator[sqlite3.Connection]:
 
 def _active_row(connection: sqlite3.Connection, *, now: float | None = None) -> tuple | None:
     now = time.time() if now is None else now
+    if not connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_session'"
+    ).fetchone():
+        return None
     row = connection.execute(
         "SELECT session_id, acquired_at, expires_at FROM hosted_session WHERE slot = 1"
     ).fetchone()
@@ -190,10 +202,31 @@ def start(runtime_dir: Path, *, session_id: str | None = None) -> dict:
 
 
 def require(runtime_dir: Path, session_id: str | None) -> None:
-    """Reject stale or foreign sessions, renewing only the actual current owner."""
+    """Verify ownership and inflight fencing without writing or extending the lease."""
     if not session_id:
         raise SessionConflict("hosted Goal commands require --session-id")
-    start(runtime_dir, session_id=session_id)
+    with coordinator(runtime_dir, write=False) as connection:
+        _verify_owner(connection, session_id)
+
+
+def renew(runtime_dir: Path, session_id: str | None) -> dict:
+    """Extend the lease of the verified current owner; the explicit heartbeat edge."""
+    if not session_id:
+        raise SessionConflict("hosted Goal commands require --session-id")
+    return start(runtime_dir, session_id=session_id)
+
+
+def _verify_owner(connection: sqlite3.Connection, session_id: str | None) -> None:
+    progress = read_progress(connection)
+    active = _active_row(connection)
+    if progress and progress[1]["inflight"] is not None and (
+        not active or active[0] != progress[0]
+    ):
+        raise SessionBlocked("hosted_step_inflight")
+    if not active:
+        raise SessionConflict("hosted Goal session has expired or does not exist")
+    if session_id != active[0]:
+        raise SessionConflict("another hosted Goal session owns this domain")
 
 
 def end(runtime_dir: Path, session_id: str | None) -> dict:
@@ -215,7 +248,7 @@ def end(runtime_dir: Path, session_id: str | None) -> dict:
 
 def status(runtime_dir: Path) -> dict:
     """Read-only health projection; the session identifier is never disclosed."""
-    with coordinator(runtime_dir) as connection:
+    with coordinator(runtime_dir, write=False) as connection:
         progress = read_progress(connection)
         active = _active_row(connection)
         blocked = bool(progress and progress[1]["inflight"] is not None and (

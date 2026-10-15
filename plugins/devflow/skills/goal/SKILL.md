@@ -25,7 +25,7 @@ python3 <this-skill-directory>/scripts/host.py session-start <domain>
 
 Keep the returned `session_id` private to the active Goal Supervisor and pass it as `--session-id <session_id>` to **every** `bootstrap`, `bootstrap-finalize`, and `dispatch` call. A second hosted Goal or standalone Autopilot cannot acquire the same domain while this lease is live. A restarted supervisor may resume only with the same id using `session-start <domain> --session-id <session_id>`; never create a replacement session while another owner's session is active. No session id may be inferred from telemetry.
 
-The durable lease is renewed by those host commands and expires after 24 hours without renewal. An expired owner must stop; do not continue operating on a prior dispatch or release another owner's lease. If a sub-agent may remain active longer than the lease, refresh the lease with the same `session-start --session-id` during the wait; do not let it expire while children are running.
+The durable lease is renewed by the lifecycle edges `bootstrap`, `bootstrap-finalize`, `step-start` and `step-finish`, and expires after 24 hours without renewal. Observation commands (`dispatch`, `guard-status`, `scout-validate`, `session-status`) verify ownership and pending-child fencing without extending it. An expired owner must stop; do not continue operating on a prior dispatch or release another owner's lease. If a sub-agent may remain active longer than the lease, refresh the lease with the same `session-start --session-id` during the wait; do not let it expire while children are running.
 
 After every child has finished or been cancelled, release ownership on `complete`, `checkpoint`, `paused`, or a terminal blocker:
 

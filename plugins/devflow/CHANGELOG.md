@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R15 lease renewal scope
+
+- Separate read-only ownership verification from lease renewal. `dispatch`, `guard-status`, `scout-validate` and `session-status` now open a deferred SQLite transaction, verify the current owner and the pending-child fence, and leave `expires_at` untouched.
+- Only `bootstrap`, `bootstrap-finalize`, `step-start`, `step-finish`, `session-start`, `session-checkpoint` and `session-recover` extend the lease, so polling cannot keep a dead owner alive and a long-running child is still covered by its lifecycle edges.
+- Retain TTL, ownership, inflight and recovery semantics unchanged. Retain Protocol `1.8.0`.
+
 ## Unreleased - R14 incremental PR/Postman refresh
 
 - Record a Postman request-structure digest with each delivered branch and refuse a later WORK on that branch that rewrites the structure while `api_endpoints` is unchanged. Source unrelated to the HTTP surface no longer regenerates unrelated requests.
