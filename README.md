@@ -1,7 +1,7 @@
 # DevFlow Marketplace
 
 One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.11.0 and its protocol version is `1.8.0`.
+Both marketplace adapters load the same `plugins/devflow` directory. The shared plugin is version 0.11.1 and its protocol version is `1.8.0`.
 
 ## Claude Code
 
@@ -36,11 +36,27 @@ adopt the new completion requirements; completed WORK is preserved. New domains 
 default, and the plan/run skills perform the adoption preflight. See the plugin README for the
 source-first completion order and the offline Postman validation boundary.
 
+## Version 0.11.1 hosted capsule and delivery corrections
+
+Version 0.11.1 fixes defects found reviewing 0.11.0 and keeps protocol `1.8.0`. A branch record
+that predates `postman_structure_sha256` validates again instead of raising `KeyError`. Scout
+capsule binding is split from validation: `scout-bind` records creation provenance once,
+`scout-validate` only reads it, `stale` is idempotent, and `dispatch --scout-cached` is re-verified
+by the host before it skips a scout. The evidence digest now covers the content fingerprints of
+every file the index cited, including scoped Git index entries so relevant staged and unstaged
+changes invalidate the capsule. An unconfirmed reference outside the creation snapshot triggers
+fallback; the capsule does not prove that Scout opened its cited sources. `render evidence` states
+and enforces its row and text bounds. The hosted route engine is cached per routing policy instead
+of once per process, and `delivery-artifacts.md` records that a same-path DTO, auth or assertion
+change is an executor and auditor obligation rather than an automatic signal. Native hosted Goal
+end-to-end and installed ELI5 acceptance remain **pending**; see the plugin CHANGELOG.
+
 ## Version 0.11.0 hosted Goal efficiency
 
-Version 0.11.0 completes the hosted Goal lifecycle refactoring. Read-only hosted children start
-from a bounded `render evidence` index instead of a full action packet, hosted renders are pinned
-to the dispatch fingerprint and HEAD, one invocation reuses its WORK snapshot and its pinned Git
+Version 0.11.0 shipped the hosted Goal runtime refactorings for R00-R18 and recorded the local R19
+release gates. Native R19 acceptance remained pending. Read-only hosted children start from a
+bounded `render evidence` index instead of a full action packet, hosted renders are pinned to the
+dispatch fingerprint and HEAD, one invocation reuses its WORK snapshot and its pinned Git
 inspection and Newman digests, the finalizer receives a paged WORK manifest, and observation
 commands no longer extend the lease. Additive CLI options (`render evidence`,
 `--manifest-page`, `--expected-head`, `--expected-fingerprint`, `--check-only`,
@@ -48,6 +64,10 @@ commands no longer extend the lease. Additive CLI options (`render evidence`,
 protocol document (`core/protocol/role-instructions.md`) are the only contract changes. Lifecycle
 statuses, audit gates, evidence provenance and every STATE/WORK artifact contract are unchanged, so
 the artifact protocol remains `1.8.0`.
+
+That implementation status does not establish the R19 acceptance gate. The 0.11.0 release record
+is historical evidence from commit `23124f1`; native hosted Goal end-to-end execution and an actual
+installed ELI5 invocation remain pending for this review.
 
 ## Version 0.10.2 peer-skill composition
 

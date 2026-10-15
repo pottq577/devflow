@@ -15,7 +15,7 @@ Hosted child dispatches are cheaper without changing any lifecycle gate:
 
 - A read-only Scout or Diagnostician child starts from `devflow render evidence <domain>`, a bounded index of the action, its verification targets, referenced files and failure evidence, and opens the cited originals itself.
 - Every hosted render carries `--expected-head` and `--expected-fingerprint`; a moved action or HEAD exits `2` without output or STATE writes, and `--check-only` runs the same guards while printing nothing.
-- A scout capsule is reusable only while its text, action fingerprint and evidence digest agree; `scout-validate` reports `stale` otherwise, and `scout_on_retry` asks for a new scout only when no current capsule exists.
+- A scout capsule is reusable only while its text, action fingerprint, evidence digest and cited source fingerprints agree; `scout-bind` writes that provenance once, `scout-validate` reports `stale` without ever re-signing it, and `scout_on_retry` asks for a new scout only when no current capsule exists.
 - `devflow render finalize` emits a normalized, paged WORK manifest with exact `work_file` paths instead of inlining every WORK document. Scope is unchanged: every disposition and branch still reaches ELI5 and the final gates.
 - `audit apply` still runs the full domain-wide delivery validation, so a `work`-scope audit no longer repeats the domain-wide `delivery check` itself.
 - `dispatch`, `guard-status`, `scout-validate` and `session-status` verify ownership without extending the lease; only lifecycle edges renew it.
@@ -139,13 +139,23 @@ changed files, comment anchor paths, commits, block and external-wait reasons, r
 the delivery and Newman index, and the exact original artifact paths. It never inlines the action
 protocol, PRD, PLAN or WORK bodies and never states a lifecycle result. Scout children receive it
 instead of the full action packet. The Diagnostician child receives the same index and renders the
-authoritative run packet only when it must judge the execution contract itself.
+authoritative run packet only when it must judge the execution contract itself. Its `limits` block
+states the contract: each free-text value is capped at 400 characters, verification rows at 12,
+other indexed rows at 40, and the complete rendered index including its wrapper at 32,768 UTF-8
+bytes. Shortened strings report their original size, omitted rows are counted, and originals remain
+available at their named paths.
 
-A hosted scout capsule is reusable only while its text, the action fingerprint and an evidence
-digest over that index agree. `host.py scout-validate` records the digest on first success and
-reports `stale` once the source, verification target, failure evidence or HEAD moves.
+A hosted Scout capsule is reusable only while its text, action fingerprint and creation snapshot
+agree. The snapshot covers the selected WORK and related WORK files, cited references and
+verification evidence, root and ancestor `AGENTS.md` or `CLAUDE.md` files, routing settings, and
+the Scout role, prompt and lifecycle instructions. It fingerprints scoped file bytes and Git index
+entries, so relevant staged and unstaged changes stale the capsule while unrelated staged files do
+not. `scout-bind` accepts only the completed Scout step's `<step_id>.md` output and consumes its
+receipt once; `scout-validate` only reads the binding. A new reference outside the original
+snapshot is unconfirmed and falls back to a fresh Scout or the authoritative packet. The capsule
+does not prove that Scout opened any cited source.
 `orchestration.scout_on_retry` asks for a new scout only when no current capsule exists, and
-`dispatch --scout-cached` declares one that still validates.
+`dispatch --scout-cached` declares one that the host then re-verifies before it skips a scout.
 
 Finalization state projections stop at the first definitive finalization error and keep the same
 `finalize` action and reason; an error-free projection still runs the complete evidence check before
@@ -212,7 +222,7 @@ When a backend rejects only a reasoning effort, DevFlow records that model/backe
 
 Planning, WORK verification, phase audit and finalization prefer GPT-6.1 Sol (`frontier`); critical authority and integration audit use Sol-only `hardest`. Standard `frontier` candidates are `[frontier, balanced]`, so Terra can take over a non-hardest specialist when Sol is unavailable at the routed effort. `hardest` remains `[frontier]` and fails closed. Routine low/medium WORK reviews use the WORK risk, while project-level decision roles retain the domain risk floor. Terra supports `medium/high/xhigh` for pre-analysis and compatible fallback.
 
-Terra scout dispatch is conditional. `orchestration.scout_before` covers integration auditing and diagnosis; `scout_on_critical` adds architect and WORK verifier when effective risk is critical; `scout_on_retry` adds WORK verifier, phase/plan auditor and finalizer after the initial attempt. A scout is skipped if its model matches the specialist or cannot execute. The capsule contract requires six nonempty Markdown sections and at least one cited repository path; `scout_max_chars` (default 12,000) is a hard limit, not a truncation target. Failed, invalid, oversized, and stale capsules are discarded, preserving the full authoritative packet. Standalone Autopilot omits that packet only with a validated capsule; hosted `/goal` uses `primary.scout_message` only after successful `scout-validate` for the current fingerprint and a different-model scout. Specialists check cited evidence and render the authoritative packet if evidence is missing or inconsistent.
+Terra scout dispatch is conditional. `orchestration.scout_before` covers integration auditing and diagnosis; `scout_on_critical` adds architect and WORK verifier when effective risk is critical; `scout_on_retry` adds WORK verifier, phase/plan auditor and finalizer after the initial attempt. A scout is skipped if its model matches the specialist or cannot execute. The capsule contract requires six nonempty Markdown sections and at least one cited repository path; `scout_max_chars` (default 12,000) is a hard limit, not a truncation target. Failed, invalid, oversized, unbound, and stale capsules are discarded, preserving the full authoritative packet. Standalone Autopilot omits that packet only with a validated capsule; hosted `/goal` uses `primary.scout_message` only after successful `scout-validate` for the current fingerprint and a different-model scout. Specialists check cited evidence and render the authoritative packet if evidence is missing or inconsistent.
 
 The controller is foreground, bounded, resumable, and observable. It enforces a persisted measured-token dispatch budget with a pre-dispatch reservation (`25,000` specialist / `8,000` scout by default) and holds a cross-process per-domain mutating lease. Retry counts, timeout counts, pending timeout diagnoses, diagnoses, pre-analysis capsules, unavailable candidates, budget usage, and dispatch receipts survive `resume` under `.devflow/runtime/<domain>/`; they are telemetry rather than lifecycle authority. A fresh `start` discards prior-run transient capability and retry telemetry. Unavailable-candidate checkpoints record both alias and concrete model ID, so a remapped alias does not inherit a stale failure from its previous concrete model. Recursive delegation remains policy-controlled and disabled by default. Use `--token-budget TOKENS` on `autopilot start` or `resume` to override the run budget.
 Hosted `/goal` enforces durable execution bounds under the same session ID: `dispatch` and `guard-status` are observational, `step-start` reserves each scout/primary/bootstrap spawn and `step-finish` acknowledges it only after the host wait. Defaults are `orchestration.hosted.max_steps: 100`, `orchestration.hosted.max_action_visits: 4`, and `escalation.retries.max_no_progress: 5`. Stale attempts and concurrent/pending spawns fail closed; resume continues the same counters, and action cycles are blocked after repeated visits. A session cannot end with an unacknowledged child; do not force completion if the child state is unknown. With the default no-progress limit of five, attempts 0 through 5 can execute; the next non-progressing attempt is blocked. This matches the standalone controller and permits the final alternative-model retry. This is a dispatch-count bound, **not a hosted token budget**. Host-native Codex sub-agent token usage is not accurately measured by DevFlow and no fake token balance is recorded.
@@ -372,9 +382,10 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 ## Compatibility and protocol version
 
-Plugin version `0.11.0` ships protocol version `1.8.0`.
+Plugin version `0.11.1` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
-Plugin `0.11.0` preserves the same STATE/WORK schemas, enum values, lifecycle transitions and audit gates. It adds CLI options, one optional branch field (`postman_structure_sha256`) and `core/protocol/role-instructions.md`; no artifact migration is required.
+Plugin `0.11.1` preserves the STATE/WORK schemas, enum values, lifecycle transitions and audit gates. Older branch records without `postman_structure_sha256` remain readable and need no migration. New Scout bindings are transient runtime evidence; older capsules without a binding are treated as stale and trigger a fresh Scout or authoritative-packet fallback. Native hosted Goal end-to-end acceptance and actual invocation of installed ELI5 remain pending.
+Plugin `0.11.0` added CLI options, the optional branch field (`postman_structure_sha256`) and `core/protocol/role-instructions.md`; these remain part of the `1.8.0` contract.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
 It also makes the documented work and plan legacy recovery commands reach an initial audit and lets closed decision findings reference resolved decision records.

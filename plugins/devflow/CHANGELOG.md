@@ -1,12 +1,20 @@
 # Changelog
 
+## 0.11.1 - 2026-10-16 - Review defect corrections
+
+- Fix legacy delivery validation when a branch predates the optional `postman_structure_sha256` field. Existing recorded hashes still undergo integrity checks; no STATE migration is required.
+- Bind hosted Scout capsules to a creation snapshot of the selected WORK and its related files, cited references, verification evidence, repository instructions, routing settings and Scout instructions. Scoped file bytes and Git index entries detect relevant staged and unstaged changes without reacting to unrelated staged files. Only a completed Scout step's matching `<step_id>.md` output can bind once; a reference outside the snapshot is unconfirmed and falls back. Validation is read-only and host dispatch rechecks the binding. The capsule does not prove Scout opened its cited sources.
+- Bound `render evidence` text and row counts, fingerprint the content of cited files for capsule freshness, and key hosted route-engine reuse by the complete loaded routing policy.
+- Clarify that same-path DTO, authentication and assertion changes require executor and auditor review; a stable endpoint list or structure digest does not prove the HTTP contract is unchanged.
+- Keep protocol `1.8.0`: the changes preserve existing lifecycle states and artifact schemas, including older branch records. Full acceptance remains **pending** until a native hosted Goal end-to-end run and an actual invocation of the installed ELI5 skill are recorded. Local tests and synthetic subprocess fixtures do not satisfy that gate.
+
 ## 0.11.0 - 2026-10-15 - Hosted Goal lifecycle efficiency
 
-- Complete the hosted Goal refactoring (roadmap R00-R19) on protocol `1.8.0`. Read-only hosted children start from a bounded evidence index, hosted renders are pinned to the dispatch fingerprint and HEAD, one invocation reuses its WORK snapshot plus its SHA-pinned Git inspections and Newman digests, the finalizer receives a paged WORK manifest with a dedicated role contract, and observation commands no longer extend the lease.
+- Ship hosted Goal runtime refactorings for roadmap R00-R18 on protocol `1.8.0` and record the local R19 release gates below. Native R19 acceptance remains pending. Read-only hosted children start from a bounded evidence index, hosted renders are pinned to the dispatch fingerprint and HEAD, one invocation reuses its WORK snapshot plus its SHA-pinned Git inspections and Newman digests, the finalizer receives a paged WORK manifest with a dedicated role contract, and observation commands no longer extend the lease.
 - Additive surface only: `render evidence`, `render finalize --manifest-page`, `render --expected-head/--expected-fingerprint/--check-only`, `dispatch --scout-cached`, a `stale` scout-capsule verdict, the optional branch field `postman_structure_sha256`, and `core/protocol/role-instructions.md`.
 - Measured on one machine with the committed benchmark (projection `--reps 9`, packets `--reps 3`), before `b3be7af` against this release: one `validate` over 3 delivered WORK with 4 anchors drops from 27 to 14 Git calls; Scout and Diagnostician child input drops from 36,195 to 2,334 bytes; `render finalize` drops 21 percent at 60 WORK, 37 percent at 120, 49 percent at 250 and 53 percent for 60 delivered WORK; status and render p50 at 8/36/120/250 WORK are unchanged within noise; the audit and run packets grow about 3 percent from the pinned-render and audit-scope text.
-- Release gates on this HEAD: `release_gate.py --mode merge` and `--mode release` both `pass` with 547 of 547 tests, 0 failed, 0 skipped and the real Newman profile executed.
-- Not measured here: native hosted Goal end-to-end wall clock, native child token usage, Scout capsule spawn cost and cold-cache Newman re-hashing. Agent token savings are not claimed.
+- Historical release record for commit `23124f166125aa43101f0d309c51c804cec2e194`: `release_gate.py --mode merge` and `--mode release` were recorded as passing with 547 of 547 tests, 0 failed, 0 skipped and the real Newman profile executed. These figures describe that historical HEAD and are not evidence for 0.11.1 or current R19 acceptance.
+- Not measured at that release: native hosted Goal end-to-end wall clock, native child token usage, Scout capsule spawn cost and cold-cache Newman re-hashing. Agent token savings were not claimed. Native hosted Goal end-to-end and installed ELI5 invocation were not performed.
 - Synchronize the Claude marketplace, both plugin manifests and current documentation to `0.11.0`. Lifecycle statuses, audit gates, evidence provenance and every STATE/WORK artifact contract are unchanged, so no protocol migration is required.
 
 ## Unreleased - R18 telemetry cleanup and hosted config boundaries
