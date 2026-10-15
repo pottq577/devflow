@@ -33,24 +33,48 @@ TELEMETRY_INFLIGHT_DIR = "host-dispatch-inflight"
 TELEMETRY_COMMANDS = {"telemetry-start", "telemetry-finish"}
 
 
+_ROUTING_CACHE: dict[str, Any] = {}
+
+
 def _host_capabilities(policy: dict[str, Any]) -> autopilot.CapabilityRegistry:
-    registry = autopilot.ModelRegistry.from_policy(policy)
+    registry = _host_registry(policy)
     native_models = {
         registry.model_id(alias)
         for alias in registry.aliases()
         if registry.meta(alias).get("multi_agent")
     }
-    return autopilot.CapabilityRegistry.assumed(
-        policy,
+    return autopilot.CapabilityRegistry(
+        registry,
         native_models=native_models,
         exec_available=False,
+        codex_path=None,
+        codex_version=None,
     )
 
 
+def _host_registry(policy: dict[str, Any]) -> autopilot.ModelRegistry:
+    """Build the registry once per CLI process; policy YAML is read only at startup."""
+    key = json.dumps(
+        policy.get("model_registry") or policy.get("models") or {},
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    registry = _ROUTING_CACHE.get(key)
+    if registry is None:
+        registry = autopilot.ModelRegistry.from_policy(policy)
+        _ROUTING_CACHE[key] = registry
+    return registry
+
+
 def _host_router(policy: dict[str, Any]) -> autopilot.RouteEngine:
-    host_policy = copy.deepcopy(policy)
-    host_policy.setdefault("backends", {})["preference"] = ["native_agent"]
-    return autopilot.RouteEngine(host_policy, _host_capabilities(host_policy))
+    engine = _ROUTING_CACHE.get("engine")
+    if engine is None:
+        host_policy = copy.deepcopy(policy)
+        host_policy.setdefault("backends", {})["preference"] = ["native_agent"]
+        engine = autopilot.RouteEngine(host_policy, _host_capabilities(host_policy))
+        _ROUTING_CACHE["engine"] = engine
+    return engine
 
 
 def _host_route(
@@ -72,7 +96,7 @@ def _host_route(
 def _candidate_rows(
     policy: dict[str, Any], spec: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    registry = autopilot.ModelRegistry.from_policy(policy)
+    registry = _host_registry(policy)
     profile = str((spec.get("model") or {}).get("profile") or "")
     effort = str((spec.get("model") or {}).get("reasoning_effort") or "")
     rows: list[dict[str, Any]] = []

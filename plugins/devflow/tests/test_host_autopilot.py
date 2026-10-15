@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -30,6 +31,64 @@ class HostAutopilotUnitTests(unittest.TestCase):
     def setUp(self):
         self.host = load_host()
         self.policy = self.host.autopilot.load_policy(PLUGIN, None)
+
+    def test_registry_and_router_are_built_once_per_process_without_changing_the_route(self):
+        state = {
+            "risk_profile": "medium",
+            "next_action": {
+                "role": "architect",
+                "command": "plan",
+                "scope": "project",
+            },
+        }
+        expected = self.host.dispatch_envelope(
+            Path("/repo"), PLUGIN, self.policy, "sample", state
+        )
+        with mock.patch.object(
+            self.host.autopilot.ModelRegistry,
+            "from_policy",
+            wraps=self.host.autopilot.ModelRegistry.from_policy,
+        ) as registries, mock.patch.object(
+            self.host.autopilot, "RouteEngine", wraps=self.host.autopilot.RouteEngine
+        ) as engines:
+            self.host._ROUTING_CACHE.clear()
+            results = [
+                self.host.dispatch_envelope(
+                    Path("/repo"), PLUGIN, self.policy, "sample", state
+                )
+                for _ in range(3)
+            ]
+        self.assertEqual(registries.call_count, 1)
+        self.assertEqual(engines.call_count, 1)
+        for result in results:
+            self.assertEqual(result["fingerprint"], expected["fingerprint"])
+            self.assertEqual(result["status"], expected["status"])
+            self.assertEqual(result["primary"]["model"], expected["primary"]["model"])
+            self.assertEqual(
+                result["primary"]["model_alias"], expected["primary"]["model_alias"]
+            )
+            self.assertEqual(
+                result["primary"]["reasoning_effort"],
+                expected["primary"]["reasoning_effort"],
+            )
+            self.assertEqual(
+                result["primary"]["candidates"], expected["primary"]["candidates"]
+            )
+            self.assertEqual(result["scout"], expected["scout"])
+
+    def test_a_changed_model_policy_does_not_reuse_the_cached_registry(self):
+        policy = copy.deepcopy(self.policy)
+        narrowed = copy.deepcopy(policy)
+        alias = "fast"
+        narrowed["model_registry"]["models"][alias] = dict(
+            narrowed["model_registry"]["models"][alias], multi_agent=False
+        )
+        self.assertIsNot(
+            self.host._host_registry(policy), self.host._host_registry(narrowed)
+        )
+        self.assertIs(
+            self.host._host_registry(policy), self.host._host_registry(policy)
+        )
 
     def test_host_dispatch_routes_without_backend_detection(self):
         state = {

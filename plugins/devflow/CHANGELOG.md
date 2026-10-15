@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - R16 in-process routing reuse
+
+- Build the hosted model registry, capability registry and route engine once per CLI process and share them across the primary, Scout and candidate routes of one dispatch. Model selection, effort, candidate order and capability fallback are unchanged.
+- The cache key is the loaded model configuration, so a changed policy still builds its own registry. Policy YAML was already read once at command startup and is never re-read here.
+- Retain Protocol `1.8.0`.
+
 ## Unreleased - R15 lease renewal scope
 
 - Separate read-only ownership verification from lease renewal. `dispatch`, `guard-status`, `scout-validate` and `session-status` now open a deferred SQLite transaction, verify the current owner and the pending-child fence, and leave `expires_at` untouched.
