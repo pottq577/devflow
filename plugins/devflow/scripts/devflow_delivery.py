@@ -737,6 +737,10 @@ def validation_errors(
                 )
             hashes = inspect_artifacts(root, domain, branch, record, sections)
             for key, value in hashes.items():
+                # A legacy branch without the optional structure digest stays valid; a recorded
+                # one is always compared, so absence is never treated as agreement.
+                if key == "postman_structure_sha256" and key not in record:
+                    continue
                 if not HASH.fullmatch(record[key]) or record[key] != value:
                     errors.append(
                         f"delivery {branch} stale {key}; regenerate artifacts and run delivery refresh"

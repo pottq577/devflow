@@ -134,7 +134,9 @@ and integration closure adds `--final`.
 A deleted/merged local branch retains its pinned commit provenance; no checkout or branch recreation is required.
 
 When correcting only generated artifact content or adopting a changed PR template, regenerate it at the same recorded source commit, then run `devflow delivery refresh <domain> --branch <name>`.
-Refresh verifies content and updates hashes atomically.
+Refresh verifies content and updates hashes atomically. Older branch records may omit
+`postman_structure_sha256`; validation leaves those records unchanged, and refresh or the next
+completed WORK records the digest. If present, the digest is always checked.
 New source commits require ordinary WORK; refresh cannot authenticate uncovered code.
 Repeated enable calls never expand legacy exemptions.
 
