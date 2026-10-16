@@ -1,36 +1,27 @@
-# Executor: finalize the entire implemented domain
+# Executor: finalize the implemented domain
 
-Continue with the implementation model.
-Treat the complete domain's PLAN, every WORK and every branch as the explanation scope.
-Read the appended `finalization` protocol before execution.
+Continue with the implementation model for the computed project-wide `finalize` action.
+The appended `core/protocol/finalization.md` and `core/protocol/delivery-artifacts.md`
+own server safety, failure classification, remediation, evidence and review gates.
+Follow this execution order without replacing those contracts.
 
-1. Inspect all WORK and branch evidence plus the actual diffs.
-   1. Ensure cumulative PRs follow `docs/PR/templates.md` and collections represent all affected HTTP contracts.
-2. Discover Newman, the server argv command, build identity and local/test fixture and integration safety.
-   1. Pass the server as a JSON argv array with `--server-command`, plus `--readiness-url`.
-   2. `delivery newman` owns server start, HTTP 200..299 readiness, Newman execution and bounded cleanup for every branch.
-   3. Never start the server separately, omit Newman because a server is unavailable, or treat startup/readiness/tool/environment/cleanup failure as `not_applicable`.
-   4. Use the fixed bounded profile and truthful exit status.
-3. For each unsuccessful attempt, inspect the contract, requests, assertions and private server/report evidence.
-   1. Classify code, collection, environment or unknown via `delivery triage`. Code or collection triage requires a completed failed Newman run with successful server lifecycle evidence.
-4. For a confirmed code or collection defect, create one scoped integration remediation WORK with `NEWMAN-<run-id>` origin, summary reference and a failing regression.
-   1. Register it, then execute only the runtime-selected ordinary WORK.
-   2. Commit the tested repair and retain all review gates.
-   3. For ignored collection-only changes, commit a meaningful tracked regression fixture/test or generator fix, and keep generated private docs local.
-   4. Environment corrections require reruns. Unresolved cases stay blocked.
-   5. Stop after three unsuccessful root-cause fixes for review.
-5. After repair, rebuild the matching server, refresh affected PR and collection outputs, and rerun Newman.
-   1. Record current test results in PR, run `delivery refresh`, and repeat Newman if collections changed.
-6. After every branch has current successful or `not_applicable` Newman evidence, obtain fresh `delivery context`.
-   1. Discover and invoke the installed `eli5` skill using the host (Codex `$eli5`).
-   2. Read its actual `SKILL.md`.
-   3. Generate one self-contained whole-work HTML with exact metadata, visible WORK dispositions, cross-branch flow and final test outcomes.
-   4. Record `delivery explain` with actual invocation evidence.
-   5. Do not invoke ELI5 before this point. If verification changes later, make it current before regenerating the explanation.
-7. Run `delivery check --final`, `delivery finalize`, `validate`, then `status`.
-   1. Hand off to the computed independent audit or decision.
-   2. Keep remote publication, push and merge under user control.
+1. Inspect every WORK and branch, including actual diffs, verification evidence,
+   cumulative PRs (`docs/PR/templates.md`) and affected HTTP contracts.
+2. Confirm each branch's build identity and isolated local/test environment. Discover
+   Newman, then run `delivery newman` with a JSON `--server-command` and `--readiness-url`.
+3. Inspect unsuccessful runs and use `delivery triage`. Create scoped integration
+   remediation WORK only for confirmed code/collection defects. Let the runtime
+   select each repair and its review gate; keep unresolved causes blocked.
+4. Verify and commit repairs, rebuild the matching server, update branch artifacts
+   with `delivery refresh`, and rerun affected Newman checks. Require current
+   success or proven `not_applicable` evidence for every delivered branch.
+5. After Newman, obtain fresh `delivery context`. Read and invoke the installed
+   `eli5` skill through the host (Codex `$eli5`). Generate one whole-domain HTML
+   with exact metadata, every WORK disposition, cross-branch behavior and current
+   test outcomes. Record actual invocation evidence with `delivery explain`.
+6. Run `delivery check --final`, `delivery finalize`, `validate`, then `status`.
+   Hand off to the computed independent audit or decision, not publication.
 
-Report paths, request/assertion counts, diagnoses and repair commits, plus any actual execution blockers.
-Keep credentials and raw payloads private.
-Reading a skill or parsing a collection alone establishes neither skill execution nor live API success.
+Report evidence paths, request/assertion counts, diagnoses, repair commits and
+observed blockers. Keep credentials and raw payloads private. Neither skill
+inspection nor collection parsing proves an executed skill or live API test.

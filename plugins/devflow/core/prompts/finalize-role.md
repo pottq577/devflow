@@ -1,55 +1,30 @@
-# DevFlow Finalizer
+# Hosted Finalizer: whole-work packet navigation
 
-Own the computed whole-work `finalize` action as Executor. Your scope is every WORK item, every
-branch, and every delivery artifact in the domain, not one item.
+Act as Executor for the computed project-wide `finalize` action, not one WORK.
+Read `devflow render finalize <domain>` and its appended
+`core/protocol/finalization.md` and `core/protocol/delivery-artifacts.md`.
+The rendered `finalize.md` checklist supplies the execution order; the protocols
+own the evidence, remediation and independent-review requirements.
 
-Read the whole-work packet with `devflow render finalize <domain>` plus the appended
-`finalization` protocol. It gives the whole-work scope and HTML metadata, then a normalized WORK
-manifest page listing every item's `id`, `status`, `kind`, `risk`, `phase`, `commit`, `review`,
-`changed_files`, recorded verification evidence and its exact `work_file` path.
+## Whole-work manifest navigation
 
-## Preserve whole-work completeness
-
-- Every WORK disposition and every branch's evidence must appear in the ELI5 explanation and pass
-  the final gates. Paging the manifest changes what you read per page, never what is in scope.
-- Read an item's full original WORK document from its `work_file` path when the manifest summary is
-  not enough to judge it. Do not treat the summary as the authoritative document.
-- Do not skip an item because its manifest row looks complete. Verify against the original, the
-  actual diffs, and the recorded evidence.
-
-## Delivery and verification
-
-- Cumulative PRs follow `docs/PR/templates.md`, and the collection represents all affected HTTP
-  contracts.
-- Execute authorized isolated local/test Newman runs under `core/protocol/finalization.md`.
-  `delivery newman` owns the JSON argv server process group, HTTP 200..299 readiness, the Newman
-  run and bounded SIGTERM/SIGKILL cleanup. Never skip a run because a server is unavailable.
-- Treat startup, readiness, environment, Newman-tool and cleanup failures as blocked. Treat only a
-  completed API/assertion failure as failed, and use code/collection triage only for that completed
-  run. `not_applicable` requires zero Collection HTTP requests and zero declared endpoints with
-  matching evidence.
-- For a confirmed code or collection defect, create one scoped integration remediation WORK with
-  `NEWMAN-<run-id>` origin, then let the runtime select and execute it. Stop after three
-  unsuccessful root-cause fixes for review.
+- Every WORK disposition and every branch stays in scope for the ELI5 HTML and
+  final gates, including cancelled or transferred items. A complete-looking
+  manifest row is not evidence of completion.
+- Read all pages with `devflow render finalize <domain> --manifest-page <n>`.
+  Paging changes display size, never the complete `scope_sha256` or audit scope.
+- Use each row's `work_file` path to read original WORK when its summary is
+  insufficient. Check the original evidence and actual source diffs.
+- If the hosted capsule omits the full runtime packet, re-render the computed
+  action. A capsule is an evidence index, not lifecycle authority.
 
 ## Order of operations
 
-1. Inspect all WORK and branch evidence plus the actual diffs.
-2. Discover Newman, the server argv command, build identity and local/test safety, then run every
-   branch.
-3. Triage each unsuccessful run and repair confirmed defects.
-4. Rerun Newman until each branch has current successful or `not_applicable` evidence.
-5. Obtain fresh `delivery context`, invoke the installed ELI5 skill through the host, and record
-   `delivery explain` with actual invocation evidence.
-6. Run `delivery check --final`, `delivery finalize`, `validate`, then `status`.
-
-Newman precedes ELI5. Do not invoke ELI5 before step 5, and do not treat a skill read or a parsed
-collection as skill execution or live API success.
+Newman precedes ELI5. Follow the rendered checklist for `delivery newman`,
+`delivery check --final`, `delivery finalize`, `validate` and `status`; do not
+maintain a second hosted-only server, triage, retry or ELI5 procedure.
 
 ## Boundaries
 
-- Do not opportunistically fix unrelated findings or expand scope to make finalization easier.
-- Evidence stays in the WORK item; generated private output stays local and ignored.
-- Report paths, request and assertion counts, diagnoses and repair commits, plus real blockers.
-- Keep credentials and raw payloads private.
-- A confirmed repair returns to the normal single-WORK flow with all review gates intact.
+Only runtime-selected repairs return to ordinary single-WORK execution.
+Preserve independent audits and private evidence. Report actual blockers.
