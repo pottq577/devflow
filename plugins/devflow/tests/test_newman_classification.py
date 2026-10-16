@@ -15,7 +15,7 @@ if str(SCRIPTS) not in sys.path:
 
 import devflow_newman as newman
 import test_finalization as finalization_tests
-from test_delivery import DeliveryFixtureMixin
+from test_delivery import DeliveryFixtureMixin, fixtures
 
 
 class NewmanFailureClassificationTests(unittest.TestCase):
@@ -138,6 +138,59 @@ class NewmanToolPreflightTests(DeliveryFixtureMixin, unittest.TestCase):
         result = self.cli("delivery", "finalize", "sample")
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("requires successful rerun", result.stderr)
+
+
+class LegacyBranchNewmanTests(DeliveryFixtureMixin, unittest.TestCase):
+    cli = finalization_tests.FinalizationTests.cli
+    completed = finalization_tests.FinalizationTests.completed
+    fake_newman = finalization_tests.FinalizationTests.fake_newman
+    owned_server_command = finalization_tests.FinalizationTests.owned_server_command
+    run_newman = finalization_tests.FinalizationTests.run_newman
+
+    def completed_legacy(self, *, empty=False):
+        """A 0.10.2 branch record: the optional structure digest was never written."""
+        self.completed(empty=empty)
+        state = self.read_state()
+        state["delivery"]["branches"]["feature/sample"].pop("postman_structure_sha256")
+        fixtures.dump(self.state_path, state)
+
+    def test_a_legacy_branch_reaches_the_real_newman_run(self):
+        self.completed_legacy()
+        self.assertEqual(self.cli("delivery", "check", "sample").returncode, 0)
+        result = self.run_newman()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.newman_marker.is_file())
+        run = self.read_state()["delivery"]["finalization"]["runs"][-1]
+        self.assertEqual(run["status"], "passed")
+        self.assertEqual(
+            self.read_state()["delivery"]["branches"]["feature/sample"].get(
+                "postman_structure_sha256"
+            ),
+            None,
+        )
+
+    def test_a_legacy_no_http_branch_takes_the_not_applicable_path(self):
+        self.completed_legacy(empty=True)
+        result = self.run_newman(zero=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = self.read_state()["delivery"]["finalization"]["runs"][-1]
+        self.assertEqual((run["status"], run["reason_codes"]), ("not_applicable", ["no_http_surface"]))
+
+    def test_a_legacy_branch_still_refuses_a_forged_or_missing_hash(self):
+        self.completed_legacy()
+        for key, value in (("postman_structure_sha256", "0" * 64), ("pr_sha256", None)):
+            with self.subTest(key=key):
+                state = self.read_state()
+                record = state["delivery"]["branches"]["feature/sample"]
+                if value is None:
+                    record.pop(key)
+                else:
+                    record[key] = value
+                fixtures.dump(self.state_path, state)
+                result = self.run_newman()
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("stale", result.stderr)
+                self.assertEqual(self.read_state()["delivery"]["finalization"]["runs"], [])
 
 
 if __name__ == "__main__":

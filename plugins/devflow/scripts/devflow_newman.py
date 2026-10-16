@@ -451,7 +451,9 @@ def execute(
     if not isinstance(record, dict):
         raise ValueError("Newman requires a recorded delivery branch")
     hashes = delivery.inspect_artifacts(root, domain, branch, record, sections)
-    if any(record.get(key) != value for key, value in hashes.items()):
+    # The same required-hash and optional-legacy-digest rule as `delivery check`; a legacy branch
+    # record must reach the run preconditions instead of being refused as stale.
+    if delivery.stale_hashes(record, hashes):
         raise ValueError(
             "branch artifacts are stale; use delivery refresh before Newman"
         )

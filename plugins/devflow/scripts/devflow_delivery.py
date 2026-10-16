@@ -493,6 +493,22 @@ def inspect_artifacts(
     }
 
 
+def stale_hashes(record: dict[str, Any], hashes: dict[str, str]) -> list[str]:
+    """Recomputed artifact hashes that disagree with the recorded ones, by name.
+
+    Required hashes always compare. The optional structure digest compares only once a branch
+    recorded it, so a legacy record stays valid while a wrong or missing required hash never does.
+    """
+    stale: list[str] = []
+    for key, value in hashes.items():
+        if key == "postman_structure_sha256" and key not in record:
+            continue
+        recorded = record.get(key)
+        if not isinstance(recorded, str) or not HASH.fullmatch(recorded) or recorded != value:
+            stale.append(key)
+    return stale
+
+
 def prepare_completion(
     root: Path,
     domain: str,
@@ -736,15 +752,10 @@ def validation_errors(
                     f"delivery branch {branch} head_sha must match its latest recorded WORK"
                 )
             hashes = inspect_artifacts(root, domain, branch, record, sections)
-            for key, value in hashes.items():
-                # A legacy branch without the optional structure digest stays valid; a recorded
-                # one is always compared, so absence is never treated as agreement.
-                if key == "postman_structure_sha256" and key not in record:
-                    continue
-                if not HASH.fullmatch(record[key]) or record[key] != value:
-                    errors.append(
-                        f"delivery {branch} stale {key}; regenerate artifacts and run delivery refresh"
-                    )
+            for key in stale_hashes(record, hashes):
+                errors.append(
+                    f"delivery {branch} stale {key}; regenerate artifacts and run delivery refresh"
+                )
             if final:
                 tip_error = branch_tip_error(root, branch, record)
                 if tip_error:
