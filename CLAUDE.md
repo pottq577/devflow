@@ -4,19 +4,7 @@ Before doing any work in this repository, read `./AGENTS.md` in full and follow 
 
 ## Mandatory startup
 
-Run:
-
-```bash
-git branch --show-current
-git status --short
-```
-
-Claude Code must work only on `main` in this repository.
-
-- If the working tree is clean and the current branch is not `main`, run `git switch main` before continuing.
-- If another branch contains uncommitted changes, preserve them and do not modify the repository until the `main`-only rule can be satisfied safely.
-- Do not create feature/fix/release branches, temporary branches, detached HEADs, or worktrees.
-- Re-check the branch before committing or reporting completion.
+Follow the main-only branch preflight in `AGENTS.md` before editing. Preserve uncommitted work on any other branch; do not bypass the shared branch policy with a new branch or worktree. Recheck the branch before committing and completion.
 
 ## Claude adapter boundary
 

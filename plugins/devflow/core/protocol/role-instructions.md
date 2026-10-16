@@ -9,11 +9,11 @@ relied on.
 
 | Rule class | Authoritative source | Consumers |
 | ---------- | --------------------- | --------- |
-| Lifecycle authority, STATE ownership, statuses, artifact budget | `core/protocol/authority.md` | all roles |
-| Transitions, `next_action`, phase and integration handoff, render/status CLI | `core/protocol/lifecycle.md` | all roles |
+| Product/domain source precedence and conflict handling | `core/protocol/authority.md` | all roles |
+| Lifecycle statuses, transitions, `next_action`, artifact budget, phase and integration handoff, render/status CLI | `core/protocol/lifecycle.md` | all roles |
 | Open human decision recording and resolution | `core/protocol/decision-policy.md` | plan, run |
 | WORK schema, versions, evidence and acceptance/verification mapping | `core/protocol/work-item-contract.md`, `core/schemas/work.schema.yaml` | plan, run, audit |
-| STATE schema, lifecycle projections and the delivery/finalization records STATE owns | `core/protocol/authority.md`, `core/schemas/state.schema.yaml` | all roles |
+| Machine-owned STATE fields and delivery/finalization records | `core/protocol/lifecycle.md`, `core/schemas/state.schema.yaml` | all roles |
 | High/critical review, audit scope and remediation rules | `core/protocol/risk-policy.md`, `core/protocol/audit-core.md`, `core/schemas/audit.schema.yaml`, `core/schemas/finding.schema.yaml` | run, audit |
 | Branch, commit, comment anchor, PR body and Postman collection contract | `core/protocol/delivery-artifacts.md` | plan, run, audit |
 | Newman ownership, readiness, evidence, diagnosis, ELI5, final receipt | `core/protocol/finalization.md` | plan, run, audit, finalize |

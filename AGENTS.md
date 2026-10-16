@@ -40,7 +40,7 @@ When repository sources disagree, use this order:
 1. Explicit instructions for the current task.
 2. This repository instruction file (`AGENTS.md`).
 3. `plugins/devflow/core/protocol/*.md` and `plugins/devflow/core/schemas/*` as the normative DevFlow contract.
-4. `plugins/devflow/scripts/devflow.py` and the test suite as the executable implementation of that contract.
+4. The relevant `plugins/devflow/scripts/devflow*.py` module and its regression tests as the executable implementation.
 5. Current plugin documentation, templates, prompts, skills, and `CHANGELOG.md`.
 6. Root marketplace documentation and release/implementation records under `docs/`.
 
@@ -159,7 +159,7 @@ Do not introduce separate task handoffs, remediation-plan documents, focused-rev
 Before changing behavior:
 
 1. Read the relevant protocol files and schemas.
-2. Read the affected runtime path in `scripts/devflow.py`.
+2. Inspect the affected module under `plugins/devflow/scripts/`, including extracted helpers rather than assuming all behavior lives in `devflow.py`.
 3. Read the existing regression tests for that behavior.
 4. Confirm the behavior at current `main` before editing.
 
@@ -176,16 +176,16 @@ Implementation rules:
 When a behavior or artifact contract changes, synchronize every affected layer in the same task as applicable:
 
 ```text
-core/protocol
-core/schemas
-core/templates
-core/prompts
-scripts/devflow.py
-skills/*
-tests/test_devflow.py
+plugins/devflow/core/protocol/
+plugins/devflow/core/schemas/
+plugins/devflow/core/templates/
+plugins/devflow/core/prompts/
+plugins/devflow/scripts/
+plugins/devflow/skills/
+plugins/devflow/tests/
 plugins/devflow/README.md
 plugins/devflow/CHANGELOG.md
-plugin/marketplace manifests
+marketplace and plugin manifests
 ```
 
 Do not mechanically edit every layer. Update only the layers whose contract actually changed.
@@ -223,15 +223,9 @@ python3 -m py_compile \
   plugins/devflow/tests/test_newman_integration.py
 ```
 
-### Framework suite
+### Framework and release gates
 
-For changes to runtime, schemas, protocol semantics, prompts, templates, or skills:
-
-```bash
-python3 plugins/devflow/tests/test_devflow.py
-```
-
-Run the full suite twice before declaring a release, lifecycle-wide change, state-machine change, review-gate change, or packaging-sensitive change release-ready.
+Run focused regressions for the changed surface. For merge or release readiness, execute the fresh gate defined in `plugins/devflow/core/protocol/release-validation.md`. That contract owns complete-suite coverage, Newman requirements, and skip semantics. Do not duplicate a full-suite run solely to satisfy this file.
 
 ### Manifest syntax
 
@@ -289,19 +283,12 @@ PY
 
 ## 9. Versioning and release rules
 
-Current baseline:
+Read the plugin version from `.claude-plugin/marketplace.json`, `plugins/devflow/.claude-plugin/plugin.json`, and `plugins/devflow/.codex-plugin/plugin.json`. Read the separate protocol version from `PROTOCOL_VERSION` in `plugins/devflow/scripts/devflow.py`. Do not maintain another current-version constant in this always-loaded file.
 
-```text
-plugin version:   0.11.0
-protocol version: 1.8.0
-```
-
-Treat these as separate version domains.
-
-- Keep the plugin version synchronized wherever it is represented in marketplace/plugin manifests and current documentation. It is represented in `.claude-plugin/marketplace.json` (twice), `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json`. `.agents/plugins/marketplace.json` is a discovery pointer only: it deliberately carries no `version` or `description`, because the Codex plugin's full metadata lives in `.codex-plugin/plugin.json`. Do not add version or description fields to it.
+- Keep the plugin version synchronized across those manifests and the current README files. `.agents/plugins/marketplace.json` is a discovery pointer: it intentionally has no `version` or `description` fields. Do not add them.
 - Do not automatically set protocol version equal to plugin version.
 - Change protocol version only after evaluating artifact-contract compatibility.
-- Record the protocol-version decision and compatibility rationale in `CHANGELOG.md` when protocol behavior changes materially.
+- Record the protocol-version decision and compatibility rationale in `plugins/devflow/CHANGELOG.md` when protocol behavior changes materially.
 - Preserve backward-readable behavior when the selected protocol version promises it.
 - Keep `plugins/devflow/bin/devflow` executable in the release tree.
 - Do not claim real Claude Code or Codex installation validation unless that installation/import flow was actually executed in an isolated or throwaway CLI profile.
@@ -328,25 +315,4 @@ Before reporting a task complete:
 
 Do not claim completion, release readiness, or adapter validation from static inspection alone when the relevant acceptance criterion requires executed verification.
 
-### Delivery regression suite
-
-Run `python3 plugins/devflow/tests/test_delivery.py` and
-`python3 plugins/devflow/tests/test_autopilot.py` alongside the framework suite, twice for a
-release. The autopilot and hosted-host suites cover routing, model registry, and `devflow_host.py`:
-a change there is incomplete unless `tests/test_autopilot.py` and `tests/test_host_autopilot.py`
-also pass. Syntax checks include `scripts/devflow_delivery.py` and `scripts/devflow_postman.py`.
-The offline Postman profile is narrower than the complete official JSON Schema; semantic comment
-quality and actual API-contract coverage remain independent audit responsibilities.
-
-## Protocol 1.8 finalization maintenance
-
-The requested whole-domain ELI5 HTML and sanitized Newman summaries join the narrow derived output
-allowance. Private raw diagnostics live in locally Git-excluded `.devflow/private/newman/`.
-All model reasoning stays in the host; runtime runs only explicit bounded foreground Newman
-commands. `delivery newman` intentionally persists failure receipts on nonzero return; lifecycle
-transition refusals preserve state atomically. Preserve the one-WORK execution and independent
-audit gates while supporting the executor-owned `finalize` action and traced integration repairs.
-
-Run `tests/test_finalization.py` alongside both existing suites. Distinguish subprocess report
-fixtures from actual installed ELI5/Codex and real Newman/server execution. Run the optional real
-Newman integration test when the dependency exists; report a skip honestly otherwise.
+The release test profiles and evidence rules are in `plugins/devflow/core/protocol/release-validation.md`. Whole-work Newman and installed ELI5 requirements are in `plugins/devflow/core/protocol/finalization.md`. Apply each contract when the changed surface requires it.
