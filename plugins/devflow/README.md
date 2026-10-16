@@ -16,9 +16,15 @@ Hosted child dispatches are cheaper without changing any lifecycle gate:
 - A read-only Scout or Diagnostician child starts from `devflow render evidence <domain>`, a bounded index of the action, its verification targets, referenced files and failure evidence, and opens the cited originals itself.
 - Every hosted render carries `--expected-head` and `--expected-fingerprint`; a moved action or HEAD exits `2` without output or STATE writes, and `--check-only` runs the same guards while printing nothing.
 - A scout capsule is reusable only while its text, action fingerprint, evidence digest and cited source fingerprints agree; `scout-bind` writes that provenance once, `scout-validate` reports `stale` without ever re-signing it, and `scout_on_retry` asks for a new scout only when no current capsule exists.
-- `devflow render finalize` emits a normalized, paged WORK manifest with exact `work_file` paths instead of inlining every WORK document. Scope is unchanged: every disposition and branch still reaches ELI5 and the final gates.
+- `devflow render finalize` emits a normalized, paged WORK manifest with exact `work_file` paths instead of inlining every WORK document. Scope is unchanged: every disposition and branch still reaches ELI5 and the final gates. Whole WORK rows stay inside `scope_sha256`; the first page carries the PRD, PLAN, pinned sources, branches, runs and the appended protocol, and later pages carry their manifest slice, the digest and the item count.
 - `audit apply` still runs the full domain-wide delivery validation, so a `work`-scope audit no longer repeats the domain-wide `delivery check` itself.
 - `dispatch`, `guard-status`, `scout-validate` and `session-status` verify ownership without extending the lease; only lifecycle edges renew it.
+
+What was measured: on one machine, the committed benchmark, from `b3be7af` to 0.11.0, and the
+follow-up measurements in the changelog entry above. `b3be7af` is later than the R05 commit
+`36d0fc9`, so the 0.11.0 figures cover R06-R18 only and say nothing about R02-R05. They are CLI
+component and input-volume numbers, one `validate`, one child packet, one `render finalize` page:
+not a native hosted Goal end-to-end measurement.
 
 `budget.total_tokens` and `concurrency.read_only` are standalone Autopilot settings. Hosted native
 token usage is unmeasured and hosted children run sequentially.
@@ -384,7 +390,7 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 
 Plugin version `0.11.1` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
-Plugin `0.11.1` preserves the STATE/WORK schemas, enum values, lifecycle transitions and audit gates. Older branch records without `postman_structure_sha256` remain readable and need no migration. New Scout bindings are transient runtime evidence; older capsules without a binding are treated as stale and trigger a fresh Scout or authoritative-packet fallback. Native hosted Goal end-to-end acceptance and actual invocation of installed ELI5 remain pending.
+Plugin `0.11.1` preserves the STATE/WORK schemas, enum values, lifecycle transitions and audit gates. Older branch records without `postman_structure_sha256` remain readable and need no migration, and `delivery check`, `validate` and `delivery newman` apply the same rule to them: the absent optional digest is not compared, a recorded one always is. New Scout bindings are transient runtime evidence; older capsules without a binding are treated as stale and trigger a fresh Scout or authoritative-packet fallback. Native hosted Goal end-to-end acceptance and actual invocation of installed ELI5 remain pending.
 Plugin `0.11.0` added CLI options, the optional branch field (`postman_structure_sha256`) and `core/protocol/role-instructions.md`; these remain part of the `1.8.0` contract.
 
 Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
