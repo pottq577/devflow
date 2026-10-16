@@ -238,12 +238,7 @@ It cannot be treated as an empty remediation set or projected back to the same c
 
 ## 9. Severity and verdict
 
-| Severity  | Meaning                                                                                  |
-| --------- | ---------------------------------------------------------------------------------------- |
-| `blocker` | Shipping this corrupts data or gets money wrong. Fix before any dependent work starts.   |
-| `major`   | Violates an approved specification or a repository-enforced rule. Fix inside this phase. |
-| `minor`   | Behavior is correct but carries maintenance risk. May travel to the next phase.          |
-| `nit`     | Taste and readability. Closing it is optional.                                           |
+`risk-policy.md` owns severity definitions and the required `severity_reason`. Classify the evidenced impact independently from the risk level of the WORK that fixes it.
 
 | Verdict            | Condition                                            |
 | ------------------ | ---------------------------------------------------- |
@@ -254,10 +249,7 @@ It cannot be treated as an empty remediation set or projected back to the same c
 - **Never write `pass` without evidence.**
   - Only a command that was actually executed, with its output, is grounds for a pass.
 
-In a closure audit, a finding recorded as `still_open`, and every finding a `reopened` entry lists in `reopened_as`, must keep a severity at least as high as the severity recorded for that prior finding when its initial audit was applied.
-The auditor may raise a severity with new evidence, but cannot lower a still-open or reopened finding past the verdict rubric.
-`resolved` and `accepted_risk` leave the active set, so re-evaluating a closed finding's severity is allowed.
-The severity order is read from `finding.schema.yaml`.
+For closure severity floors, including `still_open` and `reopened` findings, apply `risk-policy.md` and the severity order in `finding.schema.yaml`.
 
 ## 10. Review timing
 

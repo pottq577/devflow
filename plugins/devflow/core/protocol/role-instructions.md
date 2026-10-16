@@ -34,10 +34,4 @@ the other document is the defect.
 
 ## Removing duplication
 
-A sentence that exists in both a skill and a render prompt, or in both a skill and a protocol, is
-removed from the weaker location and replaced with a pointer. `core/prompts/plan.md` and
-`skills/plan/SKILL.md` therefore reference `core/protocol/finalization.md` for the ELI5/Newman
-stage instead of repeating it, and the audit finalization review names its protocol once.
-
-Deletion must never remove an obligation. Before removing text, confirm the owning protocol still
-states the rule and that the consuming role still receives a pointer to it.
+Replace repeated normative text in a skill, prompt or template with a pointer to its owner. Before deleting a rule, confirm the owner still states it and the consuming action receives that protocol in its effective rendered packet. Standalone entrypoints must retain the instructions needed to load that packet; a missing protocol is not replaced by a reference alone.

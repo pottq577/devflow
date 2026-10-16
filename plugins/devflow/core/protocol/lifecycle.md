@@ -205,15 +205,7 @@ STATE and the CLI reconstruct the next action.
 
 ### Why PITFALLS is a separate artifact
 
-A handoff document has two halves.
-The first half is lifecycle position, and `status` reproduces it exactly.
-The second half is knowledge the project accumulated the hard way: a test double that always succeeds, a method that no-ops instead of raising, a verification command that skips the suite it appears to run, the next free migration number, a behavior that looks like a bug but is a recorded decision.
-
-No state machine can derive that.
-Deleting the handoff document without giving this half a home is how the next session repeats an incident the last one already paid for. `plan`, `run`, and `audit` all load `PITFALLS.md`, so the cost of writing an entry is paid once and returned every session after.
-
-Entries earn their place by having cost something.
-Remove one when the trap is actually gone.
+`status` reconstructs lifecycle position; `PITFALLS.md` records verified repository traps that STATE cannot infer. `plan`, `run`, and `audit` load it. Keep fresh template sections empty until evidence establishes a trap, and remove stale entries.
 
 ## Protocol 1.6 branch delivery gate
 
@@ -237,11 +229,7 @@ A phase-free initial audit can first discover implementation work.
 
 New derived artifacts are `docs/explanations/<domain-slug-hash>/implementation.html` and sanitized `docs/postman/<domain-slug-hash>/newman/<run-id>.summary.json`.
 Raw responses stay in locally Git-excluded `.devflow/private/newman/<run-id>/` through closure.
-`delivery newman` persists run results even when returning nonzero; rejected lifecycle transitions still preserve STATE/WORK.
-`delivery newman` owns the server argv process group, HTTP 200..299 readiness, Newman execution and
-bounded SIGTERM/SIGKILL cleanup. Finalization requires the ordered lifecycle and owned-process
-liveness evidence. Only a collection with no HTTP requests and no declared endpoints may be
-`not_applicable`.
+`finalization.md` owns `delivery newman` execution, server readiness/liveness/cleanup, durable failure evidence, and the no-HTTP proof required for `not_applicable`. Recorded attempts persist even on failure; rejected lifecycle transitions preserve STATE/WORK.
 The optional `delivery.finalization` field is adopted idempotently with `delivery enable`.
 
 `status` can report `next.command: finalize`; `render finalize` supplies its entire-domain packet.

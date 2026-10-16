@@ -33,6 +33,5 @@
 
 ## Implementation comments and branch delivery
 
-Record the intended branch/base mapping, meaningful-comment rationale for critical behavior, affected HTTP surfaces, and the cumulative PR/Postman obligations carried by each WORK.
-Use `docs/PR/templates.md` as the consuming project's PR format and `devflow delivery paths` for output names.
-Keep this section aligned with `core/protocol/delivery-artifacts.md`.
+For each WORK, record branch/base, source-comment intent, affected HTTP contracts, and cumulative PR/Postman obligations under `core/protocol/delivery-artifacts.md`.
+Use the consuming project's `docs/PR/templates.md` and `devflow delivery paths` for the actual outputs.

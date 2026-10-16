@@ -36,14 +36,7 @@ Branch names are not a range. Pin immutable SHAs, and confirm the base really is
 
 ## Verdict
 
-`pass` | `conditional_pass` | `fail`
-
-- `pass`: no blocker and no major finding.
-- `conditional_pass`: only major findings, each with a specific fix named.
-- `fail`: at least one blocker.
-
-Never write `pass` without evidence.
-Only a command that was actually executed, with its output, counts as grounds for a pass.
+Use `core/protocol/audit-core.md` for the `pass`, `conditional_pass`, or `fail` verdict rubric and `core/protocol/risk-policy.md` for finding severity. Record observed command evidence before selecting `pass`.
 
 ## Summary
 
@@ -56,8 +49,8 @@ Three sentences at most. What matched the plan, and what did not.
 
 ### [FINDING-ID] — [Title]
 
-- Classification: `CONFIRMED`
-- Severity: `major`
+- Classification: [Select from `core/schemas/finding.schema.yaml`; no finding is pre-confirmed]
+- Severity: [Select and justify under `core/protocol/risk-policy.md`]
 - Axis:
 - Expected:
 - Actual:
@@ -71,7 +64,6 @@ Three sentences at most. What matched the plan, and what did not.
   - Current defenses:
   - Residual impact:
   - Why the selected severity applies:
-  - Finding severity is separate from WORK risk level.
 
 ## Axis results
 

@@ -191,10 +191,5 @@ One selected WORK per invocation remains the boundary.
 
 ## Protocol 1.8 Newman repairs
 
-A confirmed code/collection failure becomes normal integration remediation WORK.
-Its `origin.findings` contains `NEWMAN-<run-id>` and its `references` includes that run's sanitized summary.
-Define bounded files, accepted contract, failing reproduction, regression coverage and risk.
-Register it using `delivery triage`; then follow ordinary start, commit, delivery and done.
-Preserve the evidence of previously completed WORK.
-For a collection defect with ignored derived JSON, commit a meaningful tracked regression fixture/test or generator correction.
-Environment failures keep setup evidence and reruns, with no speculative code repair commit.
+A confirmed code/collection failure under `finalization.md` registers ordinary integration remediation WORK. Record `NEWMAN-<run-id>` in `origin.findings` and the sanitized run summary in `references`; specify bounded files, accepted contract, failing regression and risk.
+After `delivery triage`, the runtime selects the standard start, commit, delivery, done and review gates. Preserve previously completed WORK. `finalization.md` owns collection corrections, environment-only failures and verified reruns.
