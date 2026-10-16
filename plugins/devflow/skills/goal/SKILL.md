@@ -190,19 +190,8 @@ Native `spawn_agent` does not provide a per-child sandbox override. A routed `pe
 The Goal Supervisor does not author product artifacts, implement product code, choose the next WORK item, or manually swap models. Each child reads its role contract and renders the authoritative runtime packet from the repository. The parent only prepares deterministic dispatches, delegates them, observes lifecycle progress, and applies retry routing.
 For hosted children, the generated pinned render/check-only replaces the role contract's initial status and render preflight. Do not repeat either before work; mutating children still run their required final status.
 
-Routing policy lives in `core/routing/default.yaml` plus optional `.devflow/routing.yaml` overrides. Concrete model bindings live in `core/routing/models.yaml` plus optional `.devflow/models.yaml` overrides.
+Routing policy lives in `core/routing/default.yaml` and `core/routing/models.yaml`, with optional `.devflow/routing.yaml` and `.devflow/models.yaml` overrides.
 
 ## Inspect state
 
-For a hosted Goal, inspect lifecycle authority with:
-
-```bash
-devflow status <domain> --json
-python3 <this-skill-directory>/scripts/host.py dispatch <domain> \
-  --session-id <session_id> \
-  --until <plan|implementation|complete>
-python3 <this-skill-directory>/scripts/host.py guard-status <domain> \
-  --session-id <session_id>
-```
-
-`devflow autopilot status`, `autopilot start`, and `autopilot resume` describe the standalone controller. Do not treat a stale standalone controller checkpoint as hosted Goal state.
+Use `devflow status <domain> --json` for hosted lifecycle authority, and the session-scoped `host.py dispatch` and `host.py guard-status` commands above for ownership and retry state. Standalone `autopilot status/start/resume` telemetry is not hosted Goal state.

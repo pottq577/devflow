@@ -32,15 +32,8 @@ The required branch PR and Postman files are explicit delivery outputs; lifecycl
 
 ## Required source and branch handoff
 
-Before implementation, adopt legacy active work through `devflow delivery enable <domain>`.
-Start a ready WORK with `work start`; resume an `in_progress` WORK without starting it again or changing its recorded `start_sha`.
-Record meaningful comments in changed source and their `evidence.comments` path/line/reason.
-For pure docs/config/deletions, give the concrete `comments_note` exception.
-Commit verified source and tests; then update the cumulative branch PR from `docs/PR/templates.md` and Postman v2.1 JSON at `devflow delivery paths <domain>` outputs.
-Fill `evidence.delivery` and source metadata before `work done --commit HEAD`.
-Keep credential values empty, declare API coverage and preserve prior branch requests.
-All output fields and validation rules appear in the appended delivery protocol.
-The branch output allowance covers these files and STATE/WORK evidence.
-After the runtime selects `finalize`, render that action and follow the appended whole-work ELI5/Newman protocol.
-Generation itself sends no requests; the finalization step explicitly executes authorized isolated tests. `delivery newman` owns server start, HTTP 200..299 readiness, Newman execution and bounded process-group cleanup. Server or readiness failure is blocked, not `not_applicable`.
-Keep remote PR publication and push/merge under user control.
+Adopt active legacy domains with `devflow delivery enable <domain>`. Start only a ready WORK.
+Resume `in_progress` WORK without rerunning `work start` or replacing its recorded `evidence.start_sha` and `evidence.delivery.branch`.
+Commit verified source/tests, record meaningful source comments (or an explicit docs-only exception), then refresh cumulative PR and Postman outputs at `devflow delivery paths <domain>`.
+Follow the appended `core/protocol/delivery-artifacts.md` for fields, coverage, provenance and private outputs. The Executor never publishes, pushes or merges on the user's behalf.
+When the runtime selects `finalize`, run `devflow render finalize <domain>`; `core/protocol/finalization.md` owns the actual `delivery newman` server lifecycle and ELI5 evidence.

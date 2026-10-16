@@ -12,22 +12,11 @@ Re-run `devflow status` instead of rendering or executing another lifecycle acti
    1. Never infer repository facts from the PRD.
 4. Detect PRD ambiguity, repository conflicts, and specification drift.
 5. Produce repository-grounded `PLAN.md`.
-6. Split implementation into phases and WORK items using the Work Item Contract.
-   1. Create every new WORK document as `version 2`.
-   2. Give each acceptance criterion and verification command a unique, nonblank item-local ID, and map every command to one or more criterion IDs through `covers`.
-   3. Every criterion must be covered.
-7. **Write into each WORK item what you learned so the Executor does not have to relearn it.**
-   - `context`: repository facts you verified, including what must not change and why.
-   - `premise_checks`: the specific facts to re-confirm at HEAD before editing. Mandatory for `high` and `critical` risk.
-   - `pitfalls`: the mistakes an executor is likely to make here, and their symptoms.
-   - An item whose objective is a title and whose body is empty pushes the whole planning cost back onto execution, where there is less context to spend.
+6. Create phase WORK manifests under the appended `core/protocol/work-item-contract.md`. Use version 2 acceptance IDs, command coverage and explicit traceability.
+7. Give the Executor verified `context`, HEAD-dependent `premise_checks` and actionable `pitfalls` for each WORK, not title-only tasks.
 8. Build explicit dependencies and requirement traceability.
    1. Register a transferred requirement in the receiving phase through `transfer.to`.
-9. Preserve finding semantics when turning an audit finding into WORK.
-   1. Keep the expected event and outcome in objective and acceptance.
-   2. Link both directions through the audit disposition and `origin.findings`; explain any multi-finding WORK in `origin.aggregation_reason`.
-   3. Map each criterion to verification at the layer where its outcome is observable.
-   4. A static source search alone does not verify API or end-to-end behavior.
+9. For audit-derived WORK, preserve finding semantics and reciprocal `origin.findings` links. Follow the appended WORK contract for aggregation and observable verification.
 10. Set phase entries with zero-padded keys, and pin each phase's diff range with `devflow phase ref` once its branch exists.
 11. Record unresolved human decisions in `DECISIONS.md` and STATE.
     1. Do not create ready code-changing WORK until the decision is resolved.
@@ -51,7 +40,4 @@ The appended delivery-artifacts protocol defines the exact contract.
 
 ## Whole-work final delivery
 
-`core/protocol/finalization.md` owns the ELI5/Newman stage, its owned server lifecycle and
-readiness evidence, the installed ELI5 discovery, Newman availability, test startup,
-authentication, fixture cleanup, side-effect isolation, branch/build coverage and the retained
-whole-domain explanation. Plan for that stage in final acceptance; do not restate it here.
+Plan for final acceptance, including whole-work ELI5/Newman where enabled. `core/protocol/finalization.md` owns the detailed execution contract.

@@ -29,8 +29,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
    1. It reports lifecycle position, execution-blocked WORK, external-evidence waits, the computed next action, workflow type, runtime config, domains root, domain directory, the phase diff range when one is pinned, and the documents that action needs as `next.input` lines.
 2. When detailed machine state is needed, run `devflow status <domain> --json`.
 3. When the next executable work contract is needed, run `devflow next <domain>`.
-4. Read the domain's `PITFALLS.md` before acting on the next action.
-   1. `status` reports where the work is; `PITFALLS.md` holds what will bite you, and no state machine can compute that half.
+4. Read `PITFALLS.md` when continuing into plan/run/audit work, not for a status-only inspection.
 5. Report exactly the computed lifecycle position, blockers, next role, next command, scope and mode, phase, and WORK ID.
 
 `status` computes and reports the next action only.
@@ -51,8 +50,4 @@ Status inspection alone preserves that legacy policy and its completed WORK.
 
 ## Whole-work finalization
 
-A computed `finalize` action belongs to the Executor, with no selected WORK.
-Use `devflow render finalize <domain>` for the complete ELI5/Newman packet and `devflow delivery context <domain>` for all-work scope/output metadata.
-Distinguish failed API assertions, owned-server lifecycle blockers, unknown diagnosis, stale HTML and stale source evidence.
-Finalization accepts `not_applicable` only with evidence that both the Collection and declared endpoint record have no HTTP surface.
-`next` remains a WORK selector and can return nonzero for this non-WORK action.
+A computed `finalize` action belongs to the Executor, not a WORK selector. Use `devflow render finalize <domain>` for its procedure and `core/protocol/finalization.md` for evidence and blocker classification. `next` may return nonzero when no WORK is selected.

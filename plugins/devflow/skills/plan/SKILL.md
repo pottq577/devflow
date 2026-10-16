@@ -26,43 +26,12 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
 
 ## Workflow
 
-1. Determine the domain name and PRD path. If the domain is not initialized, run `devflow init <domain> --prd <path> --risk <level> [--extension <name>]`.
-   1. For an existing domain, run `devflow delivery enable <domain>` before continuing.
-   2. It preserves completed WORK and adds requirements to future completion.
-   3. Read `docs/PR/templates.md`; a missing template becomes an explicit prerequisite to resolve before implementation completion.
-2. Confirm `devflow status <domain>` reports `plan`, then run `devflow render plan <domain>`.
-   1. Render rejects any other lifecycle position.
-   2. The packet inlines the authority rules, lifecycle, WORK item contract, decision policy, and the domain's `PITFALLS.md`.
-   3. Follow it; there is no separate reference file to open.
-3. Inspect repository rules (`AGENTS.md`, `CLAUDE.md`, CI/lint/test configuration), current git status, git history when relevant, and the actual implementation surfaces.
-4. Write `docs/domains/<domain>/PLAN.md` using the plan template.
-   1. Record the immutable baseline SHA.
-   2. Include the branch/base mapping, code comment intent, affected HTTP contracts and per-branch PR/Postman delivery strategy from `core/protocol/delivery-artifacts.md`.
-   3. Put those concrete obligations in each WORK's requirements and acceptance/verification mapping.
-   4. Use the narrow output allowance for derived files; keep implementation scope intact.
-5. Create one version 2 `work/phase-XX.yaml` per implementation phase.
-   1. Keep all tasks in the standard WORK schema; do not create per-task Markdown files.
-   2. Give each acceptance criterion and verification command a unique, nonblank item-local ID.
-   3. Each command declares nonempty `covers`, and every acceptance ID must be covered.
-6. **Carry your findings into each WORK item.**
-   1. `context` for repository facts you verified, `premise_checks` for what the Executor must re-confirm at HEAD, `pitfalls` for the mistakes it is likely to make.
-   2. `premise_checks` is mandatory for `high` and `critical` risk and `validate` rejects the item without it.
-   3. An item that is only a title pushes the whole planning cost into execution, where there is less context to spend.
-7. Populate STATE phase entries with zero-padded keys (`"01"`, not `"1"`) and explicit dependencies.
-   1. Register a transferred requirement in the receiving phase and link it with `transfer.to`.
-8. For audit-derived WORK, preserve each finding's expected event and outcome in objective and acceptance.
-   1. Link audit disposition and `origin.findings` in both directions.
-   2. Default to one finding per WORK; explain a shared root cause, change and rollback boundary, and verification set in `origin.aggregation_reason` when aggregation is necessary.
-   3. Use version 2 and map each acceptance criterion to a command that observes the required outcome.
-   4. Static source search alone does not verify API or end-to-end behavior.
-9. Once a phase's branch exists, pin its range: `devflow phase ref <domain> <phase> --base <ref> --head <ref>`.
-   1. It verifies ancestry and refuses rather than producing a stale 3-dot range.
-10. Put product/policy questions in `DECISIONS.md` and add their IDs to `STATE.yaml.unresolved_decisions`.
-    1. Do not create ready code-changing WORK before resolution.
-11. Record durable domain traps you discovered in `PITFALLS.md`.
-12. For high/critical risk, keep `plan_review.required: true` and `plan_review.status: pending`; otherwise mark it `skipped`.
-    1. A high-risk plan initial audit verifies this gate before WORK begins.
-13. Run `devflow validate <domain>`. Fix structural errors before reporting completion.
+1. Run `devflow init <domain> --prd <path> --risk <level>` for a new domain, or `devflow delivery enable <domain>` for an existing active domain.
+2. Run `devflow status <domain>`. Proceed only when the computed action is `plan`.
+3. Run `devflow render plan <domain>` and execute its full Architect packet. The packet owns the PLAN/WORK procedure; `core/protocol/lifecycle.md`, `core/protocol/work-item-contract.md`, `core/protocol/decision-policy.md`, and `core/protocol/delivery-artifacts.md` own the rules.
+4. Inspect the real repository and baseline; read the consuming project's `docs/PR/templates.md`. Build the PLAN, version 2 phase WORK, and unresolved decisions without inventing implementation facts.
+5. Preserve actionable `context`, `premise_checks`, and `pitfalls` in each WORK. Keep the high-risk plan audit pending until the Auditor verifies it.
+6. Run `devflow validate <domain>` and report actual errors and the computed next action.
 
 ## Boundaries
 
@@ -75,18 +44,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/devflow.py" <args>
 
 Read `core/protocol/skill-composition.md` when peer skills are available.
 DevFlow owns PLAN and WORK decomposition.
-Use available `domain-modeling` for ambiguous domain terms or transitions, `codebase-design` for actual module/interface decisions, and `vercel-composition-patterns` for reusable React component interfaces.
-Use `writing-for-agents` when planning changes to agent-facing documents.
-Apply only the matching discipline; preserve the approved PRD and the existing PLAN/WORK artifact contract.
-
-When Ponytail guidance is available, use it as a planning lens:
-
-- inspect existing implementation before proposing new components;
-- reuse repository patterns and installed capabilities where suitable;
-- keep each WORK item to the smallest independently verifiable change;
-- avoid speculative abstractions and future-proofing the PRD or repository constraints do not require.
-
-Ponytail does not override explicit PRD requirements, security, compatibility, or required verification, and its mode is never changed automatically.
+Apply a peer planning lens only when relevant, as defined by `core/protocol/skill-composition.md`.
+When Ponytail is available, use its reuse-first planning lens without overriding the PRD, acceptance, security, or compatibility. Never change its mode automatically.
 
 Do not start a separate Superpowers writing-plans, executing-plans, subagent-driven-development, or worktree lifecycle from inside DevFlow planning.
 
@@ -94,8 +53,4 @@ Finish with the domain, baseline SHA, phase count, work-item count, unresolved d
 
 ## Whole-work final delivery
 
-`core/protocol/finalization.md` owns the ELI5/Newman stage, the owned server lifecycle and
-readiness evidence, installed ELI5 discovery, Newman availability, test startup, authentication,
-fixture cleanup, side-effect isolation, branch/build coverage, tracked collection regression
-fixtures and the retained whole-domain explanation. Plan for that stage in final acceptance and in
-each phase's verification strategy.
+Plan for ELI5/Newman final acceptance; `core/protocol/finalization.md` owns the execution and evidence contract.
