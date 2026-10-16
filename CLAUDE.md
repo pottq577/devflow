@@ -1,23 +1,7 @@
-# Claude Code Repository Instructions
+# Claude Code repository instructions
 
-Before doing any work in this repository, read `./AGENTS.md` in full and follow it as the repository-wide source of truth for agent behavior.
+Read `AGENTS.md` before repository work. It owns the shared `main`-only Git policy, source precedence, lifecycle boundaries and verification gates.
 
-## Mandatory startup
+Claude-specific marketplace metadata lives in `.claude-plugin/` and `plugins/devflow/.claude-plugin/`. Keep executable behavior, protocols, schemas, prompts, templates, skills and tests shared under `plugins/devflow/`; do not copy them into Claude-specific adapters.
 
-Follow the main-only branch preflight in `AGENTS.md` before editing. Preserve uncommitted work on any other branch; do not bypass the shared branch policy with a new branch or worktree. Recheck the branch before committing and completion.
-
-## Claude adapter boundary
-
-`.claude-plugin/` and `plugins/devflow/.claude-plugin/` are Claude Code marketplace/plugin adapters. Shared DevFlow behavior belongs in `plugins/devflow/` and must remain shared with Codex.
-
-Do not copy runtime, protocol, schemas, templates, prompts, tests, or skills into Claude-specific adapter directories.
-
-## Instruction precedence
-
-For repository work, follow this order:
-
-1. Explicit instructions for the current task.
-2. `AGENTS.md`.
-3. This Claude-specific adapter file.
-
-Keep this file intentionally thin. Add cross-agent repository policy to `AGENTS.md` rather than duplicating it here.
+For conflicts, follow the explicit task instructions first, then `AGENTS.md`, then this file. Keep cross-agent rules in `AGENTS.md` rather than restating them here.

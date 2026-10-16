@@ -1,318 +1,75 @@
-# DevFlow Marketplace Agent Instructions
+# DevFlow marketplace repository instructions
 
-## 1. Repository purpose
+This file governs changes to this marketplace repository, not projects that install DevFlow. Keep Claude Code and Codex on the same implementation under `plugins/devflow/`.
 
-This repository is the monorepo and distribution source of truth for DevFlow across Claude Code and OpenAI Codex.
+## Start on main without losing work
 
-Both marketplace adapters must resolve to the same shared plugin implementation under `plugins/devflow/`. Keep runtime code, protocol documents, schemas, templates, prompts, skills, and tests in that shared plugin. Adapter directories exist only for product-specific discovery and metadata.
-
-## 2. Mandatory Git branch policy
-
-All agent work in this repository happens on `main`.
-
-Run this preflight at the beginning of every task:
+Before each task, inspect the branch and working tree:
 
 ```bash
 git branch --show-current
 git status --short
 ```
 
-Rules:
+- Work, commit and package only on `main`. If another branch is clean, use `git switch main` first.
+- If another branch has uncommitted changes, stop repository modifications and report the blocker. Preserve those changes.
+- Do not create or use feature, fix, release or temporary branches, detached HEADs or worktrees for work on this repository.
+- Never reset, clean, force-checkout or force-switch to bypass this policy.
+- Recheck the branch before committing, packaging and reporting completion.
 
-- Continue the task only while the current branch is `main`.
-- If the current branch is not `main` and the working tree is clean, switch to `main` before continuing:
+DevFlow's generic protocols may use branches or worktrees in *consuming projects*. They do not override this repository's `main`-only rule.
 
-  ```bash
-  git switch main
-  ```
+## Follow the right source of truth
 
-- If the current branch is not `main` and the working tree contains changes, preserve the existing work. Do not reset, discard, overwrite, or force-switch those changes merely to satisfy this rule. Report the blocker before making repository changes.
-- Do not create or use feature branches, fix branches, release branches, temporary branches, detached HEADs, or Git worktrees for agent work in this repository.
-- Re-check `git branch --show-current` before committing, packaging, or declaring the task complete.
-- Do not use destructive Git commands such as `git reset --hard`, `git clean -fd`, or forced checkout/switch operations to reach `main`.
-
-The generic DevFlow protocol may discuss branch refs or temporary worktrees for repositories operated on by DevFlow. When modifying this marketplace repository itself, this `main`-only repository rule takes precedence.
-
-## 3. Authority and source-of-truth order
-
-When repository sources disagree, use this order:
+Resolve conflicts in this order:
 
 1. Explicit instructions for the current task.
-2. This repository instruction file (`AGENTS.md`).
-3. `plugins/devflow/core/protocol/*.md` and `plugins/devflow/core/schemas/*` as the normative DevFlow contract.
-4. The relevant `plugins/devflow/scripts/devflow*.py` module and its regression tests as the executable implementation.
-5. Current plugin documentation, templates, prompts, skills, and `CHANGELOG.md`.
-6. Root marketplace documentation and release/implementation records under `docs/`.
-
-`plugins/devflow/core/references/vibecoder.md` is design background. It is not the current protocol contract.
-
-Historical work orders and acceptance reports describe how a release was produced. Do not let historical wording override the current protocol, schemas, runtime, or tests.
-
-When contract, implementation, and documentation drift apart, verify the current behavior and repair the drift in the same coherent change.
-
-## 4. Repository map
-
-```text
-.
-├── .claude-plugin/marketplace.json       # Claude Code marketplace adapter
-├── .agents/plugins/marketplace.json      # Codex marketplace adapter
-├── plugins/devflow/                      # shared DevFlow implementation
-│   ├── .claude-plugin/plugin.json        # Claude Code plugin metadata
-│   ├── .codex-plugin/plugin.json         # Codex plugin metadata
-│   ├── bin/devflow                       # executable wrapper
-│   ├── scripts/devflow.py                # runtime and CLI
-│   ├── core/
-│   │   ├── protocol/                     # normative protocol rules
-│   │   ├── schemas/                      # machine-readable contracts
-│   │   ├── prompts/                      # rendered role prompts
-│   │   ├── templates/                    # project artifact templates
-│   │   ├── extensions/                   # audit extensions
-│   │   └── references/                   # non-normative background material
-│   ├── skills/{plan,run,audit,status,goal,autopilot}/  # agent-facing skills
-│   └── tests/test_devflow.py             # framework regression suite
-└── docs/                                 # implementation and release records
-```
-
-`docs/` is excluded by `.gitignore`, so its records are local working material and are not part of
-a release archive. Do not treat a `docs/` file as a tracked distribution artifact.
-
-Do not copy shared runtime, protocol, schema, prompt, template, or skill implementations into `.agents/`, `.claude-plugin/`, `.codex-plugin/`, or another adapter-specific location.
-
-## 5. Core architectural invariants
-
-Preserve these invariants unless the task explicitly changes the DevFlow product contract.
-
-### Shared implementation
-
-- Claude Code and Codex use one shared implementation: `plugins/devflow/`.
-- Product-specific adapters contain metadata and discovery configuration only.
-- Fix shared behavior once in the shared implementation.
-
-### Manual lifecycle
-
-DevFlow remains a manual, state-based protocol:
-
-```text
-PRD
--> plan
--> optional required plan audit for high-risk domains
--> run exactly one ready WORK item
--> high/critical WORK initial audit before dependents
--> remediation WORK when findings are confirmed
--> high/critical WORK closure audit
--> dependent WORK release
--> phase initial audit
--> phase remediation
--> phase closure audit
--> next phase
--> whole-work ELI5 and Newman finalization (when enabled)
--> integration initial audit
--> integration remediation
--> integration closure audit
--> integration verified
--> project complete
-```
-
-`status` and `next` compute what should happen next. The runtime does not autonomously execute, audit, remediate, dispatch subagents, or run a background controller.
-
-### WORK execution
-
-- One WORK item is one independently verifiable change boundary.
-- `run` executes exactly one selected ready WORK item.
-- Dependency order outranks severity.
-- Re-check `premise_checks` against current HEAD before editing.
-- `high` and `critical` WORK requires premise checks and work-level review before dependents proceed.
-- Remediation WORK uses the same WORK schema and remains traceable to the originating finding.
-- Completion requires real evidence. Do not substitute assertions for executed verification.
-
-### Audits
-
-Supported audit scopes are:
-
-```text
-plan
-work
-phase
-integration
-```
-
-Work, phase, and integration audits support initial and closure semantics where required. Keep audit artifacts and runtime transitions consistent with `core/protocol/audit-core.md`, `risk-policy.md`, and `lifecycle.md`.
-
-### Lifecycle state
-
-- `STATE.yaml` is machine-owned lifecycle state.
-- Derived fields such as next action, project status, active phase, and target SHA are computed by runtime logic.
-- Mutation commands must reject invalid transitions before writing state or WORK artifacts.
-- Preserve atomic YAML writes and schema-backed validation.
-- Preserve backward-readable artifacts unless an explicit protocol-breaking change is approved.
-
-### Artifact budget
-
-DevFlow lifecycle output is bounded to PRD, PLAN, STATE, PITFALLS, DECISIONS, WORK, and AUDIT.
-Protocol 1.6 additionally permits the requested per-branch PR body and Postman collection as local
-delivery outputs. Their provenance lives in existing STATE/WORK; they do not select lifecycle actions.
-
-Do not introduce separate task handoffs, remediation-plan documents, focused-review documents, integration-test-plan documents, or prompt-handoff documents as new lifecycle requirements. The runtime and STATE must remain sufficient to reconstruct the next action.
-
-## 6. Change discipline
-
-Before changing behavior:
-
-1. Read the relevant protocol files and schemas.
-2. Inspect the affected module under `plugins/devflow/scripts/`, including extracted helpers rather than assuming all behavior lives in `devflow.py`.
-3. Read the existing regression tests for that behavior.
-4. Confirm the behavior at current `main` before editing.
-
-Implementation rules:
-
-- Make the smallest coherent change that satisfies the task.
-- Avoid unrelated refactors and formatting churn.
-- Prefer regression tests that reproduce a defect before fixing the implementation when practical.
-- Keep validation in runtime/schema logic. Do not weaken tests, validators, review gates, or transition guards to make a scenario pass.
-- Do not bypass an invariant through documentation-only wording changes.
-- Do not add autonomous orchestration, hidden background workers, or subagent dispatch loops unless the product contract is explicitly changed.
-- Avoid new dependencies when the existing Python 3.10+ and PyYAML runtime can express the change cleanly.
-
-When a behavior or artifact contract changes, synchronize every affected layer in the same task as applicable:
-
-```text
-plugins/devflow/core/protocol/
-plugins/devflow/core/schemas/
-plugins/devflow/core/templates/
-plugins/devflow/core/prompts/
-plugins/devflow/scripts/
-plugins/devflow/skills/
-plugins/devflow/tests/
-plugins/devflow/README.md
-plugins/devflow/CHANGELOG.md
-marketplace and plugin manifests
-```
-
-Do not mechanically edit every layer. Update only the layers whose contract actually changed.
-
-## 7. CLI and schema consistency
-
-- CLI examples must match the parser implemented in `scripts/devflow.py`.
-- New or changed STATE/WORK fields require corresponding schema, template/default, normalization/reader, validation, and regression-test updates where applicable.
-- New statuses or transitions must be represented consistently across schema constants, runtime guards, lifecycle documentation, render behavior, and tests.
-- A validator must reject malformed states rather than normalize away a real contract violation.
-- Verification command/evidence strings that require meaningful content must reject blank or whitespace-only values.
-
-## 8. Required verification
-
-Use repository-root paths unless a command explicitly changes directory.
-
-### Python syntax
-
-For runtime or test changes:
-
-```bash
-python3 -m py_compile \
-  plugins/devflow/scripts/devflow.py \
-  plugins/devflow/scripts/devflow_autopilot.py \
-  plugins/devflow/scripts/devflow_delivery.py \
-  plugins/devflow/scripts/devflow_finalization.py \
-  plugins/devflow/scripts/devflow_host.py \
-  plugins/devflow/scripts/devflow_newman.py \
-  plugins/devflow/scripts/devflow_postman.py \
-  plugins/devflow/tests/test_devflow.py \
-  plugins/devflow/tests/test_autopilot.py \
-  plugins/devflow/tests/test_delivery.py \
-  plugins/devflow/tests/test_finalization.py \
-  plugins/devflow/tests/test_host_autopilot.py \
-  plugins/devflow/tests/test_newman_integration.py
-```
-
-### Framework and release gates
-
-Run focused regressions for the changed surface. For merge or release readiness, execute the fresh gate defined in `plugins/devflow/core/protocol/release-validation.md`. That contract owns complete-suite coverage, Newman requirements, and skip semantics. Do not duplicate a full-suite run solely to satisfy this file.
-
-### Manifest syntax
-
-When adapter or plugin metadata changes:
-
-```bash
-python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
-python3 -m json.tool .claude-plugin/marketplace.json >/dev/null
-python3 -m json.tool plugins/devflow/.codex-plugin/plugin.json >/dev/null
-python3 -m json.tool plugins/devflow/.claude-plugin/plugin.json >/dev/null
-```
-
-Also verify that both marketplace adapters still resolve to the same `plugins/devflow` directory.
-
-### Git and packaging hygiene
-
-Before completion:
-
-```bash
-git diff --check
-git status --short
-git branch --show-current
-```
-
-`plugins/devflow/bin/devflow` must remain executable in Git (`100755`). Do not commit `__pycache__/`, `*.pyc`, `.git/`, generated release ZIPs, or other transient build/runtime output.
-
-For release packaging, prefer:
-
-```bash
-git archive --format=zip --output=devflow-marketplace-<version>.zip HEAD
-```
-
-`./package.sh` builds the same tree from the working copy. It must list both marketplace adapters
-explicitly, because `zip -r` on `plugins/devflow` alone cannot reach either one.
-
-Inspect the archive for required adapter/plugin files and reject repository/cache metadata:
-
-```bash
-python3 - devflow-marketplace-<version>.zip <<'PY'
-import sys, zipfile
-names = set(zipfile.ZipFile(sys.argv[1]).namelist())
-required = {
-    ".agents/plugins/marketplace.json",
-    ".claude-plugin/marketplace.json",
-    "plugins/devflow/.claude-plugin/plugin.json",
-    "plugins/devflow/.codex-plugin/plugin.json",
-    "plugins/devflow/bin/devflow",
-}
-missing = required - names
-assert not missing, f"missing from archive: {sorted(missing)}"
-assert not [n for n in names if "__pycache__" in n or n.endswith(".pyc")]
-print("archive ok", len(names), "entries")
-PY
-```
-
-## 9. Versioning and release rules
-
-Read the plugin version from `.claude-plugin/marketplace.json`, `plugins/devflow/.claude-plugin/plugin.json`, and `plugins/devflow/.codex-plugin/plugin.json`. Read the separate protocol version from `PROTOCOL_VERSION` in `plugins/devflow/scripts/devflow.py`. Do not maintain another current-version constant in this always-loaded file.
-
-- Keep the plugin version synchronized across those manifests and the current README files. `.agents/plugins/marketplace.json` is a discovery pointer: it intentionally has no `version` or `description` fields. Do not add them.
-- Do not automatically set protocol version equal to plugin version.
-- Change protocol version only after evaluating artifact-contract compatibility.
-- Record the protocol-version decision and compatibility rationale in `plugins/devflow/CHANGELOG.md` when protocol behavior changes materially.
-- Preserve backward-readable behavior when the selected protocol version promises it.
-- Keep `plugins/devflow/bin/devflow` executable in the release tree.
-- Do not claim real Claude Code or Codex installation validation unless that installation/import flow was actually executed in an isolated or throwaway CLI profile.
-
-## 10. Documentation rules
-
-- Treat `plugins/devflow/README.md` as current user-facing plugin documentation.
-- Treat `core/protocol/*.md` plus `core/schemas/*` as the normative runtime contract.
-- Keep skills concise and role-specific; detailed policy belongs in protocol files rather than duplicated skill references.
-- Keep `vibecoder.md` labeled as background rationale.
-- Preserve historical release/work-order records as history unless the task explicitly asks to correct those records.
-- Avoid absolute local paths, scratch-workspace links, machine-specific paths, or stale pre-monorepo repository names in current documentation.
-
-## 11. Completion standard
-
-Before reporting a task complete:
-
-- Confirm the repository is still on `main`.
-- Review the final diff for scope creep and duplicated adapter logic.
-- Run the verification appropriate to the changed surface.
-- Confirm protocol/runtime/schema/docs consistency for any changed contract.
-- State which checks were actually executed and their results.
-- Explicitly identify any validation that remains unverified because the required external CLI or environment was not exercised.
-
-Do not claim completion, release readiness, or adapter validation from static inspection alone when the relevant acceptance criterion requires executed verification.
-
-The release test profiles and evidence rules are in `plugins/devflow/core/protocol/release-validation.md`. Whole-work Newman and installed ELI5 requirements are in `plugins/devflow/core/protocol/finalization.md`. Apply each contract when the changed surface requires it.
+2. This `AGENTS.md`.
+3. `plugins/devflow/core/protocol/` and `plugins/devflow/core/schemas/` for normative contracts.
+4. Relevant modules in `plugins/devflow/scripts/` and their tests for executable behavior.
+5. Current plugin README, skills, prompts, templates and changelog.
+6. Root marketplace documentation and historical records.
+
+Verify actual behavior when documents and code disagree; repair drift in the affected layers. `plugins/devflow/core/references/vibecoder.md` and local `docs/` records are historical context, not current contracts.
+
+## Keep one shared implementation
+
+- `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json` are discovery adapters. `plugins/devflow/.codex-plugin/` and `plugins/devflow/.claude-plugin/` contain plugin-specific metadata.
+- Shared CLI, runtime, helpers, protocols, schemas, prompts, templates, skills and tests belong exclusively under `plugins/devflow/`. Do not copy implementations into adapter directories.
+- `plugins/devflow/core/protocol/role-instructions.md` assigns rule ownership. Avoid restating normative rules in skills or rendered prompts.
+- `docs/` is Git-ignored local working material, not part of the tracked marketplace release. Do not force-add generated artifacts to bypass that boundary.
+
+## Preserve lifecycle and safety contracts
+
+- The manual CLI computes its next action through `status` / `next`; it does not independently implement WORK, run reviews or dispatch background agents. Hosted Goal/Autopilot orchestration must still obey the computed action and ordinary gates.
+- Execute exactly one selected ready WORK per `run`; check current-HEAD premises, dependencies and acceptance criteria. Require actual verification evidence before completion.
+- Preserve required plan, high/critical WORK, phase and integration audits, including initial/closure reviews, independent review and traced remediation. Never waive a gate to make a test pass.
+- `STATE.yaml` is machine-owned. Runtime computes derived fields, rejects invalid transitions before mutation and writes affected state/WORK atomically. Preserve backward-readable artifacts unless a deliberate protocol change is approved.
+- Do not add new required lifecycle documents or sidecars. The artifact budget and permitted derived PR/Postman/ELI5/Newman output are owned by `core/protocol/lifecycle.md`, `delivery-artifacts.md` and `finalization.md`.
+- Do not add hidden execution, background workers, new subagent loops or broadened authorization without an explicit product-contract change. Keep credentials and raw evidence private.
+
+## Change only the affected contract
+
+Before editing behavior, inspect the relevant protocol, schema, implementation module (including extracted helpers) and regression tests. Confirm the current `main` behavior first.
+
+- Make the smallest coherent change. Add a reproducing regression test before fixing a defect when practical.
+- Do not weaken validators, test assertions, review gates, state guards or verification requirements. Do not replace runtime enforcement with instructions alone.
+- Keep CLI examples consistent with the actual parser. For STATE/WORK/status changes, align schema, defaults, readers, validators, projections and tests.
+- Update only affected protocol, schema, runtime, template, prompt, skill, test, README, changelog and manifest layers. Avoid mechanical edits to unrelated layers.
+- Use the existing Python 3.10+ and PyYAML runtime where sufficient; avoid new dependencies without justification.
+
+## Verify the changed surface
+
+- Run targeted regression tests and Python syntax checks for changed runtime/test modules. Execute commands from the repository root unless specified otherwise.
+- For merge or release readiness, follow `plugins/devflow/core/protocol/release-validation.md`. Its `release_gate.py` commands own full-suite coverage, Newman skip rules and fresh evidence. A focused run does not establish release readiness.
+- For adapter metadata changes, validate all changed JSON manifests and confirm both marketplace pointers still reference `plugins/devflow/`.
+- Keep plugin versions synchronized across `.claude-plugin/marketplace.json`, both `plugins/devflow/` plugin manifests and current documentation. `.agents/plugins/marketplace.json` is a discovery pointer and must not acquire `version` or `description`.
+- Treat plugin and protocol versions separately. Read the protocol constant from `plugins/devflow/scripts/devflow.py`; change it only after checking compatibility and recording the decision in `plugins/devflow/CHANGELOG.md`.
+
+## Package and report accurately
+
+- Keep `plugins/devflow/bin/devflow` executable (`100755`). Exclude caches, `.git/`, temporary files and generated ZIPs.
+- Verify that `git archive` or `./package.sh` includes both marketplace adapters and both plugin manifests. Do not mistake a ZIP containing only `plugins/devflow/` for a complete marketplace distribution.
+- Treat `plugins/devflow/README.md` as current user documentation and `core/protocol/` plus `core/schemas/` as the contract. Preserve historical release material as history.
+- Before completion, run `git diff --check`, inspect `git status --short`, confirm `main` and review the changed files for scope creep and copied adapter logic.
+- Report the checks actually executed, results and unverified acceptance criteria. Do not claim native Claude Code/Codex installation, live Newman/ELI5 execution or release readiness without corresponding evidence.
