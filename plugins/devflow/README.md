@@ -224,7 +224,6 @@ A reached boundary writes controller status `checkpoint` and exits successfully 
 Executor WORK defaults to Luna: implementation, documentation, test and evidence work use `fast/high`; remediation and migration use `fast/xhigh`. Explicit per-WORK high/critical risk raises execution to `xhigh`/`max`, even for a lower-risk domain, while an explicitly low-risk WORK in a critical domain does not inherit the domain-wide maximum. Without item/action risk, execution falls back to domain risk. Retry stages retain `fast/high -> fast/xhigh -> fast/max -> frontier/xhigh diagnosis -> fast/max -> balanced/xhigh`. Timeouts have a separate independent diagnosis path and block on repeated timeout. Critical Luna `max` execution remains fail-closed; project legacy routing overrides remain readable.
 When a backend rejects only a reasoning effort, DevFlow records that model/backend/effort tuple without disabling the model at other effort levels. For a noncritical Worker retry requesting `max`, the resolver tries every configured max-capable candidate/backend before using `xhigh` and records both the requested and selected efforts in the dispatch envelope. Critical `max` execution never falls back to a lower effort. This learned capability state survives standalone `resume`, but not a fresh `start`. Python 3.10 requires the declared `typing_extensions` dependency for `Self`.
 
-
 Planning, WORK verification, phase audit and finalization prefer GPT-6.1 Sol (`frontier`); critical authority and integration audit use Sol-only `hardest`. Standard `frontier` candidates are `[frontier, balanced]`, so Terra can take over a non-hardest specialist when Sol is unavailable at the routed effort. `hardest` remains `[frontier]` and fails closed. Routine low/medium WORK reviews use the WORK risk, while project-level decision roles retain the domain risk floor. Terra supports `medium/high/xhigh` for pre-analysis and compatible fallback.
 
 Terra scout dispatch is conditional. `orchestration.scout_before` covers integration auditing and diagnosis; `scout_on_critical` adds architect and WORK verifier when effective risk is critical; `scout_on_retry` adds WORK verifier, phase/plan auditor and finalizer after the initial attempt. A scout is skipped if its model matches the specialist or cannot execute. The capsule contract requires six nonempty Markdown sections and at least one cited repository path; `scout_max_chars` (default 12,000) is a hard limit, not a truncation target. Failed, invalid, oversized, unbound, and stale capsules are discarded, preserving the full authoritative packet. Standalone Autopilot omits that packet only with a validated capsule; hosted `/goal` uses `primary.scout_message` only after successful `scout-validate` for the current fingerprint and a different-model scout. Specialists check cited evidence and render the authoritative packet if evidence is missing or inconsistent.
@@ -523,6 +522,28 @@ to pass without skips, and a clean plugin working tree. A failed/partial/stale s
 report cannot pass either gate. Verdict and full-suite JSON evidence are written to
 separate files; no private Newman response data is copied into either report.
 See `core/protocol/release-validation.md` for the complete acceptance contract.
+
+### Documentation consistency and effective packet size
+
+Run the read-only documentation checks and inspect advisory policy-copy findings:
+
+```bash
+python3 plugins/devflow/scripts/check_docs.py --json > /tmp/devflow-docs.json
+```
+
+To compare real CLI-rendered input bytes to the frozen starting revision (without
+changing `main` or building a worktree), run:
+
+```bash
+python3 plugins/devflow/tests/measure_role_packets.py \
+  --baseline-ref 00af6394f7a7830bb9b37c6560e3ec06598e4ad0 \
+  --output /tmp/devflow-p08-packets.json
+```
+
+The report covers Plan, Run, integration Audit, Finalize, and Scout navigation
+on equivalent synthetic fixtures. It does not measure native hosted Goal, model
+tokens, live Newman, or installed ELI5 acceptance. Both utilities are covered by
+`test_docs_consistency.py`, which is required by the merge/release gate.
 
 ### Lifecycle benchmarks
 

@@ -55,6 +55,21 @@ for required independent audits, application acceptance testing, or a human rele
 decision. Missing system dependencies and sandbox denial remain visible blockers
 for the strict release gate rather than fabricated execution evidence.
 
+## Documentation integrity and input-volume measurement
+
+`test_docs_consistency.py` is a required full-suite module. Its read-only checker
+validates current relative links, plugin versions, role front matter, owner references,
+role-to-protocol pointers, and the invalid-until-completed AUDIT scaffold. Potential
+long copied policy lines are advisory only; they do not replace review evidence.
+
+`measure_role_packets.py` compares actual CLI `render` stdout UTF-8 bytes from the
+frozen baseline and working-tree plugin at equivalent synthetic domains for plan,
+run, audit, finalize, and Scout's bounded evidence-navigation output. It uses
+`git archive`, not a branch switch or worktree, and writes no lifecycle artifacts in
+the source repository. Save its JSON outside the repository; treat missing commands
+or missing required contract markers as measurement failures. Packet bytes are not
+model tokens, native hosted execution, installed ELI5, or real Newman acceptance.
+
 ## Regression areas protected
 
 | Improvement | Regression coverage |
@@ -66,6 +81,7 @@ for the strict release gate rather than fabricated execution evidence.
 | Scout capsule and dispatch contracts | `test_scout_contract.py`, `test_host_autopilot.py` |
 | Newman failure semantics | `test_newman_classification.py`, `test_finalization.py`, `test_newman_integration.py` |
 | Suite and gate contracts | `test_suite_runner.py`, `test_release_gate.py` |
+| Documentation and prompt input integrity | `test_docs_consistency.py`, `test_documentation_history.py`, `test_protocol_template_ownership.py` |
 
 A partial profile is useful during development but cannot replace this complete
 cross-module regression gate. Inspect the verdict's `blockers`, `warnings` and

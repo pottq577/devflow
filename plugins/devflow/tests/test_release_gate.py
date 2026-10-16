@@ -157,7 +157,14 @@ class ReleaseGateTests(unittest.TestCase):
             (root / "__pycache__" / "temp.json").write_text("{}")
             self.assertEqual(before, gate.source_snapshot(root))
             script.write_text("answer = 2\n")
-            self.assertNotEqual(before, gate.source_snapshot(root))
+            after = gate.source_snapshot(root)
+            self.assertNotEqual(before, after)
+            self.assertEqual(gate.changed_source_paths(before, after), ["scripts/devflow.py"])
+            script.unlink()
+            self.assertEqual(
+                gate.changed_source_paths(after, gate.source_snapshot(root)),
+                ["scripts/devflow.py"],
+            )
 
     def test_symlinked_source_is_not_release_evidence(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -182,8 +189,10 @@ class ReleaseGateTests(unittest.TestCase):
         report, names = self.make_report()
         cases = [self.Case(name) for name in names]
         snapshots = [
-            {"sha256": "a" * 64, "files": 40},
-            {"sha256": ("b" if changes else "a") * 64, "files": 40},
+            {"sha256": "a" * 64, "files": 40,
+             "file_sha256": {"skills/status/SKILL.md": "a" * 64}},
+            {"sha256": ("b" if changes else "a") * 64, "files": 40,
+             "file_sha256": {"skills/status/SKILL.md": ("b" if changes else "a") * 64}},
         ]
         with tempfile.TemporaryDirectory() as temporary:
             suite = Path(temporary) / "suite.json"
@@ -216,6 +225,9 @@ class ReleaseGateTests(unittest.TestCase):
         result = self.run_fake_gate(changes=True)
         self.assertEqual(result["verdict"], "blocked")
         self.assertIn("plugin_source_changed_during_suite", result["blockers"])
+        self.assertEqual(result["evidence"]["changed_source_paths"], ["skills/status/SKILL.md"])
+        self.assertNotEqual(result["evidence"]["plugin_sha256_before"],
+                            result["evidence"]["plugin_sha256"])
 
     def test_nonzero_suite_exit_blocks_even_with_passing_json(self):
         result = self.run_fake_gate(rc=1)

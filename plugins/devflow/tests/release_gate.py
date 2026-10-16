@@ -31,6 +31,7 @@ REQUIRED_MODULES = frozenset({
     "test_hosted_guard", "test_hosted_session", "test_lifecycle_cases",
     "test_newman_classification", "test_newman_integration", "test_scout_contract",
     "test_suite_runner", "test_test_infrastructure", "test_release_gate",
+    "test_docs_consistency",
 })
 SOURCE_SUFFIXES = frozenset({
     ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".txt", ".sh",
@@ -55,16 +56,26 @@ def source_snapshot(plugin_root: Path = PLUGIN_ROOT) -> dict[str, Any]:
         and (path.is_file() or path.is_symlink())
     )
     sha = hashlib.sha256()
+    file_sha256: dict[str, str] = {}
     for path in files:
         if path.is_symlink():
             raise ValueError("plugin source contains a symlink: " + str(path.relative_to(plugin_root)))
-        relative = path.relative_to(plugin_root).as_posix().encode("utf-8")
+        name = path.relative_to(plugin_root).as_posix()
+        relative = name.encode("utf-8")
         payload = path.read_bytes()
+        file_sha256[name] = hashlib.sha256(payload).hexdigest()
         sha.update(len(relative).to_bytes(4, "big"))
         sha.update(relative)
         sha.update(len(payload).to_bytes(8, "big"))
         sha.update(payload)
-    return {"sha256": sha.hexdigest(), "files": len(files)}
+    return {"sha256": sha.hexdigest(), "files": len(files), "file_sha256": file_sha256}
+
+
+def changed_source_paths(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """Name added, removed, and changed source files without exposing content."""
+    old = before.get("file_sha256", {})
+    new = after.get("file_sha256", {})
+    return sorted(path for path in old.keys() | new.keys() if old.get(path) != new.get(path))
 
 
 def compatibility_checks(plugin_root: Path = PLUGIN_ROOT) -> list[str]:
@@ -220,6 +231,7 @@ def _evaluate_fresh(mode: str, suite_path: Path) -> dict[str, Any]:
     )
     after = source_snapshot()
     repo_after = provenance()
+    changed_paths = changed_source_paths(before, after)
     if before != after:
         blockers.append("plugin_source_changed_during_suite")
     if not (repo_before["git_available"] and repo_after["git_available"]):
@@ -262,7 +274,9 @@ def _evaluate_fresh(mode: str, suite_path: Path) -> dict[str, Any]:
             "suite_report": str(suite_path),
             "suite_sha256": suite_hash,
             "plugin_sha256": after["sha256"],
+            "plugin_sha256_before": before["sha256"],
             "source_file_count": after["files"],
+            "changed_source_paths": changed_paths,
             "head_before": repo_before["head"],
             **repo_after,
         },
