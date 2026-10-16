@@ -93,14 +93,57 @@ class FinalizerManifestTests(unittest.TestCase):
                 self.assertEqual(sorted(seen), sorted(ids))
                 self.assertEqual(len(seen), len(set(seen)))
                 scope = self.manifest_page(rendered.stdout, "Whole-work scope and HTML metadata")
-                self.assertEqual(sorted(scope["scope"]["works"] and
-                                        [row["id"] for row in scope["scope"]["works"]]), sorted(ids))
+                self.assertEqual(scope["work_items_in_scope"], count)
                 self.assertEqual(scope["html_metadata"]["work_ids"], sorted(ids))
+                self.assertEqual(scope["html_file"].endswith("implementation.html"), True)
+                # Whole WORK rows stay inside scope_sha256 instead of being printed on every page.
+                self.assertNotIn("works", scope["scope"])
+                self.assertIn("branches", scope["scope"])
+                self.assertIn("sources", scope["scope"])
                 first = self.manifest_page(rendered.stdout, "WORK manifest page")["items"][0]
                 for key in ("id", "status", "kind", "risk", "phase", "commit",
                             "review", "changed_files", "verification", "work_file"):
                     self.assertIn(key, first)
                 self.assertTrue((self.root / first["work_file"]).is_file())
+                self.assertEqual(
+                    scope["html_metadata"]["scope_sha256"],
+                    self.scope_sha256(count),
+                )
+
+    def test_a_later_page_work_change_still_fails_the_whole_scope_check(self) -> None:
+        """Paging changes what is read per page, never what the final gates verify."""
+        ids = self.seed_work(120)
+        recorded = self.manifest_page(
+            run(self.root, "render", "finalize", "sample").stdout,
+            "Whole-work scope and HTML metadata",
+        )["html_metadata"]["scope_sha256"]
+        self.assertEqual(recorded, self.scope_sha256(120))
+        # The item only reachable through page 2 still moves the whole-work digest.
+        path = self.domain / "work" / "phase-01.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["items"][-1]["evidence"]["commit"] = "b" * 40
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        self.assertEqual(ids[-1], document["items"][-1]["id"])
+        moved = self.manifest_page(
+            run(self.root, "render", "finalize", "sample", "--manifest-page", "2").stdout,
+            "Whole-work scope and HTML metadata",
+        )["html_metadata"]["scope_sha256"]
+        self.assertNotEqual(moved, recorded)
+        runtime = fixture_helpers.load_runtime_module()
+        state = yaml.safe_load(self.state_path.read_text(encoding="utf-8"))
+        docs, _index, _errors = runtime.load_work_index(self.domain)
+        pinned = runtime.finalization.scope(
+            self.root, "sample", state, docs, self.domain
+        )["html_metadata"]["scope_sha256"]
+        self.assertEqual(pinned, moved)
+
+    def scope_sha256(self, count: int) -> str:
+        runtime = fixture_helpers.load_runtime_module()
+        state = yaml.safe_load(self.state_path.read_text(encoding="utf-8"))
+        docs, _index, _errors = runtime.load_work_index(self.domain)
+        ctx = runtime.finalization.scope(self.root, "sample", state, docs, self.domain)
+        self.assertEqual(len(ctx["scope"]["works"]), count)
+        return ctx["html_metadata"]["scope_sha256"]
 
     def test_manifest_page_out_of_range_and_full_document_access(self) -> None:
         self.seed_work(61)

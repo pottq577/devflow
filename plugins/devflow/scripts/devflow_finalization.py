@@ -181,6 +181,21 @@ def scope(
     }
 
 
+def render_scope(ctx: dict[str, Any]) -> dict[str, Any]:
+    """What one rendered page shows: pinned sources, branches and runs, not the WORK dump.
+
+    Every WORK row stays inside `scope_sha256`, so a page reads less while the final gates keep
+    verifying the same whole-work scope. The manifest rows and `work_file` paths carry the
+    per-item detail, and each original WORK document remains readable on disk.
+    """
+    return {
+        "html_file": ctx["html_file"],
+        "html_metadata": ctx["html_metadata"],
+        "work_items_in_scope": len(ctx["scope"]["works"]),
+        "scope": {key: value for key, value in ctx["scope"].items() if key != "works"},
+    }
+
+
 class ExplanationHTML(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

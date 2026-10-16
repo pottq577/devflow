@@ -6118,12 +6118,6 @@ def render(args: argparse.Namespace) -> int:
         render_markdown_file("Approved PRD", d / "PRD.md")
     if role == "finalize":
         docs, _, _ = load_work_index(d)
-        render_markdown_file("Approved PRD", d / "PRD.md")
-        render_markdown_file("Whole-work PLAN", d / "PLAN.md")
-        render_yaml_context(
-            "Whole-work scope and HTML metadata",
-            finalization.scope(root, args.domain, state, docs, d),
-        )
         manifest = work_manifest(root, docs)
         page = int(getattr(args, "manifest_page", 1))
         page_size = FINALIZE_MANIFEST_PAGE
@@ -6134,6 +6128,23 @@ def render(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        first_page = page == 1
+        if first_page:
+            render_markdown_file("Approved PRD", d / "PRD.md")
+            render_markdown_file("Whole-work PLAN", d / "PLAN.md")
+        # Whole-work integrity stays computed from every WORK and branch; only the rendering is
+        # paged, so a continuation page repeats the digest and the pinned sources, not every row.
+        projection = finalization.render_scope(
+            finalization.scope(root, args.domain, state, docs, d)
+        )
+        if not first_page:
+            # The complete id list is page 1's; this page's manifest slice plus its digest is enough.
+            projection["html_metadata"] = {
+                key: value
+                for key, value in projection["html_metadata"].items()
+                if key != "work_ids"
+            }
+        render_yaml_context("Whole-work scope and HTML metadata", projection)
         render_yaml_context(
             f"WORK manifest page {page}/{pages}",
             {
@@ -6149,7 +6160,13 @@ def render(args: argparse.Namespace) -> int:
             f"item's full original document from the `work_file` path above when its summary "
             f"is not enough."
         )
+        if not first_page:
+            print(
+                "This continuation page repeats only its manifest slice. Read the PRD, PLAN and "
+                "appended protocol sections from manifest page 1."
+            )
 
+    continuation = role == "finalize" and int(getattr(args, "manifest_page", 1) or 1) > 1
     for name in prompt_protocols(
         role,
         state,
@@ -6157,6 +6174,12 @@ def render(args: argparse.Namespace) -> int:
         work_item=getattr(args, "task", None)
         or (state.get("next_action") or {}).get("work_item"),
     ):
+        if continuation:
+            print(
+                f"\nProtocol `core/protocol/{name}.md` is appended to manifest page 1; "
+                f"read it there or from the plugin file."
+            )
+            continue
         print_section(f"protocol/{name}.md", read_protocol(name))
 
     if role == "audit":
