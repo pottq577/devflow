@@ -1,22 +1,22 @@
 ---
 schema: devflow-audit-v1
-scope: integration
-mode: initial
-verdict: pass
-baseline_sha: replace-with-full-sha
-target_sha: replace-with-full-sha
-diff_range: current-head
-verification:
-  - command: replace-with-executed-command
-    result: replace-with-observed-result
+# Fill from the computed audit action and observed verification. Nulls intentionally fail validation.
+scope: null
+mode: null
+verdict: null
+baseline_sha: null
+target_sha: null
+diff_range: null
+verification: []
 findings: []
 closure: []
 ---
 
 # DevFlow Audit
 
-The YAML front matter is the machine-readable audit outcome.
-Keep the explanation below for human review, but make the front matter authoritative and run `devflow audit apply` after writing it.
+The YAML front matter becomes the machine-readable audit outcome after review. Set scope and mode from the computed next action, pin the actual commit SHAs and diff range, record executed verification, and select a verdict from the findings. The `null` fields and empty verification list prevent this scaffold from passing `devflow audit apply`.
+
+Keep the human-readable explanation below. Apply a completed audit with `devflow audit apply`.
 
 ## Metadata
 
