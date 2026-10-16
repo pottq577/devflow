@@ -5427,10 +5427,12 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
     item_id = selected.get("id")
     if isinstance(domain, str):
         try:
-            work_docs, _work_index, _errors = load_work_index(domain_dir(root, domain))
+            work_docs, work_index, _errors = load_work_index(domain_dir(root, domain))
             add([str(path) for path in work_docs])
             if isinstance(item_id, str):
-                selected_path, _document, item = find_item(root, domain, item_id)
+                if item_id not in work_index:
+                    raise KeyError(f"Unknown WORK item: {item_id}")
+                selected_path, item = work_index[item_id]
                 add(str(selected_path))
                 evidence = item.get("evidence") or {}
                 add(evidence.get("changed_files"))

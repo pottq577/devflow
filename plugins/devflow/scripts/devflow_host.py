@@ -870,9 +870,13 @@ def _write_scout_capsule_record(
 
 def _scout_capsule_current(
     root: Path, domain: str, state: dict[str, Any], policy: dict[str, Any],
-    capsule_file: Path | None = None,
+    capsule_file: Path | None = None, *, evidence: tuple | None = None,
 ) -> bool:
-    """Re-verify the recorded capsule host-side; the caller's claim is never the authority."""
+    """Re-verify the recorded capsule host-side; the caller's claim is never the authority.
+
+    `evidence` is the (index, scope, confirmed, digest) tuple this invocation already computed
+    and verified, so one CLI run never rebuilds the same WORK snapshot or scope twice.
+    """
     runtime_dir = _telemetry_dir(root, domain)
     pointer_path = runtime_dir / SCOUT_POINTER_FILENAME
     try:
@@ -902,8 +906,13 @@ def _scout_capsule_current(
         text = payload.decode("utf-8") if payload is not None else ""
     except UnicodeError:
         return False
-    index = devflow.evidence_index(root, domain, state)
-    scope, confirmed = devflow.evidence_scope(root, index)
+    if evidence is None:
+        with devflow._work_snapshot():
+            index = devflow.evidence_index(root, domain, state)
+            scope, confirmed = devflow.evidence_scope(root, index)
+        digest = scout_contract.evidence_digest(index, scope)
+    else:
+        index, scope, confirmed, digest = evidence
     return (
         scout_contract.capsule_verdict(
             text,
@@ -911,7 +920,7 @@ def _scout_capsule_current(
             fingerprint=autopilot.AutopilotController.fingerprint(
                 state.get("next_action") or {}
             ),
-            digest=scout_contract.evidence_digest(index, scope),
+            digest=digest,
             scope_confirmed=confirmed,
             max_chars=cap,
         )
@@ -1159,8 +1168,10 @@ def main() -> int:
                 raise guard.GuardBlocked("hosted_candidate_not_routed")
             metadata = None
             if args.kind == "scout":
-                evidence = devflow.evidence_index(root, args.domain, state)
-                scope, confirmed = devflow.evidence_scope(root, evidence)
+                # One WORK snapshot per invocation: the index, scope and digest are built once.
+                with devflow._work_snapshot():
+                    evidence = devflow.evidence_index(root, args.domain, state)
+                    scope, confirmed = devflow.evidence_scope(root, evidence)
                 metadata = {
                     "evidence_digest": scout_contract.evidence_digest(evidence, scope),
                     "scope": scope,
@@ -1183,95 +1194,99 @@ def main() -> int:
                 outcome=args.outcome,
             )
         elif args.command in SCOUT_COMMANDS:
-            state, fingerprint, _safety = _guard_view(
-                root, args.domain, args.session_id, policy, "complete"
-            )
-            if args.fingerprint != fingerprint:
-                raise guard.GuardBlocked("hosted_stale_fingerprint")
-            allowed = (runtime_dir / "scout-capsules").resolve()
-            try:
-                file_path = Path(args.capsule_file).resolve(strict=True)
-            except (OSError, RuntimeError):
-                file_path = Path(args.capsule_file).resolve()
-            if not file_path.is_relative_to(allowed):
-                raise ValueError("Scout capsule must be under the domain scout-capsules directory")
-            cap = int((policy.get("orchestration") or {}).get("scout_max_chars", 12000))
-            # Read a bounded UTF-8 payload and reject replacement or mid-read changes.
-            raw_capsule = _read_stable_file(file_path, cap * 4 + 1)
-            try:
-                text = raw_capsule.decode("utf-8") if raw_capsule is not None else ""
-            except UnicodeError:
-                text = ""
-            valid = scout_contract.validated_capsule(text, cap)
-            index = devflow.evidence_index(root, args.domain, state or {})
-            scope, confirmed = devflow.evidence_scope(root, index)
-            digest = scout_contract.evidence_digest(index, scope)
-            if args.command == "scout-bind":
-                # Only a completed, routed Scout step may create this provenance record.
-                if file_path.name != f"{args.step_id}.md":
-                    raise guard.GuardBlocked("hosted_scout_step_mismatch")
-                receipt = guard.consume_scout_step(
-                    runtime_dir, args.session_id, args.step_id,
-                    fingerprint=fingerprint, candidate_alias=args.model_alias,
+            # One WORK snapshot for this read-only command: the projected state, the evidence
+            # index, the scope and the digest all read the same parsed documents.
+            with devflow._work_snapshot():
+                state, fingerprint, _safety = _guard_view(
+                    root, args.domain, args.session_id, policy, "complete"
                 )
-                metadata = receipt["metadata"]
-                cited = set()
-                for name in scout_contract.referenced_paths(valid or ""):
-                    relative = Path(name)
-                    if ".." in relative.parts:
-                        cited.add(name)
-                        continue
-                    candidate = relative if relative.is_absolute() else root / relative
-                    try:
-                        cited.add(str(candidate.resolve(strict=True)))
-                    except (OSError, RuntimeError):
-                        cited.add(name)
-                if (
-                    not valid
-                ):
-                    result = {"status": "invalid", "chars": len(text), "evidence_digest": digest}
-                elif (
-                    metadata.get("scope_confirmed") is not True
-                    or not confirmed
-                    or metadata.get("evidence_digest") != digest
-                    or metadata.get("head_sha") != devflow.current_sha(root)
-                    or not cited <= set(metadata.get("scope", {}))
-                ):
-                    result = {"status": "stale", "chars": len(text), "evidence_digest": digest}
-                else:
-                    _write_scout_capsule_record(
-                        file_path,
-                        runtime_dir,
-                        scout_contract.capsule_binding(
-                            text,
-                            fingerprint=fingerprint,
-                            digest=digest,
-                            scope_confirmed=confirmed,
-                            head_sha=devflow.current_sha(root) or "unborn",
-                            step_id=receipt["step_id"],
-                            model_alias=receipt["candidate_alias"],
-                            bound_at=datetime.now(timezone.utc).isoformat(),
-                        ),
+                if args.fingerprint != fingerprint:
+                    raise guard.GuardBlocked("hosted_stale_fingerprint")
+                allowed = (runtime_dir / "scout-capsules").resolve()
+                try:
+                    file_path = Path(args.capsule_file).resolve(strict=True)
+                except (OSError, RuntimeError):
+                    file_path = Path(args.capsule_file).resolve()
+                if not file_path.is_relative_to(allowed):
+                    raise ValueError("Scout capsule must be under the domain scout-capsules directory")
+                cap = int((policy.get("orchestration") or {}).get("scout_max_chars", 12000))
+                # Read a bounded UTF-8 payload and reject replacement or mid-read changes.
+                raw_capsule = _read_stable_file(file_path, cap * 4 + 1)
+                try:
+                    text = raw_capsule.decode("utf-8") if raw_capsule is not None else ""
+                except UnicodeError:
+                    text = ""
+                valid = scout_contract.validated_capsule(text, cap)
+                index = devflow.evidence_index(root, args.domain, state or {})
+                scope, confirmed = devflow.evidence_scope(root, index)
+                digest = scout_contract.evidence_digest(index, scope)
+                if args.command == "scout-bind":
+                    # Only a completed, routed Scout step may create this provenance record.
+                    if file_path.name != f"{args.step_id}.md":
+                        raise guard.GuardBlocked("hosted_scout_step_mismatch")
+                    receipt = guard.consume_scout_step(
+                        runtime_dir, args.session_id, args.step_id,
+                        fingerprint=fingerprint, candidate_alias=args.model_alias,
                     )
-                    result = {"status": "bound", "chars": len(valid), "evidence_digest": digest}
-            else:
-                verdict = scout_contract.capsule_verdict(
-                    text,
-                    _scout_capsule_record(file_path),
-                    fingerprint=fingerprint,
-                    digest=digest,
-                    scope_confirmed=confirmed,
-                    max_chars=cap,
-                )
-                if verdict == "valid" and not _scout_capsule_current(
-                    root, args.domain, state or {}, policy, file_path
-                ):
-                    verdict = "stale"
-                result = {
-                    "status": verdict,
-                    "chars": len(valid or ""),
-                    "evidence_digest": digest,
-                }
+                    metadata = receipt["metadata"]
+                    cited = set()
+                    for name in scout_contract.referenced_paths(valid or ""):
+                        relative = Path(name)
+                        if ".." in relative.parts:
+                            cited.add(name)
+                            continue
+                        candidate = relative if relative.is_absolute() else root / relative
+                        try:
+                            cited.add(str(candidate.resolve(strict=True)))
+                        except (OSError, RuntimeError):
+                            cited.add(name)
+                    if (
+                        not valid
+                    ):
+                        result = {"status": "invalid", "chars": len(text), "evidence_digest": digest}
+                    elif (
+                        metadata.get("scope_confirmed") is not True
+                        or not confirmed
+                        or metadata.get("evidence_digest") != digest
+                        or metadata.get("head_sha") != devflow.current_sha(root)
+                        or not cited <= set(metadata.get("scope", {}))
+                    ):
+                        result = {"status": "stale", "chars": len(text), "evidence_digest": digest}
+                    else:
+                        _write_scout_capsule_record(
+                            file_path,
+                            runtime_dir,
+                            scout_contract.capsule_binding(
+                                text,
+                                fingerprint=fingerprint,
+                                digest=digest,
+                                scope_confirmed=confirmed,
+                                head_sha=devflow.current_sha(root) or "unborn",
+                                step_id=receipt["step_id"],
+                                model_alias=receipt["candidate_alias"],
+                                bound_at=datetime.now(timezone.utc).isoformat(),
+                            ),
+                        )
+                        result = {"status": "bound", "chars": len(valid), "evidence_digest": digest}
+                else:
+                    verdict = scout_contract.capsule_verdict(
+                        text,
+                        _scout_capsule_record(file_path),
+                        fingerprint=fingerprint,
+                        digest=digest,
+                        scope_confirmed=confirmed,
+                        max_chars=cap,
+                    )
+                    if verdict == "valid" and not _scout_capsule_current(
+                        root, args.domain, state or {}, policy, file_path,
+                        evidence=(index, scope, confirmed, digest),
+                    ):
+                        verdict = "stale"
+                    result = {
+                        "status": verdict,
+                        "chars": len(valid or ""),
+                        "evidence_digest": digest,
+                    }
         elif args.command == "telemetry-start":
             result = telemetry_start(
                 root,

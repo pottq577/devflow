@@ -510,6 +510,50 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         self.assertTrue(confirmed)
         self.assertNotEqual(before, updated_scope[str(work_file.resolve())])
 
+    def test_one_work_snapshot_per_validation_with_an_unchanged_digest(self) -> None:
+        """R20: the reuse is a cache, never a different scope or a re-bound capsule."""
+        self.selected_work_item()
+        self.scale_domain(files=4, per_file=2)
+        fingerprint = self.current_fingerprint()
+        self.assertEqual(self.bind(fingerprint)["status"], "bound")
+        runtime = self.host.devflow
+        real_build = runtime.index_work_docs
+        real_load_yaml = runtime.load_yaml
+        builds = []
+        work_loads = []
+        with mock.patch.object(
+            runtime, "index_work_docs", side_effect=lambda docs: (
+                builds.append(1), real_build(docs)
+            )[1]
+        ), mock.patch.object(
+            runtime,
+            "load_yaml",
+            side_effect=lambda path, default=None: (
+                work_loads.append(path)
+                if Path(path).parent.name == "work"
+                else None,
+                real_load_yaml(path, default),
+            )[1],
+        ):
+            validated = self.validate(fingerprint)
+        self.assertEqual(validated["status"], "valid")
+        # One projection per invocation, not one per evidence, scope and capsule re-check.
+        work_files = sorted((self.root / "docs/domains/billing/work").glob("*.yaml"))
+        self.assertEqual(len(builds), 1, builds)
+        self.assertEqual(len(work_loads), len(work_files), len(work_loads))
+        # An uncached recomputation on the same repository must produce the same digest.
+        state = self.host._load_state(self.root, "billing")
+        fresh = self.host.devflow.evidence_index(self.root, "billing", state)
+        fresh_scope, confirmed = self.host.devflow.evidence_scope(self.root, fresh)
+        self.assertTrue(confirmed)
+        missing = [str(path.resolve()) for path in work_files if str(path.resolve()) not in fresh_scope]
+        self.assertEqual(missing, [])
+        self.assertEqual(
+            self.host.scout_contract.evidence_digest(fresh, fresh_scope),
+            validated["evidence_digest"],
+        )
+        self.assertEqual(self.validate(fingerprint)["status"], "valid")
+
     def test_dispatch_reuses_only_a_host_verified_capsule(self) -> None:
         """D01: --scout-cached is a claim; the host re-verifies before skipping a scout."""
         self.selected_work_item()
