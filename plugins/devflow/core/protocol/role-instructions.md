@@ -13,9 +13,10 @@ relied on.
 | Transitions, `next_action`, phase and integration handoff, render/status CLI | `core/protocol/lifecycle.md` | all roles |
 | Open human decision recording and resolution | `core/protocol/decision-policy.md` | plan, run |
 | WORK schema, versions, evidence and acceptance/verification mapping | `core/protocol/work-item-contract.md`, `core/schemas/work.schema.yaml` | plan, run, audit |
+| STATE schema, lifecycle projections and the delivery/finalization records STATE owns | `core/protocol/authority.md`, `core/schemas/state.schema.yaml` | all roles |
 | High/critical review, audit scope and remediation rules | `core/protocol/risk-policy.md`, `core/protocol/audit-core.md`, `core/schemas/audit.schema.yaml`, `core/schemas/finding.schema.yaml` | run, audit |
-| Branch, commit, comment anchor, PR body and Postman collection contract | `core/protocol/delivery-artifacts.md`, `core/schemas/delivery.schema.yaml` | plan, run, audit |
-| Newman ownership, readiness, evidence, diagnosis, ELI5, final receipt | `core/protocol/finalization.md`, `core/schemas/finalization.schema.yaml` | plan, run, audit, finalize |
+| Branch, commit, comment anchor, PR body and Postman collection contract | `core/protocol/delivery-artifacts.md` | plan, run, audit |
+| Newman ownership, readiness, evidence, diagnosis, ELI5, final receipt | `core/protocol/finalization.md` | plan, run, audit, finalize |
 | Peer skill composition and precedence | `core/protocol/skill-composition.md` | plan, run, audit |
 | Hosted session, lease, step reservation, telemetry and recovery | `core/protocol/host-telemetry.md`, `core/schemas/host-telemetry.schema.yaml`, `core/schemas/state.schema.yaml` | goal |
 | Routing aliases, capabilities and escalation | `core/schemas/routing.schema.yaml`, `core/schemas/model-registry.schema.yaml` | goal, autopilot |

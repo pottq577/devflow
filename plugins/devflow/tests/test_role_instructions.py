@@ -49,10 +49,19 @@ class RoleInstructionTests(unittest.TestCase):
             "finalization.md",
             "skill-composition.md",
             "work.schema.yaml",
-            "delivery.schema.yaml",
-            "finalization.schema.yaml",
+            "state.schema.yaml",
         ):
             self.assertIn(name, matrix)
+
+    def test_every_local_ownership_reference_exists(self) -> None:
+        """A matrix that names a file nobody owns is a dangling obligation."""
+        matrix = (PLUGIN / "core" / "protocol" / "role-instructions.md").read_text(
+            encoding="utf-8"
+        )
+        referenced = sorted(set(re.findall(r"`((?:core|skills)/[\w./-]+)`", matrix)))
+        self.assertTrue(referenced)
+        missing = [name for name in referenced if not (PLUGIN / name).exists()]
+        self.assertEqual(missing, [])
 
     def test_every_protocol_and_schema_is_owned_or_explicitly_scoped(self) -> None:
         matrix = (PLUGIN / "core" / "protocol" / "role-instructions.md").read_text(
