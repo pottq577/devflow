@@ -74,7 +74,6 @@ class RepositoryInstructionsTests(unittest.TestCase):
             "plugins/devflow/core/protocol/delivery-artifacts.md",
             "plugins/devflow/core/protocol/finalization.md",
             "plugins/devflow/scripts/devflow.py",
-            "plugins/devflow/core/references/vibecoder.md",
         ):
             with self.subTest(relative=relative):
                 self.assertTrue((ROOT / relative).is_file(), relative)

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - 0.11.1 follow-up defects and measured scope input
+## Unreleased (post-0.11.1) - compatibility fixes and scoped measurements
 
 - Apply one legacy-compatibility rule everywhere. `delivery check`, `validate` and `delivery newman` share `stale_hashes`, so a 0.10.2 branch record without the optional `postman_structure_sha256` reaches the Newman run preconditions instead of being refused as stale. A recorded digest that disagrees with the collection and a missing required hash are still refused, and compatibility validation still writes no STATE or WORK bytes.
 - Reuse one WORK snapshot per hosted Scout invocation. `scout-validate` hands its already verified evidence index, scope and digest to the host-side capsule re-check, `step-start --kind scout` builds them once, and `evidence_scope` reads the WORK index it already loaded instead of querying the selected item again. `scout-validate` stays read-only and never re-binds a capsule.
@@ -8,6 +8,7 @@
 - Correct the role-ownership matrix. `delivery.schema.yaml` and `finalization.schema.yaml` never existed, so those rows now name their owning protocols, and `core/schemas/state.schema.yaml` is linked to `core/protocol/authority.md` for the STATE records it defines. A regression test fails on any ownership reference that names a file that does not exist. No new schema file is added.
 - Measured separately, repeated five times per size, same repository and same plugin path in both revisions, with the raw results under the Git-excluded `docs/measurement/` records. Scout capsule validation of a bound capsule: WORK index projections 9 to 1 per invocation, and wall clock 511 to 253 ms at 8 WORK, 892 to 328 ms at 36, 2,407 to 519 ms at 120 and 4,773 to 830 ms at 250. Whole `render finalize` input summed over every manifest page: 96,350 to 72,725 bytes at 60 WORK, 241,695 to 98,139 bytes at 120 and 857,383 to 159,743 bytes at 250, with summed page wall clock 424 to 381 ms, 1,103 to 1,034 ms and 4,463 to 3,875 ms. Evidence digests, capsule verdicts and `scope_sha256` values are identical across the compared revisions.
 - These are CLI component and input-volume measurements on local fixtures. Native hosted Goal end-to-end wall clock, native child spawn count and token usage remain unmeasured; no end-to-end improvement and no token saving is claimed. Retain Protocol `1.8.0` and plugin `0.11.1`; the schemas, enum values, lifecycle transitions and audit gates are unchanged.
+- Retire the original `core/references/vibecoder.md` design-review snapshot (preserved by Git history). Keep the current root README focused on installation/acceptance, and keep detailed commands in the plugin README.
 
 ## 0.11.1 - 2026-10-16 - Review defect corrections
 
@@ -27,111 +28,111 @@
 - Not measured at that release: native hosted Goal end-to-end wall clock, native child token usage, Scout capsule spawn cost and cold-cache Newman re-hashing. Agent token savings were not claimed. Native hosted Goal end-to-end and installed ELI5 invocation were not performed.
 - Synchronize the Claude marketplace, both plugin manifests and current documentation to `0.11.0`. Lifecycle statuses, audit gates, evidence provenance and every STATE/WORK artifact contract are unchanged, so no protocol migration is required.
 
-## Unreleased - R18 telemetry cleanup and hosted config boundaries
+### R18 telemetry cleanup and hosted config boundaries
 
 - Prune settled telemetry inflight files when a new telemetry dispatch starts, preserving only the file whose `step_id` is the live reserved step. An interrupted supervisor no longer accumulates files, and another session's live record is untouched.
 - State next to the settings that `budget.total_tokens` and `concurrency.read_only` apply to standalone Autopilot only: hosted native token usage is unmeasured and hosted children are dispatched sequentially. Read-only roles keep read-only permissions; no hosted read-only parallelism is introduced.
 - Retain Protocol `1.8.0`.
 
-## Unreleased - R16 in-process routing reuse
+### R16 in-process routing reuse
 
 - Build the hosted model registry, capability registry and route engine once per CLI process and share them across the primary, Scout and candidate routes of one dispatch. Model selection, effort, candidate order and capability fallback are unchanged.
 - The cache key is the loaded model configuration, so a changed policy still builds its own registry. Policy YAML was already read once at command startup and is never re-read here.
 - Retain Protocol `1.8.0`.
 
-## Unreleased - R15 lease renewal scope
+### R15 lease renewal scope
 
 - Separate read-only ownership verification from lease renewal. `dispatch`, `guard-status`, `scout-validate` and `session-status` now open a deferred SQLite transaction, verify the current owner and the pending-child fence, and leave `expires_at` untouched.
 - Only `bootstrap`, `bootstrap-finalize`, `step-start`, `step-finish`, `session-start`, `session-checkpoint` and `session-recover` extend the lease, so polling cannot keep a dead owner alive and a long-running child is still covered by its lifecycle edges.
 - Retain TTL, ownership, inflight and recovery semantics unchanged. Retain Protocol `1.8.0`.
 
-## Unreleased - R14 incremental PR/Postman refresh
+### R14 incremental PR/Postman refresh
 
 - Record a Postman request-structure digest with each delivered branch and refuse a later WORK on that branch that rewrites the structure while `api_endpoints` is unchanged. Source unrelated to the HTTP surface no longer regenerates unrelated requests.
 - Refresh `head_sha`, `base_sha`, branch range, PR body, test results, content hashes and provenance on every WORK as before, and keep declared-endpoint coverage as the change signal for the requests themselves.
 - Add the optional `postman_structure_sha256` branch field. Legacy branch records without it stay valid and are compared only once recorded. Retain Protocol `1.8.0`.
 
-## Unreleased - R13 audit-scope delivery checks
+### R13 audit-scope delivery checks
 
 - A `work`-scope audit verifies that item's own source, comment anchors and branch delivery evidence instead of repeating the domain-wide `delivery check`. `audit apply` already runs the full domain-wide delivery validation and rejects the transition.
 - `phase` and `integration` audits keep the full `delivery check`, and integration closure keeps `--final` for extant branch tips. Damaged evidence on any item still fails an applied audit.
 - Retain Protocol `1.8.0`: audit obligations, finding taxonomy and gate authority are unchanged; only the redundant instruction is removed.
 
-## Unreleased - R12 role instruction single source
+### R12 role instruction single source
 
 - Add `core/protocol/role-instructions.md` as the ownership matrix: every rule class names one authoritative protocol or schema, and skills and render prompts keep only role steps, boundaries, receipts and pointers.
 - Remove the ELI5/Newman planning obligations duplicated between `core/prompts/plan.md` and `skills/plan/SKILL.md`, and the whole-work review checklist duplicated between `core/prompts/audit.md` and `skills/audit/SKILL.md`. Role input bytes drop and each remaining consumer points at its owner.
 - Preserve every obligation: the finalization protocol still owns the evidence bar, and `skills/run/SKILL.md` keeps its Finalize support. Retain Protocol `1.8.0`.
 
-## Unreleased - R11 finalizer manifest and role contract
+### R11 finalizer manifest and role contract
 
 - Replace the whole-work inline WORK dump with a normalized manifest of `id`, `status`, `kind`, `risk`, `phase`, `commit`, `review`, `changed_files`, recorded verification and the exact `work_file`, paged 60 rows at a time through `--manifest-page`.
 - Add `core/prompts/finalize-role.md` as the finalizer's own contract, carrying the run skill's finalize rules and the Newman-before-ELI5 order. The run skill keeps its Finalize support, and both still render the same `finalize` packet and `finalization` protocol.
 - Preserve whole-work scope: the finalization scope hash, ELI5 metadata, all WORK dispositions and all branch evidence are unchanged. Protocol remains `1.8.0`.
 
-## Unreleased - R10 evidence-first diagnostician input
+### R10 evidence-first diagnostician input
 
 - Route the read-only Diagnostician child to the bounded evidence index, now carrying recorded verification output, and name the authoritative run packet as an on-demand fallback.
 - Keep `attempt == diagnose_at` routing and the read-only completion contract unchanged. Diagnosis still reads repository sources and command output directly. Protocol remains `1.8.0`.
 
-## Unreleased - R09 bounded scout input and capsule freshness
+### R09 bounded scout input and capsule freshness
 
 - Add `render evidence`, a bounded read-only navigation projection of the action, its verification targets, referenced files and failure evidence. Scout children receive it instead of the full action packet and open the cited originals on demand.
 - Bind a hosted scout capsule to an evidence digest in addition to the action fingerprint. `scout-validate` records the digest on first success and reports `stale` after the source, verification target, failure evidence or HEAD moves.
 - Define `scout_on_retry` as "no current capsule" and let `dispatch --scout-cached` reuse one. Invalid, stale, same-model and oversized capsules still fall back to the authoritative packet. Protocol remains `1.8.0`.
 
-## Unreleased - R08 finalization projection and shared digests
+### R08 finalization projection and shared digests
 
 - Stop a state projection at the first definitive finalization error and keep the existing `finalize` action and reason. An error-free projection still needs the complete evidence check, and explicit finalization checks, `delivery finalize` and integration validation keep collecting every error.
 - Share Newman raw and server log digests only inside one invocation, re-checking resolved path, size and change times, failing a file that changes while it is read, never caching failures and discarding the scope on return or error. Later invocations re-read content and detect byte changes.
 - Retain Protocol `1.8.0`: statuses, gate meaning and evidence provenance are unchanged.
 
-## Unreleased - R07 shared Git inspection in validation
+### R07 shared Git inspection in validation
 
 - Share `rev-parse`, `merge-base`, `diff` and `show` results across one validation invocation when every pinned ref is a full commit SHA. Mutable refs, artifact contents and external files always read fresh, and no inspection survives the invocation.
 - Read one source blob per path so several anchors parse the same file once. Different roots, heads and starts never share results. Protocol remains `1.8.0`: verdict rules and evidence provenance are unchanged.
 
-## Unreleased - R06 pinned hosted child render
+### R06 pinned hosted child render
 
 - Pin every hosted child render with the dispatch action fingerprint and projected HEAD. Render rejects a moved fingerprint or HEAD with exit `2`, no packet and no STATE write, and `--check-only` runs the same guards while emitting nothing.
 - Replace the child initial full status with the pinned render, or with pinned `--check-only` before a scout capsule. Mutating children keep their post-change status receipt and read-only roles keep `--no-refresh`. Manual render without pins is unchanged.
 - Retain Protocol `1.8.0`: CLI options are additive, existing lifecycle gates and audit/approval authority are unchanged, and a child blocker returns to its parent instead of selecting another action.
 
-## Unreleased - R05 invocation WORK snapshots
+### R05 invocation WORK snapshots
 
 - Reuse one WORK document/index snapshot across each status, render or state projection, and compute render's current action once. Audit output readers reuse the same documents, including empty files; custom WORK paths keep their existing fallback.
 - End the snapshot at invocation scope, including exceptions. Read fresh WORK and HEAD on later calls and rebuild prospective override indexes without contaminating the base snapshot.
 - Retain Protocol `1.8.0`: lifecycle decisions, mutation checks, STATE/WORK formats and cross-process freshness remain unchanged. Benchmark counters distinguish index requests from actual builds and WORK YAML reads.
 
-## Unreleased - R03 resource checkpoints
+### R03 resource checkpoints
 
 - Add an explicit hosted session checkpoint after acknowledged action progress and child completion. Renew ownership and reset only the resource step segment atomically; preserve retry and cycle counters across checkpoints, session replacement, expiry and recovery.
 - Keep the default 100-step segment and policy overrides. Reject pending children, invalid ownership, exhausted semantic guards and a latest capability blocker. Legacy progress permits one migration checkpoint only with positive persisted action-transition evidence.
 - Retain Protocol `1.8.0`: optional operational progress fields remain backward-readable, without STATE/WORK changes or automatic child dispatch. Native child termination remains a supervisor-observed fact.
 
-## Unreleased - R04 read-only projections
+### R04 read-only projections
 
 - Add opt-in no-refresh status and render commands that derive current HEAD and actions without changing STATE bytes or mtime. Scout and Diagnostician use these commands, including conditional authoritative-packet fallback.
 - Preserve default refresh and live render mismatch checks against current WORK. Protocol remains `1.8.0`; CLI options are additive and no lifecycle fields or permissions change.
 
-## Unreleased - R02 session fencing
+### R02 session fencing
 
 - Preserve expired and orphan inflight reservations as fences for hosted and standalone execution. Check idle progress and release hosted ownership in one SQLite transaction.
 - Add explicit administrator-attested recovery of the original owner and step, with atomic retry accounting, lease release and an exact-once private audit receipt. Reject malformed progress and receipts without changing ownership.
 - Retain Protocol `1.8.0`: SQLite operational progress remains backward-readable and STATE/WORK schemas and lifecycle artifacts are unchanged. Recovery attests trusted termination facts; it does not verify native child termination or authorize a supervisor to assert it.
 
-## Unreleased - R17 Newman tool checks
+### R17 Newman tool checks
 
 - Check the Newman executable and version before starting an owned server. Missing, invalid, nonzero or timed-out tool checks persist the existing `execution`/`tool` blocker and `fix_tool` guidance with server stages marked `not_run`.
 - Preserve readiness, owned-process liveness, cleanup and source/evidence verification. Protocol remains `1.8.0`: old receipts remain readable and no STATE/WORK or schema fields change.
 
-## Unreleased - R00 lifecycle measurement
+### R00 lifecycle measurement
 
 - Ship a reproducible lifecycle benchmark with committed comment anchors, evidence-tamper checks, validated CLI response meanings, raw timing samples and automatic fixture cleanup.
 - Record YAML/Git/evidence-read/hash counters and warm-cache/source metadata; opt into expensive Newman and delivered-WORK sweeps explicitly. Synthetic reports and CLI-only steps do not claim native agent execution or token measurements.
 - Retain Protocol `1.8.0` and plugin versions: measurement tools do not change lifecycle artifacts or runtime contracts.
 
-## Unreleased - R01 hosted telemetry
+### R01 hosted telemetry
 
 - Require the reserved attempt explicitly for hosted telemetry and expose machine-readable failure reasons while retaining fail-open execution.
 - Add telemetry schema v3 with optional caller-reported UTF-8 context bytes and measured stage durations, explicit unmeasured token usage and backward-readable v2 inflight completion.
@@ -620,6 +621,6 @@ Protocol 1.7.0: whole-domain installed-ELI5 HTML; foreground Newman runs; privat
 
 ## 0.1.0
 
-- Initial DevFlow protocol extracted from vibecoder.md.
+- Initial DevFlow protocol extracted from the historical `vibecoder.md` design review (preserved in Git history).
 - Added plan, run, audit, status lifecycle.
 - Added STATE/WORK validation and prompt rendering runtime.

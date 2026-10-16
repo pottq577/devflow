@@ -73,7 +73,7 @@ class RoleInstructionTests(unittest.TestCase):
             for path in sorted((PLUGIN / "core" / "protocol").glob("*.md"))
             + sorted((PLUGIN / "core" / "schemas").glob("*.yaml"))
             if path.name not in owned
-            and path.name not in {"role-instructions.md", "vibecoder.md"}
+            and path.name != "role-instructions.md"
         ]
         self.assertEqual(unscoped, [])
 

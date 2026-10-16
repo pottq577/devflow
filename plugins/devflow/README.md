@@ -5,11 +5,11 @@ DevFlow is a state-based development protocol for agentic coding workflows.
 It keeps product and domain intent in PRD, repository implementation intent in PLAN, executable changes in WORK, independent review in AUDIT, accumulated domain traps in PITFALLS, and lifecycle position in STATE.
 The normative runtime contract is `core/protocol/*.md` plus the `core/schemas/` files, because runtime validation derives directly from them.
 [role-instructions.md](core/protocol/role-instructions.md) names the single owner of each rule class, so a skill or render prompt points at a protocol instead of restating it.
-`core/references/vibecoder.md` is the original design rationale and is kept for background, not as the current contract.
+The initial design review is available in repository history; it is not a current contract.
 
 The point is that a fresh session reconstructs what to do next by running one command instead of reading a pile of narrative documents, and that the knowledge each cycle bought does not evaporate when the session ends.
 
-## Hosted Goal efficiency (0.11.0)
+## Hosted Goal context and execution boundaries
 
 Hosted child dispatches are cheaper without changing any lifecycle gate:
 
@@ -20,16 +20,13 @@ Hosted child dispatches are cheaper without changing any lifecycle gate:
 - `audit apply` still runs the full domain-wide delivery validation, so a `work`-scope audit no longer repeats the domain-wide `delivery check` itself.
 - `dispatch`, `guard-status`, `scout-validate` and `session-status` verify ownership without extending the lease; only lifecycle edges renew it.
 
-What was measured: on one machine, the committed benchmark, from `b3be7af` to 0.11.0, and the
-follow-up measurements in the changelog entry above. `b3be7af` is later than the R05 commit
-`36d0fc9`, so the 0.11.0 figures cover R06-R18 only and say nothing about R02-R05. They are CLI
-component and input-volume numbers, one `validate`, one child packet, one `render finalize` page:
-not a native hosted Goal end-to-end measurement.
+CLI component and input-volume measurements, including their commit-specific baselines and
+limitations, are recorded in [CHANGELOG](CHANGELOG.md). They are not native Goal end-to-end results.
 
 `budget.total_tokens` and `concurrency.read_only` are standalone Autopilot settings. Hosted native
 token usage is unmeasured and hosted children run sequentially.
 
-## Optional peer-skill composition (0.10.2)
+## Optional peer-skill composition
 
 The `plan`, `run`, and `audit` skills select relevant installed Vercel, Matt Pocock, or Trail of Bits disciplines through `core/protocol/skill-composition.md`. Selection depends on the current work and changed files. Peer skills cannot select WORK, own routing, add mandatory artifacts, or waive audit requirements. `setup-matt-pocock-skills` requires an explicit out-of-lifecycle request; Trail of Bits standalone review workflows are not invoked inside a DevFlow audit. Absent peer skills do not block ordinary actions.
 
@@ -177,9 +174,11 @@ command. A moved action fingerprint or HEAD exits `2` without output or STATE wr
 `render --check-only` runs the same guards while printing nothing. The compact scout-backed
 path validates with `--check-only` before its capsule, so no child starts with a full status.
 
-## Autonomous `/goal` routing (0.10.1 / protocol 1.8.0)
+## Autonomous `/goal` routing
 
-Version 0.10.0 routes `fast` to `gpt-6-luna`, `balanced` to `gpt-5.6-terra`, and `frontier` to `gpt-6.1-sol`. Stable aliases live in `core/routing/default.yaml`; concrete model identifiers and supported efforts live in `core/routing/models.yaml`.
+Resolve current routing aliases in `core/routing/default.yaml` and concrete models, supported
+reasoning efforts, and compatibility in `core/routing/models.yaml`. Historical version notes in
+[CHANGELOG](CHANGELOG.md) do not override these active policies.
 
 DevFlow has two lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Both consume the same `STATE -> compute_next_action()` result and stop at completion, a human or blocker gate, or an explicit execution boundary.
 
@@ -391,12 +390,8 @@ DevFlow already owns task selection, reviews, remediation, and completion, so a 
 Plugin version `0.11.1` ships protocol version `1.8.0`.
 These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
 Plugin `0.11.1` preserves the STATE/WORK schemas, enum values, lifecycle transitions and audit gates. Older branch records without `postman_structure_sha256` remain readable and need no migration, and `delivery check`, `validate` and `delivery newman` apply the same rule to them: the absent optional digest is not compared, a recorded one always is. New Scout bindings are transient runtime evidence; older capsules without a binding are treated as stale and trigger a fresh Scout or authoritative-packet fallback. Native hosted Goal end-to-end acceptance and actual invocation of installed ELI5 remain pending.
-Plugin `0.11.0` added CLI options, the optional branch field (`postman_structure_sha256`) and `core/protocol/role-instructions.md`; these remain part of the `1.8.0` contract.
 
-Protocol 1.5 adds `audit_provenance.applied_against` so a persisted closure validates against the same prior finding set used by `audit apply`, while `audit_provenance.findings` remains the basis for the next closure.
-It also makes the documented work and plan legacy recovery commands reach an initial audit and lets closed decision findings reference resolved decision records.
-A protocol 1.4 runtime does not know the new validation basis and cannot safely claim full support for an artifact that carries it, which is why this is a protocol minor bump instead of a plugin-only release.
-Protocol 1.4 made closure provenance machine-owned, and protocol 1.3 added explicit workflow type, audit front matter and `audit apply`, lifecycle-aware render guards, finding/decision/WORK traceability, and WORK v2 acceptance coverage.
+Historical protocol feature introductions are recorded in [CHANGELOG](CHANGELOG.md).
 
 Protocol 1.0 through 1.4 artifacts remain backward-readable.
 `audit_provenance` is optional and is required only when a closure audit is applied or validated.
@@ -416,7 +411,7 @@ When `.devflow/config.yaml` exists, its `protocol_version` is a floor.
 The audit-apply gate decides from the higher of the STATE and config versions, so hand-editing `STATE.protocol_version` below the config cannot re-enable `plan-review set`, `work review`, `phase set`, or `integration set` `verified` on a project `init` recorded at 1.3 or newer, and `validate` reports STATE declaring an older protocol than the config as an error.
 A project with no config file, or one whose config genuinely records the older version, keeps the legacy verified transitions.
 
-## Comments, branch PR bodies and Postman collections (0.7.0 / protocol 1.6)
+## Comments, branch PR bodies and Postman collections
 
 New domains enable the delivery gate automatically.
 Existing domains keep their current documents; the plan/run skills adopt the policy with this command before continuing:
@@ -542,7 +537,7 @@ Newman report fixtures are synthetic; native agent duration and token usage rema
 All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
 Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
 
-## Whole-work finalization (0.10.1 / protocol 1.8.0)
+## Whole-work finalization
 
 Read `core/protocol/finalization.md` for the normative procedure.
 Existing completed WORK remains intact after `delivery enable`; the new field is additive.

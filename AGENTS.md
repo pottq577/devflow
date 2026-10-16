@@ -30,7 +30,7 @@ Resolve conflicts in this order:
 5. Current plugin README, skills, prompts, templates and changelog.
 6. Root marketplace documentation and historical records.
 
-Verify actual behavior when documents and code disagree; repair drift in the affected layers. `plugins/devflow/core/references/vibecoder.md` and local `docs/` records are historical context, not current contracts.
+Verify actual behavior when documents and code disagree; repair drift in the affected layers. Historical release records and local `docs/` material are context, not current contracts.
 
 ## Keep one shared implementation
 
