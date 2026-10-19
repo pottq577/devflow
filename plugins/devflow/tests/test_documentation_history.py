@@ -64,6 +64,18 @@ class DocumentationHistoryTests(unittest.TestCase):
         self.assertNotIn("## Hosted Goal efficiency (0.11.0)", self.plugin_readme)
         self.assertNotIn("## Autonomous `/goal` routing (0.10.1", self.plugin_readme)
 
+    def test_plugin_readme_is_a_compact_entrypoint(self) -> None:
+        self.assertLessEqual(len(self.plugin_readme.splitlines()), 200)
+        for owner in (
+            "core/protocol/role-instructions.md",
+            "core/protocol/lifecycle.md",
+            "core/protocol/host-telemetry.md",
+            "core/protocol/delivery-artifacts.md",
+            "core/protocol/finalization.md",
+        ):
+            with self.subTest(owner=owner):
+                self.assertIn(f"]({owner})", self.plugin_readme)
+
     def test_release_entries_are_nested_without_claiming_native_acceptance(self) -> None:
         self.assertIn("## Unreleased (post-0.11.1)", self.changelog)
         self.assertNotRegex(self.changelog, r"(?m)^## Unreleased - R\d")

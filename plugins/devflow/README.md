@@ -1,607 +1,159 @@
-# DevFlow Plugin
+# DevFlow plugin
 
-DevFlow is a state-based development protocol for agentic coding workflows.
+DevFlow runs repository-grounded planning, one-item implementation, independent audits, and delivery finalization. Use this page to start or resume a domain, choose a skill, and run verification. The authoritative rules live in [`core/protocol/role-instructions.md`](core/protocol/role-instructions.md), its owned protocols, and `core/schemas/`.
 
-It keeps product and domain intent in PRD, repository implementation intent in PLAN, executable changes in WORK, independent review in AUDIT, accumulated domain traps in PITFALLS, and lifecycle position in STATE.
-The normative runtime contract is `core/protocol/*.md` plus the `core/schemas/` files, because runtime validation derives directly from them.
-[role-instructions.md](core/protocol/role-instructions.md) names the single owner of each rule class, so a skill or render prompt points at a protocol instead of restating it.
-The initial design review is available in repository history; it is not a current contract.
+Plugin version `0.11.1` ships artifact protocol `1.8.0`. See [CHANGELOG](CHANGELOG.md) for historical behavior and release notes; historical design reviews are available only through Git history.
 
-The point is that a fresh session reconstructs what to do next by running one command instead of reading a pile of narrative documents, and that the knowledge each cycle bought does not evaporate when the session ends.
+## Requirements and entrypoints
 
-## Hosted Goal context and execution boundaries
-
-Hosted child dispatches are cheaper without changing any lifecycle gate:
-
-- A read-only Scout or Diagnostician child starts from `devflow render evidence <domain>`, a bounded index of the action, its verification targets, referenced files and failure evidence, and opens the cited originals itself.
-- Every hosted render carries `--expected-head` and `--expected-fingerprint`; a moved action or HEAD exits `2` without output or STATE writes, and `--check-only` runs the same guards while printing nothing.
-- A scout capsule is reusable only while its text, action fingerprint, evidence digest and cited source fingerprints agree; `scout-bind` writes that provenance once, `scout-validate` reports `stale` without ever re-signing it, and `scout_on_retry` asks for a new scout only when no current capsule exists.
-- `devflow render finalize` emits a normalized, paged WORK manifest with exact `work_file` paths instead of inlining every WORK document. Scope is unchanged: every disposition and branch still reaches ELI5 and the final gates. Whole WORK rows stay inside `scope_sha256`; the first page carries the PRD, PLAN, pinned sources, branches, runs and the appended protocol, and later pages carry their manifest slice, the digest and the item count.
-- `audit apply` still runs the full domain-wide delivery validation, so a `work`-scope audit no longer repeats the domain-wide `delivery check` itself.
-- `dispatch`, `guard-status`, `scout-validate` and `session-status` verify ownership without extending the lease; only lifecycle edges renew it.
-
-CLI component and input-volume measurements, including their commit-specific baselines and
-limitations, are recorded in [CHANGELOG](CHANGELOG.md). They are not native Goal end-to-end results.
-
-`budget.total_tokens` and `concurrency.read_only` are standalone Autopilot settings. Hosted native
-token usage is unmeasured and hosted children run sequentially.
-
-## Optional peer-skill composition
-
-The `plan`, `run`, and `audit` skills select relevant installed Vercel, Matt Pocock, or Trail of Bits disciplines through `core/protocol/skill-composition.md`. Selection depends on the current work and changed files. Peer skills cannot select WORK, own routing, add mandatory artifacts, or waive audit requirements. `setup-matt-pocock-skills` requires an explicit out-of-lifecycle request; Trail of Bits standalone review workflows are not invoked inside a DevFlow audit. Absent peer skills do not block ordinary actions.
-
-## Commands and skills
-
-| Skill       | Role            | Does                                                          |
-| ----------- | --------------- | ------------------------------------------------------------- |
-| `plan`      | Architect       | Repository-grounded architecture and WORK generation          |
-| `run`       | Executor        | One WORK item, or the computed whole-work finalization action |
-| `audit`     | Auditor         | Independent plan, work, phase, and integration verification   |
-| `status`    | none            | Deterministic next-action reconstruction                      |
-| `goal`      | Goal Supervisor | Bootstrap/resume a complete foreground autonomous goal        |
-| `autopilot` | Controller      | Inspect, start, resume, and diagnose routed execution         |
-
-## Runtime dependency
-
-Python 3.10+ and PyYAML 6.x:
+Install Python 3.10+ and the Python dependencies from the plugin directory:
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
-## Runtime commands
+All commands below run from the consuming repository root. Use the installed skills for conversational operation, or the `devflow` CLI wrapper for explicit commands. Each skill resolves its own plugin path on Claude Code and Codex; `bin/devflow` is an optional PATH wrapper.
+
+| Skill | Responsibility |
+| --- | --- |
+| `plan` | Architect: PRD to repository-grounded PLAN, WORK, and decisions |
+| `run` | Executor: the selected WORK or whole-work finalization |
+| `audit` | Auditor: independent plan, work, phase, or integration review |
+| `status` | Read the computed state and next action |
+| `goal` | Host-native foreground Goal supervisor |
+| `autopilot` | Standalone routed-controller entrypoint and diagnostics |
+
+The runtime computes the next action from STATE and WORK. Do not select a different WORK, bypass a review, or manually edit machine-owned state. Role instructions come from the rendered packet; skill wrappers are entrypoints, not copies of protocol rules.
+
+## Start or resume a domain
+
+Initialize a new delivery domain from approved requirements, or adopt a legacy domain without resetting completed WORK:
 
 ```bash
-devflow init <domain> [--prd <path>] [--risk low|medium|high|critical] [--workflow delivery|audit-remediation] [--extension <name>]
-devflow status <domain> [--json]
-devflow next <domain> [--json]
-devflow validate <domain>
+devflow init <domain> --prd <path>
 devflow delivery enable <domain>
-devflow delivery paths <domain> [--branch <name>]
-devflow delivery check <domain> [--final]
-devflow delivery refresh <domain> --branch <name>
-devflow delivery context <domain>
-devflow delivery explain <domain> --skill-file <actual-SKILL.md> --invocation '<actual invocation evidence>'
-devflow delivery newman <domain> --branch <name> --base-url <test-url> \
-  --server-command '["./build/test-server","--port","8080"]' \
-  --readiness-url <readiness-url> --server-sha <build-sha> --safety-note '<isolation evidence>'
-devflow delivery triage <domain> --run-id <id> --classification code|collection|environment|unknown --reason '<evidence>' [--work-id <ID>]
-devflow delivery finalize <domain>
-devflow render finalize <domain>
-
-devflow render plan  <domain>
-devflow render run   <domain> [--task <ID>]
-devflow render audit <domain> --scope plan|work|phase|integration [--task <ID>] [--phase XX] [--mode initial|closure]
-devflow audit apply  <domain> --scope plan|work|phase|integration [--task <ID>] [--phase XX] [--mode initial|closure]
-
-devflow work start <domain> <ID>
-devflow work done  <domain> <ID> --commit <sha> --command '<cmd> -> <result>' [--changed-file ...]
-devflow work block <domain> <ID> --reason "..."
-devflow work unblock <domain> <ID> --reason "..."
-devflow work wait-external <domain> <ID> --reason "..." --missing-evidence "..."
-devflow work resume <domain> <ID> --reason "..."
-devflow work review <domain> <ID> verified|remediation|blocked|pending [--remediation-work <ID>]
-
-devflow phase set <domain> <phase> <status>
-devflow phase ref <domain> <phase> --base <ref> --head <ref> [--range <explicit>]
-devflow plan-review set <domain> pending|verified|skipped
-devflow integration set <domain> <status>
-devflow decision add|resolve <domain> <ID>
+devflow status <domain> --json
 ```
 
-`render` and `audit apply` accept only the exact scope, mode, phase, and WORK target reported by `status`.
-A mismatch exits before a packet or lifecycle mutation is produced.
-`audit apply` reads the canonical audit Markdown selected by STATE or WORK, validates its YAML front matter and traced artifacts, and commits the accepted lifecycle transition atomically.
+Use `devflow status <domain>` before each action. The reported next action determines the role, scope, mode, and WORK target. For audit-only remediation of an existing codebase, initialize with `--workflow audit-remediation`; it does not invent phases.
 
-Every lifecycle mutation command (`work start|done|block|unblock|wait-external|resume|review`, `phase set|ref`, `plan-review set`, `integration set`, `decision add|resolve`) projects its prospective state on copies and commits the changed STATE and WORK together in one transaction.
-A rejected lifecycle mutation writes nothing.
-Explicit `delivery newman` executions persist attempt evidence on success, assertion failure and execution blockers, including nonzero exits. Rejected preflight returns structured exit-2 diagnostics without appending a Newman run or changing STATE.
-`validate` reports structural defects; it never rewrites STATE to normalize them.
+### Manual plan, run, and audit
 
-The legacy `plan-review set`, `work review`, `phase set`, and `integration set` commands remain available for protocol 1.2 and older artifacts.
-Protocol 1.3 verified audit transitions go through `audit apply` so they cannot bypass audit metadata validation.
+Render the indicated role's authoritative instructions, perform the bounded work, and record evidence through the CLI:
 
-`phase set` and `phase ref` operate on a phase that already exists in `STATE.yaml`, or on one whose `work/phase-XX.yaml` is on disk.
-They refuse anything else rather than inventing a phase entry, since a mistyped number would otherwise sit in STATE and block integration forever.
+```bash
+devflow render plan <domain>
+devflow render run <domain> --task <ID>
+devflow work start <domain> <ID>
+devflow work done <domain> <ID> --commit <sha> --command '<command> -> <result>'
+devflow render audit <domain> --scope work --task <ID> --mode initial
+devflow audit apply <domain> --scope work --task <ID> --mode initial
+```
 
-External evidence waits remain protocol 1.8 compatible: the persisted WORK status stays `blocked`, while additive `block_kind: external` and `evidence.external_wait` metadata let current runtimes distinguish evidence/access waits from execution blockers. The scheduler continues independent dependency branches and work-review closures before it emits a human `provide-evidence` handoff.
+These are example command shapes, **not** a sequence to execute unconditionally. `status` chooses which command is valid; an audit might target `plan`, `phase`, or `integration` rather than `work`. `render` and `audit apply` reject mismatched scope or target. Source changes require an ordinary WORK; completed audits are applied from canonical Markdown and schema-conformant YAML front matter.
 
-A verified remediation can reduce operational risk without proving the historical fact that created an evidence wait. Record the verified WORK under `evidence.mitigation` and keep any remaining uncertainty under `evidence.residual_risks`. This metadata never marks the waiting WORK done and never creates an execution dependency.
+Use `devflow validate <domain>` to check artifacts without silently rewriting them. Record unresolved decisions in DECISIONS and operational traps in PITFALLS. The lifecycle rules and command guards live in [`lifecycle.md`](core/protocol/lifecycle.md), [`work-item-contract.md`](core/protocol/work-item-contract.md), and [`audit-core.md`](core/protocol/audit-core.md).
 
-`bin/devflow` is a thin wrapper if you prefer a bare command name on `PATH`.
-Skills invoke `scripts/devflow.py` through each skill's `scripts/invoke.py`, which resolves the plugin root from its own location and so works from any working directory.
+## Run Goal or Autopilot
 
-`render` emits a complete prompt: the role packet, the runtime context, the relevant protocol documents inline, the resolved domain extension for audits, and the domain's `PITFALLS.md`.
-There is nothing further to open by hand.
-Protocol selection is action-aware: ordinary plan/run and plan/work/phase audit packets omit `finalization.md`; finalization, enabled integration audits and traced Newman repair WORK include it.
+In a Codex session with host-native subagents, invoke the `goal` skill. It uses the host supervisor to dispatch one routed specialist at a time; it does **not** start nested `codex exec` or the standalone Autopilot controller.
 
-Its context is deliberately bounded.
-Plan render includes the full approved PRD.
-Run render includes the selected WORK plus exact origin-linked PRD and PLAN sections.
-Work and phase audit render include scope-linked WORK and origin context.
-Integration render supplies the current PLAN, phase manifest, audit paths, and integration WORK without inlining every phase WORK body.
-Finalize render supplies the whole-work scope and HTML metadata plus a normalized WORK manifest of
-`id`, `status`, `kind`, `risk`, `phase`, `commit`, `review`, `changed_files`, recorded verification
-and each item's exact `work_file`, 60 rows per page. Fetch more with `--manifest-page <n>` and read
-an item's full original document when its summary is not enough. Every WORK disposition and branch
-stays in scope for ELI5 and the final gates.
-This is bounded lifecycle context assembly rather than semantic repository RAG. Autopilot reuses these packets for isolated specialist dispatches.
-
-Use `devflow status <domain> --no-refresh` or `devflow render <action> <domain> --no-refresh`
-to project the latest lifecycle state and HEAD without updating STATE. Scout and Diagnostician
-messages use these options; mutating children keep the normal refresh behavior. The options
-avoid STATE writes and do not enforce operating-system read-only permissions.
-
-Each status, render or state projection shares one invocation-local WORK document/index
-snapshot. Later calls read fresh WORK and HEAD; prospective mutations build their own overlays.
-Render validates the requested action against that single projection before updating STATE.
-
-`devflow render evidence <domain>` prints a bounded read-only index: the current action and
-fingerprint, the selected WORK objective, acceptance ids, verification commands, premise checks,
-changed files, comment anchor paths, commits, block and external-wait reasons, recorded findings,
-the delivery and Newman index, and the exact original artifact paths. It never inlines the action
-protocol, PRD, PLAN or WORK bodies and never states a lifecycle result. Scout children receive it
-instead of the full action packet. The Diagnostician child receives the same index and renders the
-authoritative run packet only when it must judge the execution contract itself. Its `limits` block
-states the contract: each free-text value is capped at 400 characters, verification rows at 12,
-other indexed rows at 40, and the complete rendered index including its wrapper at 32,768 UTF-8
-bytes. Shortened strings report their original size, omitted rows are counted, and originals remain
-available at their named paths.
-
-A hosted Scout capsule is reusable only while its text, action fingerprint and creation snapshot
-agree. The snapshot covers the selected WORK and related WORK files, cited references and
-verification evidence, root and ancestor `AGENTS.md` or `CLAUDE.md` files, routing settings, and
-the Scout role, prompt and lifecycle instructions. It fingerprints scoped file bytes and Git index
-entries, so relevant staged and unstaged changes stale the capsule while unrelated staged files do
-not. `scout-bind` accepts only the completed Scout step's `<step_id>.md` output and consumes its
-receipt once; `scout-validate` only reads the binding. A new reference outside the original
-snapshot is unconfirmed and falls back to a fresh Scout or the authoritative packet. The capsule
-does not prove that Scout opened any cited source.
-`orchestration.scout_on_retry` asks for a new scout only when no current capsule exists, and
-`dispatch --scout-cached` declares one that the host then re-verifies before it skips a scout.
-
-Finalization state projections stop at the first definitive finalization error and keep the same
-`finalize` action and reason; an error-free projection still runs the complete evidence check before
-it releases an audit or project completion. Newman raw and server log digests are shared only within
-one invocation, after re-checking path, size and change times, and never across invocations.
-
-`delivery check` and delivery validation share each successful Git inspection that is pinned to full
-commit SHAs within one invocation, and read one source blob per path for several comment anchors.
-Mutable refs and artifact contents stay fresh reads, and nothing is reused across invocations.
-
-Hosted children receive `--expected-fingerprint` and `--expected-head` pins with their render
-command. A moved action fingerprint or HEAD exits `2` without output or STATE writes, and
-`render --check-only` runs the same guards while printing nothing. The compact scout-backed
-path validates with `--check-only` before its capsule, so no child starts with a full status.
-
-## Autonomous `/goal` routing
-
-Resolve current routing aliases in `core/routing/default.yaml` and concrete models, supported
-reasoning efforts, and compatibility in `core/routing/models.yaml`. Historical version notes in
-[CHANGELOG](CHANGELOG.md) do not override these active policies.
-
-DevFlow has two lifecycle surfaces: manual `plan/run/audit/status` operation and foreground Autopilot. Both consume the same `STATE -> compute_next_action()` result and stop at completion, a human or blocker gate, or an explicit execution boundary.
-
-Inside a Codex host session, `/goal` uses host-native sub-agents. The Goal Supervisor asks `scripts/devflow_host.py` for one deterministic dispatch at a time, then passes the routed model, reasoning effort, and compact repository-recovery message to `spawn_agent`. The child renders the authoritative packet from the repository instead of receiving a copied PRD/PLAN/WORK packet from a nested `codex exec` session.
+Use these commands for standalone foreground operation and inspection:
 
 ```bash
 devflow autopilot capabilities
-devflow autopilot bootstrap billing --requirements-file .devflow/runtime/billing/goal-requirements.md
-devflow autopilot route billing
-devflow autopilot start billing [--until plan|implementation|complete]
-devflow autopilot status billing
-devflow autopilot resume billing [--until plan|implementation|complete]
+devflow autopilot bootstrap <domain> --requirements-file <path>
+devflow autopilot start <domain> --until plan
+devflow autopilot start <domain> --until implementation
+devflow autopilot start <domain> --until complete
+devflow autopilot status <domain>
+devflow autopilot resume <domain> --until complete
 ```
 
-For a new hosted `/goal`, the supervisor stores approved requirements verbatim, prepares a host-native Architect bootstrap dispatch, then validates the generated PRD before `devflow init`. Execution controls such as `--until` stay outside the requirements file. Routing policy lives in `core/routing/default.yaml`, while concrete model bindings and capabilities live in `core/routing/models.yaml`. Projects can override them independently with `.devflow/routing.yaml` and `.devflow/models.yaml`.
+`--until plan` stops after planning and required plan review; `--until implementation` stops before integration/finalization; `complete` runs the full lifecycle. These staged boundaries apply only to delivery workflows. Resume an interrupted run when its operational state must be preserved; use a fresh start for a new stage.
 
-Unless a paragraph below says otherwise, timeout, token-budget, dispatch-ledger, and `autopilot status` behavior describes the standalone controller. The host-native Goal path delegates child runtime and cancellation to Codex, keeps scout/diagnosis text in the supervisor session, persists hosted retry/step/cycle counters in the coordinator, and reads lifecycle authority through `devflow status`. Both execution drivers now share one per-domain ownership coordinator: hosted Goals hold a durable session across separate `host.py` invocations, while standalone Autopilot holds its existing PID-owned slot lease. A hosted `session-start` fails if standalone is running; a standalone `start`/`resume` fails if hosted ownership is active. The hosted supervisor passes `--session-id` to every bootstrap/dispatch command and invokes `session-end` only after children finish. Sessions renew on authorized host commands and expire after 24 hours without renewal; refresh the same owner during unusually long waits, and never reclaim a stale session while an older child is still running. A session is operational ownership, not lifecycle authority or an authentication credential.
+The active routing aliases and model capabilities are defined in `core/routing/default.yaml` and `core/routing/models.yaml`. Read [`host-telemetry.md`](core/protocol/host-telemetry.md) for hosted leases, step fencing, recovery, checkpoints, and telemetry. A pending live or unconfirmed child is a blocker, not evidence of termination. Read [`skill-composition.md`](core/protocol/skill-composition.md) for optional Superpowers, Ponytail, Vercel, Matt Pocock, and Trail of Bits peer disciplines; peer skills never replace DevFlow lifecycle authority.
 
-An expired or orphan pending child keeps both drivers blocked until a trusted administrator
-confirms termination. `session-end` checks idle progress and releases ownership atomically.
-To recover, use `python3 plugins/devflow/scripts/devflow_host.py session-recover <domain> --session-id <original-owner>
---step-id <exact-step> --outcome cancelled --confirm-child-terminated --termination-evidence
-"<administrator termination facts>"`. This records `explicit_admin_attestation`, not native child
-termination verified by the runtime. The supervisor cannot invent that confirmation; unknown or
-live children stay blocked. The private SQLite recovery receipt preserves the original step and
-outcome, and repeated identical recovery does not consume retry accounting again. See the
-[session recovery contract](core/protocol/host-telemetry.md#hosted-session-fencing-and-administrator-recovery).
+## Rendered context and evidence
 
-Hosted resource segments default to 100 reserved child spawns. After acknowledged action progress,
-when all children have terminated and the guard is idle, explicitly call
-`python3 plugins/devflow/scripts/devflow_host.py session-checkpoint <domain> --session-id <owner>`.
-Save the returned `session_id` before reserving another child. The atomic checkpoint resets only
-resource steps; retry and cycle counters survive checkpoint, ordinary session replacement, expiry
-and recovery. A latest capability blocker or exhausted semantic guard refuses renewal. Legacy
-records require at least two distinct persisted action visits for one migration checkpoint;
-historical last outcomes cannot be recovered. See the
-[resource checkpoint contract](core/protocol/host-telemetry.md#hosted-resource-checkpoints).
+`devflow render <action>` emits the applicable role contract and selected protocol documents. Plan receives the approved PRD; Run receives one WORK and linked requirements; Audit receives scope-specific context. Finalize uses a paged WORK manifest rather than inlining every WORK body.
 
-Use `--until plan` to finish planning, including required plan review and remediation, then stop before ordinary phase delivery. Use `--until implementation` to finish phase WORK and required work/phase review gates, then stop before integration or whole-delivery finalization. `--until complete` is the default and preserves the existing full lifecycle. Staged boundaries apply only to `delivery` workflows.
-
-A reached boundary writes controller status `checkpoint` and exits successfully before route, render, scout, or specialist dispatch for the next stage. Start the next stage with a fresh `autopilot start` so it gets a new run budget and operational state. Use `autopilot resume` for interrupted or blocked runs that must retain their operational telemetry.
-
-Executor WORK defaults to Luna: implementation, documentation, test and evidence work use `fast/high`; remediation and migration use `fast/xhigh`. Explicit per-WORK high/critical risk raises execution to `xhigh`/`max`, even for a lower-risk domain, while an explicitly low-risk WORK in a critical domain does not inherit the domain-wide maximum. Without item/action risk, execution falls back to domain risk. Retry stages retain `fast/high -> fast/xhigh -> fast/max -> frontier/xhigh diagnosis -> fast/max -> balanced/xhigh`. Timeouts have a separate independent diagnosis path and block on repeated timeout. Critical Luna `max` execution remains fail-closed; project legacy routing overrides remain readable.
-When a backend rejects only a reasoning effort, DevFlow records that model/backend/effort tuple without disabling the model at other effort levels. For a noncritical Worker retry requesting `max`, the resolver tries every configured max-capable candidate/backend before using `xhigh` and records both the requested and selected efforts in the dispatch envelope. Critical `max` execution never falls back to a lower effort. This learned capability state survives standalone `resume`, but not a fresh `start`. Python 3.10 requires the declared `typing_extensions` dependency for `Self`.
-
-Planning, WORK verification, phase audit and finalization prefer GPT-6.1 Sol (`frontier`); critical authority and integration audit use Sol-only `hardest`. Standard `frontier` candidates are `[frontier, balanced]`, so Terra can take over a non-hardest specialist when Sol is unavailable at the routed effort. `hardest` remains `[frontier]` and fails closed. Routine low/medium WORK reviews use the WORK risk, while project-level decision roles retain the domain risk floor. Terra supports `medium/high/xhigh` for pre-analysis and compatible fallback.
-
-Terra scout dispatch is conditional. `orchestration.scout_before` covers integration auditing and diagnosis; `scout_on_critical` adds architect and WORK verifier when effective risk is critical; `scout_on_retry` adds WORK verifier, phase/plan auditor and finalizer after the initial attempt. A scout is skipped if its model matches the specialist or cannot execute. The capsule contract requires six nonempty Markdown sections and at least one cited repository path; `scout_max_chars` (default 12,000) is a hard limit, not a truncation target. Failed, invalid, oversized, unbound, and stale capsules are discarded, preserving the full authoritative packet. Standalone Autopilot omits that packet only with a validated capsule; hosted `/goal` uses `primary.scout_message` only after successful `scout-validate` for the current fingerprint and a different-model scout. Specialists check cited evidence and render the authoritative packet if evidence is missing or inconsistent.
-
-The controller is foreground, bounded, resumable, and observable. It enforces a persisted measured-token dispatch budget with a pre-dispatch reservation (`25,000` specialist / `8,000` scout by default) and holds a cross-process per-domain mutating lease. Retry counts, timeout counts, pending timeout diagnoses, diagnoses, pre-analysis capsules, unavailable candidates, budget usage, and dispatch receipts survive `resume` under `.devflow/runtime/<domain>/`; they are telemetry rather than lifecycle authority. A fresh `start` discards prior-run transient capability and retry telemetry. Unavailable-candidate checkpoints record both alias and concrete model ID, so a remapped alias does not inherit a stale failure from its previous concrete model. Recursive delegation remains policy-controlled and disabled by default. Use `--token-budget TOKENS` on `autopilot start` or `resume` to override the run budget.
-Hosted `/goal` enforces durable execution bounds under the same session ID: `dispatch` and `guard-status` are observational, `step-start` reserves each scout/primary/bootstrap spawn and `step-finish` acknowledges it only after the host wait. Defaults are `orchestration.hosted.max_steps: 100`, `orchestration.hosted.max_action_visits: 4`, and `escalation.retries.max_no_progress: 5`. Stale attempts and concurrent/pending spawns fail closed; resume continues the same counters, and action cycles are blocked after repeated visits. A session cannot end with an unacknowledged child; do not force completion if the child state is unknown. With the default no-progress limit of five, attempts 0 through 5 can execute; the next non-progressing attempt is blocked. This matches the standalone controller and permits the final alternative-model retry. This is a dispatch-count bound, **not a hosted token budget**. Host-native Codex sub-agent token usage is not accurately measured by DevFlow and no fake token balance is recorded.
-
-Hosted dispatch telemetry records scout/primary start and finish events, routed model alias, effort, action, attempt, outcome and elapsed time in `.devflow/runtime/<domain>/host-dispatch.jsonl`. Schema v3 retains the authorized session's reserved `step_id` and action fingerprint, and requires `telemetry-start --attempt` explicitly. Optional `--observations-file` input adds caller-reported UTF-8 packet/protocol/capsule bytes and measured stage durations; absent values and native token usage remain unmeasured. See [the telemetry contract](core/protocol/host-telemetry.md) for units, validation and v2 inflight compatibility. Logging failures return a structured reason, remain fail-open and do not change lifecycle routing or authority. Action fingerprints use stable v2 hashes that include the effective item/action risk and kind, avoiding collisions across distinct work policies; changing fingerprint versions invalidates only transient retry/scout caches, not STATE/WORK. These events do not establish billed token cost.
-Starting a telemetry dispatch prunes settled inflight files and keeps only the live reserved step's
-file. Routing settings `budget.total_tokens` and `concurrency.read_only` apply to standalone
-Autopilot only: hosted native token usage is unmeasured, and hosted children run sequentially, so
-`read_only` does not limit them.
-
-Codex CLI compatibility comes from each model registry entry. `autopilot capabilities` keeps the concrete-ID compatibility view under `models` and `codex_exec.model_compatibility`. It exposes alias-oriented data under `model_registry` and `codex_exec.alias_compatibility`.
-
-Codex process discovery uses `DEVFLOW_CODEX_BIN` to select the raw executable for version probing and dispatch. An invalid explicit value fails closed instead of falling back to another `codex` on `PATH`. DevFlow does not spawn wrapper processes. When the parent session exports `OPENAI_BASE_URL`, including a Codex session started by `headroom wrap codex`, DevFlow passes that URL to each child through an explicit `openai_base_url` config override and reuses the existing proxy. Standalone mutating roles inherit the caller's `default_permissions`; standalone scout and diagnostician roles select the built-in `:read-only` profile. Hosted `spawn_agent` inherits the host permission profile and does not expose a per-child sandbox override; hosted read-only roles are instruction-bound unless the host supplies isolation. Legacy project `sandbox: read-only` overrides remain readable, while `workspace-write` maps to permission inheritance. `autopilot capabilities` reports `transport: inherited_openai_base_url` when this route is active.
-
-## Typical manual flow
-
-Use the parser-supported commands below after planning has created `P01-I01`:
+For bounded read-only Scout/Diagnostician navigation, use:
 
 ```bash
-devflow status billing
-devflow render run billing --task P01-I01
-devflow work start billing P01-I01
-# Implement and verify; commit source/tests first.
-devflow delivery paths billing
-# Fill evidence.comments and evidence.delivery; write/update both branch outputs at returned paths.
-devflow work done billing P01-I01 --commit HEAD --command "python3 tests/test_billing.py -> pass"
-devflow render audit billing --scope work --task P01-I01 --mode initial
-devflow audit apply billing --scope work --task P01-I01 --mode initial
-devflow render audit billing --scope phase --phase 01 --mode initial
-devflow audit apply billing --scope phase --phase 01 --mode initial
+devflow render evidence <domain>
+devflow status <domain> --no-refresh
+devflow render run <domain> --no-refresh
 ```
 
-For high or critical WORK, the initial work audit must verify the review before dependent WORK can start.
-If it creates remediation, complete that traced WORK and render the same work audit with `--mode closure`.
-Independent low and medium WORK is batch-reviewed during the phase audit.
+Hosted child renders pin `--expected-head` and `--expected-fingerprint`. A changed pin stops execution without a partial packet or STATE mutation; `--check-only` verifies pins before compact scout-backed execution. Scout capsules are reused only with valid creation evidence and current source fingerprints. Consult the rendered packet and [`host-telemetry.md`](core/protocol/host-telemetry.md) for complete constraints.
 
-The lifecycle is: PRD, plan, optional required high-risk plan audit, run WORK, high/critical WORK initial audit, remediation when confirmed, work closure audit, dependent release, phase initial and closure audits, integration initial and closure audits, then project completion.
+## Domain artifacts and delivery
 
-## Audit and remediation flow
-
-Use `audit-remediation` to inspect an existing codebase and convert findings into traced decisions or integration WORK without inventing a phase:
-
-```bash
-devflow init billing-prod-readiness --risk high --workflow audit-remediation
-devflow status billing-prod-readiness
-devflow render audit billing-prod-readiness --scope integration --mode initial
-# auditor writes canonical audit + WORK/DECISIONS
-devflow audit apply billing-prod-readiness --scope integration --mode initial
-devflow validate billing-prod-readiness
-```
-
-The initial audit may complete immediately, request a human decision, or release traced remediation, evidence, or documentation WORK from `work/integration.yaml`.
-After that WORK and any required work reviews are complete, `status` selects the integration closure audit.
-A passing closure completes the project.
-Manual mode only computes the next action. Autopilot executes and audits that same deterministic action sequence through isolated routed specialists.
-
-## Project artifacts
+A domain records its intent, work, review, and progression under `docs/domains/<domain>/`:
 
 ```text
-.devflow/
-├── config.yaml            # runtime protocol compatibility, domains_root, default extension
-└── extensions/            # optional project-local audit extensions
-docs/domains/<domain>/
-├── PRD.md                 # product and domain contract
-├── PLAN.md                # repository-grounded implementation strategy
-├── STATE.yaml             # lifecycle position, machine-owned
-├── PITFALLS.md            # accumulated traps a fresh session must know
-├── DECISIONS.md           # human and product decisions
-├── work/                  # every executable change, general and remediation alike
-└── audits/                # one file per audit scope
+PRD.md              Product requirements
+PLAN.md             Implementation plan
+STATE.yaml          Runtime-owned lifecycle state
+DECISIONS.md        Human decisions
+PITFALLS.md         Verified domain traps
+work/               Phase and integration WORK manifests
+audits/             Canonical plan, work, phase and integration audits
 ```
 
-These roots have different jobs.
-`.devflow/config.yaml` configures the runtime and checks whether the CLI can safely read or mutate project artifacts.
-`.devflow/extensions/` contains optional local audit guidance.
-The PRD, PLAN, STATE, PITFALLS, DECISIONS, WORK, and AUDIT artifacts live under `docs/domains/<domain>/` by default.
-`init` and `status` print `runtime_config`, `domains_root`, and `domain_dir` so the boundary is visible.
-Normal initialization does not place domain artifacts inside `.devflow/`.
-
-A domain must resolve inside `domains_root`.
-Every command exits `2` for a domain argument whose resolved directory escapes the configured root (for example `../escaped` or `../../../x`), naming the root in the error, and creates nothing.
-A nested domain such as `team/billing` that stays inside the root works normally, and `domains_root` itself stays configurable, including a custom value outside `docs/`.
-
-Initialize a domain with the `plan` skill, or directly:
+For each source-changing WORK, commit verified source and tests first, then update the cumulative branch PR body and Postman collection using the generated paths:
 
 ```bash
-devflow init <domain> --prd <path> --risk high --workflow delivery
+devflow delivery paths <domain>
+devflow delivery refresh <domain> --branch <name>
+devflow delivery check <domain>
 ```
 
-`docs/` is your personal working directory.
-DevFlow works with it fully gitignored and never committed: no lifecycle operation, closure audits included, reads Git history for a file under `domains_root`.
-A gitignored `docs/` simply is not shared between machines, which is a handoff consideration, not a correctness one.
-Source-code Git use is unchanged: baseline and target SHAs, phase diff ranges, `devflow phase ref` ancestry checks, and `git show <ref>:<path>` for reading source all still apply.
+Source comments, evidence fields, branch ranges, PR-template fidelity, API coverage, and local-only artifact rules belong to [`delivery-artifacts.md`](core/protocol/delivery-artifacts.md). Documentation-only WORK uses a justified source-comment exception. A non-HTTP branch still has an explained, importable empty collection. Offline collection validation is not evidence of executed HTTP tests.
 
-## Why PITFALLS is its own artifact
+### Whole-work finalization
 
-A handoff document has two halves.
-`status` reproduces the first half exactly: where the work is, what is blocked, what runs next.
-The second half is knowledge the project bought the hard way, and no state machine can derive it: a test double that always returns success, a method that no-ops instead of raising, a verification command that skips the suite it appears to run, the next free
-migration number, behavior that looks like a defect but is a recorded decision.
-
-`plan`, `run`, and `audit` all load `PITFALLS.md`, so an entry is written once and repays every session after.
-Entries earn their place by having cost something; delete one when the trap is actually gone.
-
-## Audit extensions
-
-Audits load one domain extension on top of the common core. Resolution order:
-
-1. `.devflow/extensions/<name>.md` in the project
-2. `core/extensions/<name>.md` in the plugin
-3. `core/extensions/default.md`
-
-Set the name per domain in `STATE.yaml` (`extension:`) or per project in `.devflow/config.yaml`.
-`core/extensions/billing.example.md` shows the shape of a domain-specific one.
-
-## What `validate` enforces
-
-- Runtime config and STATE protocol compatibility, with malformed or different-major versions rejected and newer config versions blocked from mutation
-- STATE workflow, lifecycle statuses, required fields, phase keys, and referenced artifact paths
-- Delivery placeholder contracts and phase/WORK mismatches, including orphan phase manifests
-- Delivery integration gates requiring real verified phases, while audit/remediation can complete without fake phases
-- Canonical audit front matter, verdict rubric, closure coverage, and evidence for protocol 1.3 verified states
-- Bidirectional finding, decision, and WORK links, including explicit rationale for a WORK that aggregates multiple findings
-- WORK v2 unique acceptance and verification IDs, nonblank commands, and complete `covers` mappings
-- WORK dependencies, decisions, transfers, risk premise checks, review gates, and completion evidence
-- Legacy WORK v1 string-shaped acceptance and verification commands without rewriting the file
-
-`validate` is not only a report.
-Lifecycle mutations reject structural errors before writing, so a broken manifest cannot ride through to project completion.
-For protocol 1.3 audits, `audit apply` performs the same validation against the prospective state before it commits the transition.
-
-## Optional peer skill composition
-
-DevFlow can compose with separately installed Superpowers and Ponytail.
-DevFlow stays the lifecycle owner.
-`core/protocol/skill-composition.md` is the normative contract.
-
-When available:
-
-- Superpowers can provide test-driven-development, systematic-debugging, and verification-before-completion disciplines inside the active WORK.
-- Ponytail can provide reuse-first and YAGNI guidance during planning, execution, and audit.
-  - Ponytail observations in an audit are leads that a DevFlow auditor verifies before they become findings.
-
-Both integrations are optional.
-DevFlow does not bundle these plugins, does not require them to execute a project, and does not switch Ponytail modes.
-Peer tools do not replace PLAN, WORK, STATE, AUDIT, lifecycle gates, or remediation.
-There is no discovery API; a peer capability is used only when the environment already provides it.
-
-Usage:
-
-1. Optionally enable and configure Superpowers or Ponytail the normal way.
-2. Run DevFlow as usual.
-3. DevFlow composes compatible peer skills inside its current stage.
-
-Do not run Superpowers subagent-driven-development or executing-plans as a nested controller inside an active DevFlow lifecycle.
-DevFlow already owns task selection, reviews, remediation, and completion, so a nested controller would duplicate the lifecycle.
-
-## Compatibility and protocol version
-
-Plugin version `0.11.1` ships protocol version `1.8.0`.
-These are separate version domains: the plugin version identifies the distributed implementation, while the protocol version identifies the artifact contract that runtime config and STATE declare.
-Plugin `0.11.1` preserves the STATE/WORK schemas, enum values, lifecycle transitions and audit gates. Older branch records without `postman_structure_sha256` remain readable and need no migration, and `delivery check`, `validate` and `delivery newman` apply the same rule to them: the absent optional digest is not compared, a recorded one always is. New Scout bindings are transient runtime evidence; older capsules without a binding are treated as stale and trigger a fresh Scout or authoritative-packet fallback. Native hosted Goal end-to-end acceptance and actual invocation of installed ELI5 remain pending.
-
-Historical protocol feature introductions are recorded in [CHANGELOG](CHANGELOG.md).
-
-Protocol 1.0 through 1.4 artifacts remain backward-readable.
-`audit_provenance` is optional and is required only when a closure audit is applied or validated.
-Existing provenance with only `findings` remains readable through the validation fallback.
-Missing `workflow_type` defaults to `delivery` without rewriting STATE.
-WORK v1 keeps its string-shaped acceptance and verification commands, existing WORK without `review` retains the required high-risk review gate, and a legacy `plan_review` without `audit_file` reads as `audits/plan.md`.
-Existing audit Markdown without YAML front matter remains readable as a legacy artifact, but it cannot authorize a protocol 1.3 or newer verified transition.
-No bulk migration or automatic rewrite is required.
-A protocol 1.3.0 domain sitting mid-closure re-runs its scope's initial audit through the scope's recovery command to record provenance, then the closure proceeds.
-
-A fresh project initialization records `1.8.0` in both `.devflow/config.yaml` and the domain's `STATE.yaml`.
-The config value is a project runtime compatibility guard, while STATE identifies the domain artifact contract.
-Older same-major versions are readable.
-A malformed or different-major version is an error, and a newer config minor permits read-only status and validation but blocks mutation.
-
-When `.devflow/config.yaml` exists, its `protocol_version` is a floor.
-The audit-apply gate decides from the higher of the STATE and config versions, so hand-editing `STATE.protocol_version` below the config cannot re-enable `plan-review set`, `work review`, `phase set`, or `integration set` `verified` on a project `init` recorded at 1.3 or newer, and `validate` reports STATE declaring an older protocol than the config as an error.
-A project with no config file, or one whose config genuinely records the older version, keeps the legacy verified transitions.
-
-## Comments, branch PR bodies and Postman collections
-
-New domains enable the delivery gate automatically.
-Existing domains keep their current documents; the plan/run skills adopt the policy with this command before continuing:
+When finalization is enabled, the Executor refreshes every branch's delivery evidence, runs installed Newman against an approved isolated test server, triages/repairs failures through traced WORK, then invokes installed ELI5 to generate one domain-wide HTML explanation. Only fresh successful or proven non-HTTP run evidence can authorize finalization; independent integration audits still apply.
 
 ```bash
-devflow delivery enable billing
-devflow status billing
+devflow render finalize <domain>
+devflow delivery newman <domain> --branch <name> --base-url <test-url> \
+  --server-command '["./build/test-server","--port","8080"]' \
+  --readiness-url <readiness-url> --server-sha <build-sha> \
+  --safety-note '<isolation evidence>'
+devflow delivery finalize <domain>
 ```
 
-Adoption preserves completed WORK and snapshots its IDs once.
-Ready/in-progress WORK uses the new completion requirements.
-A resumed in-progress legacy item without a start SHA conservatively uses the domain baseline.
-Re-run status and render the reported next action; existing PLAN/WORK can be continued without full regeneration.
-Old runtimes should be upgraded together with the plugin.
+Install ELI5 and Node/Newman separately for enabled finalization. Do not treat a simulated, skipped, or structurally checked Newman run as executed verification. Follow [`finalization.md`](core/protocol/finalization.md) for server ownership, readiness, cleanup, triage, provenance, and ELI5 invocation; no automatic push, merge, or remote publication occurs.
 
-For each code-changing WORK, add or retain a useful comment about actual intent, invariants or constraints in changed source.
-Record its source path, line and reason in `evidence.comments`.
-The runtime checks the committed location; the audit checks meaning. It sets no per-method quota.
-For docs/config/deletion-only work, supply a concrete `comments_note`.
+## Compatibility and verification
 
-After verified source/tests are committed, use `devflow delivery paths <domain>` to get:
+Protocol `1.8.0` supports older compatible STATE/WORK documents without bulk rewriting. Missing optional fields remain subject to the runtime's version-aware validation, and newer or incompatible protocol declarations block mutation. Refer to [`lifecycle.md`](core/protocol/lifecycle.md) for authoritative version and migration behavior.
 
-```text
-docs/PR/<domain-slug-hash>/<branch-slug-hash>.md
-docs/postman/<domain-slug-hash>/<branch-slug-hash>.postman_collection.json
-```
-
-The source template is the actual project file `docs/PR/templates.md`.
-Preserve its headings and order, fill the branch diff and executed evidence, and keep the template unchanged.
-Outputs are cumulative per branch and refresh after every WORK/remediation; final integration checks their freshness.
-Provenance, branch range, PR body, test results and hashes refresh every WORK. A later WORK whose
-source does not change `api_endpoints` keeps the collected Postman request structure; rewriting it
-without a declared endpoint change is refused by a recorded structure digest.
-Missing templates or files stop completion with a diagnostic.
-`delivery paths --branch` can preview filenames; use actual source commits in artifacts once the branch exists.
-
-Author collections from real routes, DTO validation, auth and success/error contracts using `core/templates/POSTMAN.collection.json`.
-Declare variables, keep credentials empty, use synthetic data, and include response assertions.
-A no-HTTP branch still receives an importable empty collection with an explained assessment.
-File generation is local and never sends requests or publishes PRs. Distributable baseUrl defaults are empty or loopback.
-
-The standard-library offline validator checks a conservative Postman v2.1 authoring profile: JSON structure, folder/request shape, scoped variables, auth/header/body/script shape, explicit endpoint coverage, common credential literals and source provenance.
-It is not a full official JSON Schema validator, JavaScript runner, universal secret scanner, or proof of actual API behavior.
-The auditor checks semantic coverage; record live execution only after an actual approved test run.
-
-`work done --commit HEAD` enforces comment evidence and PR/Postman delivery atomically.
-It rejects uncommitted executable source and derives changed files from source Git.
-Documentation can remain fully gitignored.
-Keep outputs local/ignored, since embedding source HEAD in a tracked artifact would otherwise change the commit being described.
-To correct only the delivered content at the same source commit, regenerate it and use `delivery refresh <domain> --branch <name>`.
-New source changes require ordinary WORK. See `core/protocol/delivery-artifacts.md` for exact evidence fields.
-
-### Delivery regression checks
-
-Run one full, single-discovery regression suite from the marketplace root:
+Use these commands from the marketplace root for documentation changes and focused regression checks:
 
 ```bash
-python3 plugins/devflow/tests/run_suite.py --profile full
+python3 plugins/devflow/scripts/check_docs.py --json > /tmp/devflow-docs.json
+python3 plugins/devflow/tests/test_documentation_history.py
+python3 plugins/devflow/tests/test_docs_consistency.py
 ```
 
-`full` is the only complete release gate: it includes all 171 unchanged `case_*`
-lifecycle scenarios, delivery, routing, hosted and finalization tests, plus optional
-real-Newman smoke tests. The latter are explicitly skipped if `newman` is absent.
-The runner rejects duplicate test IDs and empty selections before running anything.
-For targeted development feedback, explicitly select a partial profile:
+For a new *release decision*, the full gate runs a fresh, unfiltered suite and records both the verdict and per-test evidence:
 
 ```bash
-python3 plugins/devflow/tests/run_suite.py --profile focused
-python3 plugins/devflow/tests/run_suite.py --profile focused --match HostAutopilotCliTests
-python3 plugins/devflow/tests/run_suite.py --profile legacy
-python3 plugins/devflow/tests/run_suite.py --profile newman
-python3 plugins/devflow/tests/run_suite.py --profile full --report /tmp/devflow-suite.json
-```
-
-`focused` excludes legacy lifecycle scenarios and real-Newman smoke tests; `legacy`
-runs only the original scenarios, while `newman` runs only the optional smoke tests.
-A `newman`-only selection where all tests are skipped exits nonzero instead of
-pretending execution passed. A `--match` selection is also **partial**, even under
-`--profile full`. JSON reports
-include selection completeness, discovered/selected counts, outcomes and per-test
-elapsed time, but no captured stdout or private test payloads. Do not run a partial
-profile as a merge/release gate or run both entry points and count them as separate
-coverage. The equivalent raw unittest discovery command remains supported:
-
-```bash
-python3 -m unittest discover -s plugins/devflow/tests -p 'test_*.py'
-```
-
-For backward compatibility, `python3 plugins/devflow/tests/test_devflow.py` still
-runs the original lifecycle cases and each `test_*.py` file remains directly
-executable. `run_framework_suite.py` remains an optional parallel legacy runner.
-
-### Merge and release gate
-
-The separate release gate **runs a fresh full suite** and verifies its JSON evidence,
-complete discovery, original 171 lifecycle tests, required regression modules,
-Python 3.10 parsing and source stability during execution:
-
-```bash
-python3 plugins/devflow/tests/release_gate.py --mode merge \
-  --report /tmp/devflow-merge-verdict.json
 python3 plugins/devflow/tests/release_gate.py --mode release \
   --report /tmp/devflow-release-verdict.json
 ```
 
-`merge` accepts skipped optional real-Newman smoke tests **with a visible warning**.
-`release` requires those real HTTP smoke tests to execute and pass, all other tests
-to pass without skips, and a clean plugin working tree. A failed/partial/stale suite
-report cannot pass either gate. Verdict and full-suite JSON evidence are written to
-separate files; no private Newman response data is copied into either report.
-See `core/protocol/release-validation.md` for the complete acceptance contract.
+The release gate requires actual Newman smoke-test execution and a clean plugin tree. Development-focused checks are not a substitute for that release verdict. See [`release-validation.md`](core/protocol/release-validation.md).
 
-### Documentation consistency and effective packet size
-
-Run the read-only documentation checks and inspect advisory policy-copy findings:
-
-```bash
-python3 plugins/devflow/scripts/check_docs.py --json > /tmp/devflow-docs.json
-```
-
-To compare real CLI-rendered input bytes to the frozen starting revision (without
-changing `main` or building a worktree), run:
+To compare real CLI-rendered Plan, Run, Audit, Finalize and Scout bytes between revisions, run:
 
 ```bash
 python3 plugins/devflow/tests/measure_role_packets.py \
   --baseline-ref 00af6394f7a7830bb9b37c6560e3ec06598e4ad0 \
-  --output /tmp/devflow-p08-packets.json
+  --output /tmp/devflow-packets.json
 ```
 
-The report covers Plan, Run, integration Audit, Finalize, and Scout navigation
-on equivalent synthetic fixtures. It does not measure native hosted Goal, model
-tokens, live Newman, or installed ELI5 acceptance. Both utilities are covered by
-`test_docs_consistency.py`, which is required by the merge/release gate.
-
-### Lifecycle benchmarks
-
-Run `python3 plugins/devflow/tests/bench_goal_lifecycle.py --json /tmp/devflow-baseline.json`
-for validated throwaway Git fixtures, CLI timings and WORK projection counters.
-`--include-expensive` adds committed-source, rendered-packet and large Newman-evidence sweeps;
-`--section` selects one sweep and `--reps` controls timed samples (default seven).
-Raw JSON records sample times, output bytes, source hashes, machine details and the warm-cache
-policy. Invalid fixture results fail the run. All temporary repositories are removed on exit.
-Newman report fixtures are synthetic; native agent duration and token usage remain unmeasured.
-
-All runtime code stays in the shared plugin; Python 3.10+ and PyYAML 6.x support the core lifecycle.
-Enabled finalization additionally needs the installed ELI5 skill and Node/Newman for actual API execution.
-
-## Whole-work finalization
-
-Read `core/protocol/finalization.md` for the normative procedure.
-Existing completed WORK remains intact after `delivery enable`; the new field is additive.
-Plan/run preflights adopt the stage.
-
-An audit-remediation that only verifies an existing implementation, without completed WORK
-or delivery evidence, can finish directly after its integration audit; recorded delivery
-or remediation remains subject to the normal Newman/ELI5 and receipt gates.
-
-The Executor brings cumulative PR bodies and Postman collections current, then executes installed Newman against the isolated verified server for every delivered branch.
-For failures, retain diagnostics and triage/repair through ordinary WORK, refresh branch artifacts, and rerun affected tests until the required branch evidence is current.
-Only after passing or proven non-HTTP Newman evidence and completed remediation does the Executor invoke installed `$eli5` once to generate the whole-domain HTML with final WORK, branch, repair and test outcomes.
-`delivery explain` refuses to record an explanation before this test/repair gate; later source, collection or Newman changes invalidate the previous explanation and require a fresh final explanation.
-`delivery finalize` validates this handoff and retains independent integration audits.
-All changes remain local until separately authorized publication/push/merge.
-
-Newman needs a separately installed repository-approved executable. Executable lookup
-and version checks run before server startup. Tool failures retain their recorded
-blocker and retry guidance; server startup, readiness and cleanup remain `not_run`.
-`delivery newman` starts and
-stops the verified local/test server itself from a JSON argv array, polls the readiness URL until it
-returns HTTP 200 through 299, then runs Newman. The owned process and process group must still be
-alive immediately before Newman. Cleanup uses bounded SIGTERM, SIGKILL fallback and process-group
-termination confirmation.
-Provide a local Postman environment file for secrets, and explicit `--allow-writes` after isolating test data/integrations.
-`--newman-bin` selects an existing binary; no hidden installation occurs.
-Approved remote test hosts require exact `--allow-host`. Defaults: total timeout 120s, request timeout 10s, script timeout 5s. See `delivery newman --help` for options.
-
-Raw execution JSON and stdout remain Git-excluded in `.devflow/private/newman/`; sanitized counts and provenance appear under `docs/postman/<domain-slug-hash>/newman/`.
-Preserve private evidence through closure.
-ELI5 output goes to `docs/explanations/<domain-slug-hash>/implementation.html`.
-These generated files work with ignored `docs/`; no initial Git history is required.
-Code/collection repairs still require meaningful tracked source/test commits and passing reruns.
-For an ignored collection, commit its reproducible regression fixture/test or generator correction.
-
-Execution profiles deliberately use explicit ordered requests, inline data, local credentials and complete assertions.
-Startup, readiness, environment, Newman-tool and cleanup failures are blocked. A Newman API/assertion
-failure is failed. Code/collection triage requires the completed failed run and its lifecycle evidence.
-Preflight refusal is explicitly `failure_stage: preflight` with `recorded: false`; recorded attempts include `failure_kind` and `retry_policy` for evidence-based repair or environment/tool inspection.
-Only a collection with no HTTP request items and an empty declared endpoint list may record explicit
-N/A, with matching collection and declaration evidence.
-Reading ELI5 or structurally validating JSON alone proves no actual execution.
-
-- Tests:
-  - `python3 plugins/devflow/tests/test_finalization.py` uses isolated subprocess fixtures.
-  - `python3 plugins/devflow/tests/test_newman_integration.py` runs a real disposable HTTP/Newman smoke test when an installed Newman executable exists; otherwise it reports an explicit skip.
+The comparison does not measure agent tokens or native Goal end-to-end performance. Native hosted Goal end-to-end acceptance and actual invocation of the installed ELI5 skill remain pending. Read [CHANGELOG](CHANGELOG.md) for release history and CLI benchmark caveats.
