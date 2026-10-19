@@ -17,7 +17,7 @@ Re-run `devflow status` instead of rendering or executing another lifecycle acti
 8. Build explicit dependencies and requirement traceability.
    1. Register a transferred requirement in the receiving phase through `transfer.to`.
 9. For audit-derived WORK, preserve finding semantics and reciprocal `origin.findings` links. Follow the appended WORK contract for aggregation and observable verification.
-10. Set phase entries with zero-padded keys, and pin each phase's diff range with `devflow phase ref` once its branch exists.
+10. Create each `work/phase-XX.yaml` manifest, then register the phase with `devflow phase set <domain> <phase> planned`. The CLI requires a matching manifest or an existing STATE phase entry; pin its diff range with `devflow phase ref` after the branch exists.
 11. Record each open human decision in `DECISIONS.md`, then register its ID with `devflow decision add <domain> <DEC-ID>`.
     1. Do not edit machine-owned `STATE.yaml` or create ready code-changing WORK while the decision is unresolved.
 12. Add verified domain traps to `PITFALLS.md`.

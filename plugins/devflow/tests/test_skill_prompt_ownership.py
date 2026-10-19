@@ -55,6 +55,17 @@ class SkillPromptOwnershipTests(unittest.TestCase):
         self.assertIn("audit apply", prompt("audit"))
         self.assertIn("core/protocol/audit-core.md", prompt("audit"))
 
+    def test_architect_registers_phases_through_cli(self) -> None:
+        packet = prompt("plan")
+        for detail in (
+            "work/phase-XX.yaml", "devflow phase set <domain> <phase> planned",
+            "matching manifest or an existing STATE phase entry", "devflow phase ref",
+            "Do not edit machine-owned `STATE.yaml`",
+        ):
+            with self.subTest(detail=detail):
+                self.assertIn(detail, packet)
+        self.assertNotIn("Set phase entries with zero-padded keys", packet)
+
     def test_hosted_safety_and_observation_only_status_survive(self) -> None:
         goal = skill("goal")
         autopilot = skill("autopilot")
