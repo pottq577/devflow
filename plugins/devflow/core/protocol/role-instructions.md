@@ -18,7 +18,7 @@ relied on.
 | Branch, commit, comment anchor, PR body and Postman collection contract | `core/protocol/delivery-artifacts.md` | plan, run, audit |
 | Newman ownership, readiness, evidence, diagnosis, ELI5, final receipt | `core/protocol/finalization.md` | plan, run, audit, finalize |
 | Peer skill composition and precedence | `core/protocol/skill-composition.md` | plan, run, audit |
-| Hosted session, lease, step reservation, telemetry and recovery | `core/protocol/host-telemetry.md`, `core/schemas/host-telemetry.schema.yaml`, `core/schemas/state.schema.yaml` | goal |
+| Hosted session, lease, Scout capsule provenance, step reservation, telemetry and recovery | `core/protocol/host-telemetry.md`, `core/schemas/host-telemetry.schema.yaml`, `core/schemas/state.schema.yaml` | goal |
 | Routing aliases, capabilities and escalation | `core/schemas/routing.schema.yaml`, `core/schemas/model-registry.schema.yaml` | goal, autopilot |
 | Regression and release evidence for each contract | `core/protocol/release-validation.md` | release operator |
 | Wrapper invocation and repository-root rules | `skills/*/SKILL.md` runtime section | manual operators |

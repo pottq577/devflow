@@ -58,6 +58,12 @@ unmeasured. `concurrency.read_only` is likewise a standalone setting; hosted chi
 dispatched sequentially, so the value does not limit them and read-only roles keep read-only
 permissions instead of parallelism.
 
+## Hosted Scout capsule provenance
+
+A capsule is reusable only when its validated text, action fingerprint, and evidence digest match the bounded index and step-start source snapshot. The snapshot covers the selected WORK, verification and failure references, WORK source paths, cited files, applicable repository instructions, routing configuration, and role protocols. Resolve paths under the repository or plugin root. Missing required files, traversal, symlink escape, unstable reads, or out-of-scope cited paths make the snapshot unconfirmed.
+
+`step-start --kind scout` reserves the snapshot and routed alias. Only a completed matching step can bind the exact `<step_id>.md` capsule once through `scout-bind`. The binding records the body digest, action fingerprint, step ID, model alias, HEAD, evidence digest and scope confirmation. `scout-validate` reads but never re-signs the capsule, sidecar and current pointer; all must agree. Stale, invalid, unbound or superseded capsules cannot skip Scout. A new completed reservation is required to bind again. `dispatch --scout-cached` independently verifies the binding; `orchestration.scout_on_retry` only requests a new Scout when no current valid capsule exists.
+
 ## Hosted session fencing and administrator recovery
 
 Hosted ownership and persisted execution progress share a SQLite coordinator. Acquisition,
@@ -94,11 +100,9 @@ artifact. Protocol version remains 1.8.0 with backward-readable existing operati
 
 ## Hosted resource checkpoints
 
-`orchestration.hosted.max_steps` bounds reserved child spawns within one resource segment,
-including scouts and capability fallbacks. Its default remains 100. Semantic no-progress
-attempts and action visits persist across checkpoints, ordinary session end/start, TTL owner
-replacement and administrator recovery. None of those ownership changes erases execution
-evidence or silently replenishes the resource segment.
+`orchestration.hosted.max_steps` bounds reserved child spawns within one resource segment, including Scouts and capability fallbacks (default 100). A non-progressing primary increments the persisted semantic retry index; Scout and spawn-capability failures do not. The default final no-progress retry index is five (attempts 0 through 5), and the default per-action visit ceiling is four. Every reserved spawn consumes a resource step. These counts are execution guards, not measured Codex child tokens.
+
+Action fingerprints are versioned SHA-256 identities over routing-relevant action/risk fields. Transient role overrides are excluded. A legacy v1 operational checkpoint resets per-action counters on first v2 observation without changing lifecycle artifacts. Semantic attempts, visits and resource steps persist across checkpoints, ordinary session end/start, TTL owner replacement and administrator recovery. Only an explicit valid `session-checkpoint` resets the resource segment.
 
 After independently observing every child has terminated and acknowledging every reserved
 step, the Supervisor may explicitly call `session-checkpoint <domain> --session-id <owner>`.

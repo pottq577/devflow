@@ -23,9 +23,9 @@ Before writing goal requirements, bootstrapping, or dispatching, acquire the dom
 python3 <this-skill-directory>/scripts/host.py session-start <domain>
 ```
 
-Keep the returned `session_id` private to the active Goal Supervisor and pass it as `--session-id <session_id>` to **every** `bootstrap`, `bootstrap-finalize`, and `dispatch` call. A second hosted Goal or standalone Autopilot cannot acquire the same domain while this lease is live. A restarted supervisor may resume only with the same id using `session-start <domain> --session-id <session_id>`; never create a replacement session while another owner's session is active. No session id may be inferred from telemetry.
+Keep the returned `session_id` private. Pass it to every `bootstrap`, `bootstrap-finalize`, and `dispatch` call. Resume a restarted Supervisor only with `session-start <domain> --session-id <session_id>`; never invent an owner from telemetry or replace a live session.
 
-The durable lease is renewed by the lifecycle edges `bootstrap`, `bootstrap-finalize`, `step-start` and `step-finish`, and expires after 24 hours without renewal. Observation commands (`dispatch`, `guard-status`, `scout-validate`, `session-status`) verify ownership and pending-child fencing without extending it. An expired owner must stop; do not continue operating on a prior dispatch or release another owner's lease. If a sub-agent may remain active longer than the lease, refresh the lease with the same `session-start --session-id` during the wait; do not let it expire while children are running.
+The lease expires after 24 hours without a lifecycle renewal. Read-only observation commands do not renew it. Refresh the same owner through `session-start --session-id` during a long-running child wait, and stop if ownership expires. `core/protocol/host-telemetry.md` owns the full lease and pending-child fencing rules.
 
 After every child has finished or been cancelled, release ownership on `complete`, `checkpoint`, `paused`, or a terminal blocker:
 
@@ -34,9 +34,7 @@ python3 <this-skill-directory>/scripts/host.py session-end <domain> \
   --session-id <session_id>
 ```
 
-Never release a lease while a child is still changing repository artifacts. TTL expiry removes execution authority, never pending child evidence. An expired or orphan pending step fences both hosted Goal and standalone Autopilot acquisition. `session-status <domain>` reports `blocked` until that evidence is resolved; an idle expired lease can be replaced.
-
-When the original owner cannot acknowledge a pending step, stop for a trusted administrator. The administrator must independently confirm the exact child has terminated, then record the original session and step:
+Never release a lease with an unacknowledged or running child. Expiry never proves child termination; an orphan step fences new ownership. When the original owner cannot acknowledge a step, stop for a trusted administrator who confirms the exact child has terminated:
 
 ```bash
 python3 <this-skill-directory>/scripts/host.py session-recover <domain> \
@@ -45,7 +43,7 @@ python3 <this-skill-directory>/scripts/host.py session-recover <domain> \
   --confirm-child-terminated --termination-evidence '<trusted administrator facts>'
 ```
 
-This is an `explicit_admin_attestation`, not native PID or terminal-status verification. The Goal Supervisor must never self-attest termination, infer it from TTL, or invent administrator facts. Unknown or live child state stays blocked. Recovery atomically records a SQLite receipt, applies ordinary finish retry accounting, clears the pending step and releases the original lease. Repeating the exact outcome and evidence returns the same receipt; changed facts or a different current owner are rejected. Malformed execution evidence is fail-closed. See `core/protocol/host-telemetry.md` for the operational fencing contract.
+`session-recover` records an administrator's explicit attestation, not native termination evidence. The Supervisor must never self-attest or infer termination from TTL. Unknown or live children remain blocked. See `core/protocol/host-telemetry.md` for receipt, idempotence and fencing details.
 
 ## Bootstrap a new domain
 
@@ -127,16 +125,16 @@ python3 <this-skill-directory>/scripts/host.py step-finish <domain> \
   --until <plan|implementation|complete>
 ```
 
-The runtime re-reads lifecycle STATE to detect progress. A non-progressing primary increments the persisted semantic retry, even if the child says it succeeded. A scout or model-spawn capability blocker does not increment the semantic retry, but **every reserved spawn consumes a resource-segment step**. The default limits are 100 reserved spawns per segment, a final no-progress retry index of five (attempts 0 through 5), and four visits to one action across progress transitions. Fingerprints are versioned SHA-256 identities over routing-relevant action/risk fields; transient role overrides are excluded. Existing v1 operational checkpoints reset their per-action counters when first observed as v2, without modifying lifecycle artifacts. The repository can override `orchestration.hosted.max_steps`, `orchestration.hosted.max_action_visits`, and `escalation.retries.max_no_progress`. Attempts, visits and resource steps survive ordinary session end/start, expiry and administrator recovery. This is an execution-count guard, **not** a token budget: Codex-hosted sub-agent token usage is not measured reliably by these commands.
+The runtime detects progress from lifecycle STATE. Follow the guard's persisted attempt, visit and resource-step counters; never reset them in Supervisor memory or treat a child's success message as lifecycle progress. `core/protocol/host-telemetry.md` owns their defaults, fingerprints, limits and migration rules.
 
-To continue after `hosted_max_steps_exhausted`, independently confirm all children have terminated, acknowledge every reserved step, and require an idle guard. Then explicitly renew the resource segment:
+After `hosted_max_steps_exhausted`, confirm all children terminated, acknowledge all reserved steps, and require an idle guard. Then request a resource checkpoint:
 
 ```bash
 python3 <this-skill-directory>/scripts/host.py session-checkpoint <domain> \
   --session-id <session_id>
 ```
 
-Replace the saved owner with the returned `session_id` before reserving another child. Checkpoint requires actual acknowledged action progress in this segment and satisfied retry/cycle guards; a latest `capability_blocked` outcome refuses renewal. It atomically resets only resource steps, never attempts or visits, and launches no child. Do not use ordinary end/start to replenish budgets. Legacy records require positive evidence from at least two distinct persisted action visits; single-action exhaustion remains blocked. Historical last outcomes are unavailable for legacy records; this migration allowance can renew at most once without new progress. These resource checkpoints are separate from a requested lifecycle `--until` boundary.
+Save the returned new `session_id` before spawning again. Checkpoint requires recorded progress, acknowledged children and satisfied retry/cycle guards. It resets resource steps only, never semantic attempts or visits, and launches no child. End/start cannot replenish the budget. See `core/protocol/host-telemetry.md` for legacy checkpoint handling.
 
 On a supervisor restart, resume the **same** hosted session and run `guard-status <domain> --session-id <session_id>`. If it reports `hosted_step_inflight`, do not spawn again or release the lease. Check whether the earlier child is still running; only after it has finished or been cancelled may the supervisor acknowledge the persisted pending `step_id` using `step-finish`. If child state cannot be verified, leave the run blocked for human intervention. An expired session id cannot resume or force-reclaim the state of an active child.
 
@@ -164,9 +162,7 @@ python3 <this-skill-directory>/scripts/host.py telemetry-finish <domain> \
   [--observations-file <path>]
 ```
 
-Use `--candidate-alias` when retrying a payload candidate after a spawn capability failure. Run `telemetry-finish` **before** acknowledging its `step-finish`, while that step is still reserved. If either telemetry command returns `telemetry_unavailable`, continue the lifecycle; do not fabricate a `dispatch_id`. Telemetry must never block or change a routed action.
-
-Always pass the guard's current `attempt`, including zero. Record the returned `reason` on `telemetry_unavailable` so missing attempts and reservation mismatches are visible. When reporting packet/protocol/capsule bytes or stage durations, read `core/protocol/host-telemetry.md` for the observation format and measurement boundaries. Supply only directly observed values; omitted values and native token usage remain unmeasured. Finish a legacy v2 inflight record without an observations file.
+Use `--candidate-alias` for a spawn-capability fallback. Call `telemetry-finish` before mandatory `step-finish`. Pass the guard's `attempt`, including zero. If telemetry is unavailable, record its reason and continue without inventing `dispatch_id` or measurements. `core/protocol/host-telemetry.md` owns the observation format and legacy compatibility.
 
 For `dispatch_required`:
 

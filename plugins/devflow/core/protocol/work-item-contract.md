@@ -58,10 +58,9 @@ Coverage declarations do not replace execution evidence.
 
 ## The item must carry what the Architect learned
 
-The Architect reads the repository.
-The Executor does not get to repeat that reading, and an item that omits what was learned forces it to re-derive the same facts with less context and get them wrong.
-Three fields carry that knowledge.
-They are the difference between a task the Executor can execute and a title it has to reverse-engineer.
+The Architect records verified repository facts so the Executor can avoid broad reconnaissance. The Executor must still verify `premise_checks` against current HEAD and inspect relevant implementation before editing.
+
+Record these facts in three fields:
 
 ### `context`
 

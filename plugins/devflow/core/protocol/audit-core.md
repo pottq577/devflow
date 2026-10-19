@@ -65,12 +65,6 @@ These are the places that actually cause incidents.
 
 - **Transaction boundaries**:
   - external I/O inside a database transaction, and the window where a commit failure leaves external state inconsistent.
-- **Concurrency**:
-  - two simultaneous requests on the same entity.
-  - What stops the double effect, a unique constraint, a lock, or a retry? An application-level check alone is a defect.
-- **Idempotency**:
-  - a retry must not repeat the side effect.
-  - Is the key minted by the server or by the client?
 - **State transitions**:
   - is the transition decision in one place, or scattered across services? Reverse and self transitions handled.
 - **Money and currency**:
@@ -83,8 +77,6 @@ These are the places that actually cause incidents.
   - domain errors surface as the intended status, and internal messages do not leak.
 - **Input validation**:
   - enforced at the trust boundary, and services do not assume the controller already validated.
-- **Security**:
-  - no secrets or card data in logs, and ownership is checked before returning another party's record.
 - **Query and lock cost**:
   - repeated queries per row, and slow work performed while holding a lock.
 
@@ -253,9 +245,7 @@ For closure severity floors, including `still_open` and `reopened` findings, app
 
 ## 10. Review timing
 
-A closure audit after every single item costs more than it returns, and batching a whole phase lets defects stack on a wrong premise.
-Let risk decide.
-See `risk-policy.md`.
+`core/protocol/risk-policy.md` owns required review timing and low/medium WORK batching. Never skip a required review to reduce audit cost.
 
 ## Implementation delivery evidence
 

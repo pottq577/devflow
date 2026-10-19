@@ -41,14 +41,9 @@ The runtime holds that floor against the recorded provenance.
 The audit scopes are `plan`, `work`, `phase`, and `integration`.
 Initial and closure modes apply to all four scopes. A high-risk plan review is initial before WORK begins, and it becomes closure after the linked plan-review remediation or evidence WORK is terminal and its required work reviews are verified.
 
-## Why the timing is graded rather than uniform
+## Why review timing is risk-based
 
-Reviewing after every single item costs more than it returns on independent low-risk work.
-Batching an entire phase and reviewing once costs more when it goes wrong: later items build on a premise the review would have invalidated, so a single early defect propagates through everything stacked on it.
-Deferring review of a batch has already produced several late findings in practice, and they were survivable only because none of them were blockers.
-
-Grade by dependency and blast radius, not by uniform cadence.
-The question is never "how often do we review", it is "does anything build on this before it is verified".
+Independent low/medium-risk WORK can wait for the phase audit. Review high/critical or dependency-blocking changes before dependents proceed, so unverified premises do not propagate.
 
 ## Risk metadata drives contract depth
 

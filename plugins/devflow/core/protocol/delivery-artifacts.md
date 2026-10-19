@@ -117,15 +117,8 @@ unchanged. The executor reviews the diff for those contract changes, refreshes t
 requests and records the reviewed surface in `api_note`; the auditor verifies bodies, auth and
 assertions against that diff instead of trusting the digest. An executed Newman run remains the
 only evidence that actually exercised the contract.
-Protocol 1.8 finalization explicitly executes authorized isolated local/test Newman runs under `finalization.md`.
-`delivery newman` owns the server start, HTTP 200..299 readiness check, Newman execution and
-bounded process-group cleanup. Server liveness is checked after readiness and immediately before
-Newman, so a replacement process answering the readiness URL cannot satisfy the gate.
-Production or shared-data side effects retain separate approval.
-Startup, readiness, environment, Newman-tool and cleanup failures are blocked. An executed Newman
-API/assertion failure is failed and may be triaged as code or collection only after that completed
-run has the full lifecycle evidence. Newman pass plus cleanup failure remains blocked. Missing or
-failed servers, tools and credentials never become `not_applicable`.
+The finalization stage runs Newman only under `core/protocol/finalization.md`, which owns
+server lifecycle, isolation, failure classification, and `not_applicable` evidence.
 
 ## Validation, refresh and audits
 

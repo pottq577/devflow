@@ -214,8 +214,4 @@ Never simulate successful peer-skill execution or claim that a peer skill was us
 
 ## Required ELI5 delivery capability
 
-During enabled finalization, invoke the installed `eli5` skill through its actual host interface with all PLAN/WORK/branch context.
-Record skill-content provenance and truthful invocation evidence in `STATE.delivery.finalization`; write the one prescribed whole-work HTML.
-This explicit protocol exception grants derived explanation output and provenance, while lifecycle ownership stays with DevFlow.
-Newman likewise runs only through the explicit foreground finalization command.
-Missing capabilities are execution blockers, with successful implementation preserved.
+`core/protocol/finalization.md` owns the installed ELI5 invocation, evidence and generated HTML contract. This mandatory capability applies only during enabled finalization; never simulate success when the skill is unavailable.
