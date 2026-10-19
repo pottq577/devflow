@@ -15,7 +15,9 @@ Re-run `devflow status` instead of rendering or executing another lifecycle acti
 6. Create phase WORK manifests under the appended `core/protocol/work-item-contract.md`. Use version 2 acceptance IDs, command coverage and explicit traceability.
 7. Give the Executor verified `context`, HEAD-dependent `premise_checks` and actionable `pitfalls` for each WORK, not title-only tasks.
 8. Build explicit dependencies and requirement traceability.
-   1. Register a transferred requirement in the receiving phase through `transfer.to`.
+   1. If captured sources exist, fill the PLAN table using `Requirement | Plan item | Phase | Work items | Disposition | Reason`. Register each PRD requirement once and link every related WORK through `origin.requirements`.
+   2. Map PRD acceptance IDs via `origin.acceptance_criteria`, which is distinct from WORK-local `acceptance` IDs. Record both sender and receiver for transferred WORK and an approved decision for excluded/deferred scope.
+   3. Register a transferred requirement in the receiving phase through `transfer.to`.
 9. For audit-derived WORK, preserve finding semantics and reciprocal `origin.findings` links. Follow the appended WORK contract for aggregation and observable verification.
 10. Create each `work/phase-XX.yaml` manifest, then register the phase with `devflow phase set <domain> <phase> planned`. The CLI requires a matching manifest or an existing STATE phase entry; pin its diff range with `devflow phase ref` after the branch exists.
 11. Record each open human decision in `DECISIONS.md`, then register its ID with `devflow decision add <domain> <DEC-ID>`.

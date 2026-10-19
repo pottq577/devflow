@@ -10,6 +10,7 @@ required:
   - unresolved_decisions
   - next_action
 optional:
+  traceability_version: Optional integer 1 marks newly bootstrapped captured-source domains as strict; legacy domains without this field remain readable.
   workflow_type: Workflow type, one of delivery or audit_remediation. Missing legacy values read as delivery.
   extension: Name of the audit extension to load. Resolved from .devflow/extensions/<name>.md first, then the plugin's core/extensions/<name>.md, then default.
   target_sha: HEAD at the time the state was computed. Recomputed by the runtime before every read projection and before every lifecycle mutation; not an input to any decision.

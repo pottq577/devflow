@@ -12,8 +12,8 @@
 
 ## Requirement traceability
 
-| Requirement | Plan item | Phase | Notes |
-| ----------- | --------- | ----- | ----- |
+| Requirement | Plan item | Phase | Work items | Disposition | Reason |
+| ----------- | --------- | ----- | ---------- | ----------- | ------ |
 
 ## Phase graph
 

@@ -37,6 +37,7 @@ import devflow_finalization as finalization
 import devflow_newman as newman
 import devflow_scout as scout_contract
 import devflow_sources as sources
+import devflow_traceability as traceability
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
@@ -1220,6 +1221,8 @@ def init_domain(args: argparse.Namespace) -> int:
     new_domain = not state_path(root, args.domain).exists()
     state = load_yaml(state_path(root, args.domain), {}) or {}
     if new_domain:
+        if (d / "sources/v1/manifest.json").is_file() and traceability.has_source_table(d / "PRD.md"):
+            state["traceability_version"] = 1
         state["delivery"] = delivery.default_policy()
         state["delivery"]["finalization"] = finalization.default_policy()
     state.setdefault("protocol_version", PROTOCOL_VERSION)
@@ -4522,6 +4525,12 @@ def collect_validation(
                         f"{item_id}: requirement id not found verbatim in PRD: {req}"
                     )
 
+    trace_errors, trace_warnings = traceability.validate_domain(
+        d, index, require_plan=bool(index) or bool(state.get("phases")),
+        strict=state.get("traceability_version") == 1,
+    )
+    errors.extend(trace_errors)
+    warnings.extend(trace_warnings)
     return errors, warnings
 
 

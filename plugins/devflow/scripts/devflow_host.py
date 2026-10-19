@@ -23,6 +23,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import devflow
+import devflow_traceability as traceability
 import devflow_autopilot as autopilot
 import devflow_session as session
 import devflow_host_guard as guard
@@ -780,6 +781,12 @@ def bootstrap_finalize(root: Path, domain: str, risk: str) -> dict[str, Any]:
         raise ValueError(f"Domain already initialized: {domain}")
     target = devflow.domain_dir(root, domain) / "PRD.md"
     errors = devflow.required_markdown_section_errors(target, "PRD.md")
+    if not errors:
+        source_errors, _ = traceability.validate_domain(
+            target.parent, {}, require_plan=False, require_decisions=False,
+            strict=(target.parent / "sources/v1/manifest.json").is_file(),
+        )
+        errors.extend(source_errors)
     if errors:
         return {"status": "blocked", "errors": errors, "target": str(target)}
     with contextlib.redirect_stdout(io.StringIO()):

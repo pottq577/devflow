@@ -20,6 +20,7 @@ required_item_fields:
 optional_item_fields:
   title: Short human label for the item. Carried in the WORK template and read for status reporting context; it never selects work.
   origin.aggregation_reason: Required nonblank rationale when origin.findings contains two or more ids.
+  origin.acceptance_criteria: Optional stable PRD AC IDs this WORK addresses; traced-source domains validate reciprocal coverage. Different from WORK-local acceptance IDs.
   context: Repository facts the Architect already verified, so the Executor does not re-derive them. Expected for high and critical risk.
   premise_checks: Facts to re-confirm at current HEAD before editing anything. Mandatory for high and critical risk.
   pitfalls: Known failure modes for this specific change. Each entry names what breaks and why.
