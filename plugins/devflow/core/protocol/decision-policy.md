@@ -32,8 +32,8 @@ A record under `## Resolved` requires a nonblank `- Decision:` field.
 
 When a decision is resolved:
 
-1. record the chosen option and rationale in `DECISIONS.md`,
-2. update PRD if the product contract changed,
-3. remove the decision ID from `STATE.yaml.unresolved_decisions`,
-4. re-plan affected WORK if required,
-5. validate before resuming execution.
+1. Move the record to `## Resolved` in `DECISIONS.md`, including the chosen option and rationale.
+2. Update the PRD if the approved product contract changed.
+3. Run `devflow decision resolve <domain> <DEC-ID>` to update machine-owned STATE. Never edit `STATE.yaml.unresolved_decisions` directly.
+4. Re-plan affected WORK if required.
+5. Run `devflow validate <domain>` before resuming execution.

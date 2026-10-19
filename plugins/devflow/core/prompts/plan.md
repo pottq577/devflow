@@ -18,11 +18,11 @@ Re-run `devflow status` instead of rendering or executing another lifecycle acti
    1. Register a transferred requirement in the receiving phase through `transfer.to`.
 9. For audit-derived WORK, preserve finding semantics and reciprocal `origin.findings` links. Follow the appended WORK contract for aggregation and observable verification.
 10. Set phase entries with zero-padded keys, and pin each phase's diff range with `devflow phase ref` once its branch exists.
-11. Record unresolved human decisions in `DECISIONS.md` and STATE.
-    1. Do not create ready code-changing WORK until the decision is resolved.
-12. Add domain traps you discovered to `PITFALLS.md`.
-13. Run DevFlow validation and correct structural errors.
-14. Set STATE so `status` can compute the next action.
+11. Record each open human decision in `DECISIONS.md`, then register its ID with `devflow decision add <domain> <DEC-ID>`.
+    1. Do not edit machine-owned `STATE.yaml` or create ready code-changing WORK while the decision is unresolved.
+12. Add verified domain traps to `PITFALLS.md`.
+13. Run `devflow validate <domain>` and correct structural errors.
+14. Use `devflow status <domain>` to inspect the runtime-computed next action.
 
 For a high-risk domain, leave plan review pending until its initial plan audit is verified.
 The runtime reports the next action but does not autonomously orchestrate execution or review.
