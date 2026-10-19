@@ -105,6 +105,8 @@ These are the places that actually cause incidents.
 
 ### H. Concurrency and idempotency
 
+- Concurrent requests on the same entity must not apply the same effect twice; verify an atomic constraint, lock, or equivalent guard, not only a read-then-write check.
+- Retrying an operation must not repeat external side effects; verify idempotency key issuer (server or client), scope, persistence, and replay behavior.
 - Lock ordering is consistent across call paths, so two paths cannot deadlock.
 - Duplicate delivery of the same external event applies once.
 - Reprocessing an old event does not overwrite newer state.

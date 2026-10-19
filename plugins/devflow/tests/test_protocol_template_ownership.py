@@ -50,6 +50,19 @@ class ProtocolTemplateOwnershipTests(unittest.TestCase):
         self.assertNotIn("| Baseline SHA", text)
         self.assertNotIn("Phase / integration status to set", text)
 
+    def test_audit_h_axis_preserves_concurrency_and_retry_guards(self) -> None:
+        audit = (PROTOCOL / "audit-core.md").read_text(encoding="utf-8")
+        h_axis = audit.split("### H. Concurrency and idempotency\n", 1)[1].split(
+            "\n### I. Security, authorization, and ownership", 1
+        )[0]
+        for detail in (
+            "same entity", "atomic constraint", "read-then-write",
+            "external side effects", "idempotency key", "server or client",
+            "scope", "replay behavior",
+        ):
+            with self.subTest(detail=detail):
+                self.assertIn(detail, h_axis)
+
     def test_protocol_guidance_uses_one_rule_owner(self) -> None:
         decision = (PROTOCOL / "decision-policy.md").read_text(encoding="utf-8")
         authority = (PROTOCOL / "authority.md").read_text(encoding="utf-8")
