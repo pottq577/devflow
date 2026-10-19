@@ -36,6 +36,7 @@ import devflow_delivery as delivery
 import devflow_finalization as finalization
 import devflow_newman as newman
 import devflow_scout as scout_contract
+import devflow_sources as sources
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
@@ -6564,6 +6565,21 @@ def autopilot_command(args: argparse.Namespace) -> int:
     return 0 if result.get("status") in {"complete", "checkpoint"} else 1
 
 
+def sources_command(args: argparse.Namespace) -> int:
+    root = repo_root()
+    d = domain_dir(root, args.domain)
+    if args.sources_command == "capture":
+        result = sources.capture(
+            root, d, args.domain, Path(args.original), Path(args.context)
+        )
+    else:
+        result = sources.verify(
+            root, d, args.domain, check_source=args.check_source
+        )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="devflow", description="State-based agent development protocol runtime"
@@ -6590,6 +6606,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--no-refresh", action="store_true")
     sp.set_defaults(func=print_status)
+
+    sp = sub.add_parser("sources")
+    source_sub = sp.add_subparsers(dest="sources_command", required=True)
+    s = source_sub.add_parser("capture")
+    s.add_argument("domain")
+    s.add_argument("--original", required=True)
+    s.add_argument("--context", required=True)
+    s.set_defaults(func=sources_command)
+    s = source_sub.add_parser("verify")
+    s.add_argument("domain")
+    s.add_argument("--check-source", action="store_true")
+    s.set_defaults(func=sources_command)
 
     sp = sub.add_parser("next")
     sp.add_argument("domain")
@@ -6815,7 +6843,14 @@ def main() -> int:
             "check",
             "context",
         }
-        if args.func not in {validate, print_status} and not readonly_delivery:
+        readonly_sources = (
+            args.func == sources_command and args.sources_command == "verify"
+        )
+        if (
+            args.func not in {validate, print_status}
+            and not readonly_delivery
+            and not readonly_sources
+        ):
             config_errors, _config_warnings, newer_config = config_protocol_diagnostics(
                 repo_root()
             )

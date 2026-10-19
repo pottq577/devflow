@@ -53,6 +53,8 @@ python3 <this-skill-directory>/scripts/host.py session-recover <domain> \
    - Do not summarize, reinterpret, decompose, or turn them into a PRD in the parent session.
    - Do not write execution-control options such as `--until` into the requirements file.
    - Preserve requirement and acceptance IDs exactly.
+   - When both original and supplemental files are provided, run `python3 <this-skill-directory>/../../scripts/devflow.py sources capture <domain> --original '<original_path>' --context '<context_path>'` before step 4.
+   - Preserve both file contents unchanged. If either supplied source is unavailable, stop rather than dropping it. An analysis in the supplemental file does not imply product approval.
 4. Prepare the routed bootstrap envelope from the repository root:
 
 ```bash

@@ -192,6 +192,7 @@ Lifecycle records and their prescribed delivery outputs are:
 | `PLAN.md`                                                                    | Repository-grounded implementation strategy, phase graph, traceability.                      |
 | `STATE.yaml`                                                                 | Lifecycle position. Machine-owned; the CLI computes `next_action` from it.                   |
 | `PITFALLS.md`                                                                | Accumulated domain traps and context that no amount of state can compute.                    |
+| `sources/v1/{original.md,context.md,manifest.json}`                          | Captured source evidence for Goal; not independent product-policy approval.                  |
 | `DECISIONS.md`                                                               | Human and product decisions, when any exist.                                                 |
 | `work/*.yaml`                                                                | Every executable change, general and remediation alike.                                      |
 | `audits/*.md`                                                                | One file per audit scope.                                                                    |
