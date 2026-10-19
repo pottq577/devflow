@@ -21,12 +21,13 @@ class ProtocolTemplateOwnershipTests(unittest.TestCase):
         for heading in (
             "Environment and tooling", "Test doubles and local profiles",
             "Code behavior that surprises", "Schema and migration",
-            "Out of scope", "Lessons carried forward",
         ):
             with self.subTest(heading=heading):
                 self.assertIn("## " + heading, text)
         # No sample incident should be loaded as a recorded observation.
         self.assertNotRegex(text, r"(?m)^- (?:Which|Fakes|Methods|Migrations|Work|What) ")
+        self.assertNotIn("## Out of scope", text)
+        self.assertNotIn("## Lessons carried forward", text)
 
     def test_audit_scaffold_preserves_unverified_metadata_and_axes(self) -> None:
         text = (TEMPLATES / "AUDIT.md").read_text(encoding="utf-8")
@@ -41,6 +42,30 @@ class ProtocolTemplateOwnershipTests(unittest.TestCase):
             self.assertRegex(text, rf"(?m)^### {axis}\. ")
         self.assertIn("## Integration-only axes", text)
         self.assertIn("## Verification performed", text)
+
+    def test_audit_template_has_one_machine_metadata_source(self) -> None:
+        text = (TEMPLATES / "AUDIT.md").read_text(encoding="utf-8")
+        self.assertIn("## Reviewed changes", text)
+        self.assertIn("Apply the completed audit with `devflow audit apply`", text)
+        self.assertNotIn("| Baseline SHA", text)
+        self.assertNotIn("Phase / integration status to set", text)
+
+    def test_protocol_guidance_uses_one_rule_owner(self) -> None:
+        decision = (PROTOCOL / "decision-policy.md").read_text(encoding="utf-8")
+        authority = (PROTOCOL / "authority.md").read_text(encoding="utf-8")
+        lifecycle = (PROTOCOL / "lifecycle.md").read_text(encoding="utf-8")
+        host = (PROTOCOL / "host-telemetry.md").read_text(encoding="utf-8")
+        delivery = (PROTOCOL / "delivery-artifacts.md").read_text(encoding="utf-8")
+        prompt = (PLUGIN / "core/prompts/plan.md").read_text(encoding="utf-8")
+        self.assertIn("devflow decision resolve <domain> <DEC-ID>", decision)
+        self.assertIn("devflow decision add <domain> <DEC-ID>", prompt)
+        self.assertNotIn("Set STATE so", prompt)
+        self.assertNotIn("## Pinning a range", authority)
+        self.assertNotIn("## Delivery output authority", authority)
+        self.assertIn("core/protocol/audit-core.md", authority)
+        self.assertIn("core/protocol/host-telemetry.md", lifecycle)
+        self.assertIn("## Hosted Scout capsule provenance", host)
+        self.assertNotIn("HTTP 200..299 readiness check", delivery)
 
     def test_required_plan_and_audit_remediation_headings_remain(self) -> None:
         plan = (TEMPLATES / "PLAN.md").read_text(encoding="utf-8")

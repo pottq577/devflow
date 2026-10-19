@@ -18,21 +18,9 @@ The YAML front matter becomes the machine-readable audit outcome after review. S
 
 Keep the human-readable explanation below. Apply a completed audit with `devflow audit apply`.
 
-## Metadata
+## Reviewed changes
 
-| Field                   | Value                             |
-| ----------------------- | --------------------------------- |
-| Scope                   | plan / work / phase / integration |
-| Mode                    | initial / closure                 |
-| Phase                   |                                   |
-| WORK ID                 | Required for work scope           |
-| Baseline SHA            |                                   |
-| Target SHA              |                                   |
-| Diff range              |                                   |
-| Commits / changed files |                                   |
-| Date                    |                                   |
-
-Branch names are not a range. Pin immutable SHAs, and confirm the base really is an ancestor of the head before trusting a 3-dot diff.
+Describe the commits, changed files and implementation paths actually inspected. Record scope, mode, immutable SHAs and diff range once in the YAML front matter. Verify ancestry before using a three-dot diff as required by `core/protocol/audit-core.md`.
 
 ## Verdict
 
@@ -116,8 +104,9 @@ Fill this section only for `scope=integration`.
 
 ## Residual risks
 
-## Next state
+## Handoff
 
-- Phase / integration status to set:
-- Generated WORK ids:
-- Unresolved decision ids:
+- Generated WORK IDs and unresolved decision IDs:
+- Outstanding evidence or blockers:
+
+Apply the completed audit with `devflow audit apply`. Read the next action from `devflow status <domain>`; never edit machine-owned STATE.

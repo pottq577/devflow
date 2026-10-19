@@ -66,6 +66,7 @@ class DocumentationHistoryTests(unittest.TestCase):
 
     def test_plugin_readme_is_a_compact_entrypoint(self) -> None:
         self.assertLessEqual(len(self.plugin_readme.splitlines()), 200)
+        self.assertNotIn("--baseline-ref", self.plugin_readme)
         for owner in (
             "core/protocol/role-instructions.md",
             "core/protocol/lifecycle.md",

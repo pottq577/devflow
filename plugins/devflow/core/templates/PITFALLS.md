@@ -12,6 +12,3 @@ This scaffold has **no observed pitfalls**. Section headings are prompts, not re
 
 ## Schema and migration
 
-## Out of scope
-
-## Lessons carried forward

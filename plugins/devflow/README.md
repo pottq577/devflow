@@ -129,31 +129,8 @@ Install ELI5 and Node/Newman separately for enabled finalization. Do not treat a
 
 ## Compatibility and verification
 
-Protocol `1.8.0` supports older compatible STATE/WORK documents without bulk rewriting. Missing optional fields remain subject to the runtime's version-aware validation, and newer or incompatible protocol declarations block mutation. Refer to [`lifecycle.md`](core/protocol/lifecycle.md) for authoritative version and migration behavior.
+Artifact protocol `1.8.0` reads older compatible STATE/WORK documents without rewriting them. Newer or incompatible versions block mutation. See [`lifecycle.md`](core/protocol/lifecycle.md) for compatibility rules.
 
-Use these commands from the marketplace root for documentation changes and focused regression checks:
+For documentation changes, run `python3 plugins/devflow/scripts/check_docs.py --json` from the marketplace root, then the affected documentation tests. For merge/release decisions, follow [`release-validation.md`](core/protocol/release-validation.md). The release gate requires actual Newman smoke-test evidence.
 
-```bash
-python3 plugins/devflow/scripts/check_docs.py --json > /tmp/devflow-docs.json
-python3 plugins/devflow/tests/test_documentation_history.py
-python3 plugins/devflow/tests/test_docs_consistency.py
-```
-
-For a new *release decision*, the full gate runs a fresh, unfiltered suite and records both the verdict and per-test evidence:
-
-```bash
-python3 plugins/devflow/tests/release_gate.py --mode release \
-  --report /tmp/devflow-release-verdict.json
-```
-
-The release gate requires actual Newman smoke-test execution and a clean plugin tree. Development-focused checks are not a substitute for that release verdict. See [`release-validation.md`](core/protocol/release-validation.md).
-
-To compare real CLI-rendered Plan, Run, Audit, Finalize and Scout bytes between revisions, run:
-
-```bash
-python3 plugins/devflow/tests/measure_role_packets.py \
-  --baseline-ref 00af6394f7a7830bb9b37c6560e3ec06598e4ad0 \
-  --output /tmp/devflow-packets.json
-```
-
-The comparison does not measure agent tokens or native Goal end-to-end performance. Native hosted Goal end-to-end acceptance and actual invocation of the installed ELI5 skill remain pending. Read [CHANGELOG](CHANGELOG.md) for release history and CLI benchmark caveats.
+Native hosted Goal end-to-end acceptance and invocation of the installed ELI5 skill remain pending. CLI packet measurements and historical release notes are recorded in [CHANGELOG](CHANGELOG.md) and [`release-validation.md`](core/protocol/release-validation.md); they are not model-token or native Goal acceptance evidence.
