@@ -9,6 +9,7 @@ Re-run `devflow status` instead of selecting a different ready item.
 
 1. Read the selected WORK contract, its `context`, its `pitfalls`, and the linked PRD/PLAN sections.
    1. Read `PITFALLS.md` before touching anything.
+   2. Follow any `origin.technical_decisions` and `origin.policy_assumptions` links to DECISIONS.md. Provisional policy allows the stated reversible implementation only, not contract approval or bypass of `decision_dependencies`.
 2. **Work through `premise_checks` against current HEAD before editing.**
    1. Each entry names a fact to confirm.
    2. If one is false, the premise moved: that is a stop condition, not a puzzle to solve.

@@ -12,7 +12,7 @@ relied on.
 | Product/domain source precedence and conflict handling | `core/protocol/authority.md` | all roles |
 | Captured source coverage and PRD/PLAN/WORK requirement links | `core/protocol/authority.md`, `core/schemas/work.schema.yaml` | bootstrap, plan, run, audit |
 | Lifecycle statuses, transitions, `next_action`, artifact budget, phase and integration handoff, render/status CLI | `core/protocol/lifecycle.md` | all roles |
-| Open human decision recording and resolution | `core/protocol/decision-policy.md` | plan, run |
+| Developer decisions, provisional policies, product approval and final policy gate | `core/protocol/decision-policy.md` | plan, run, audit |
 | WORK schema, versions, evidence and acceptance/verification mapping | `core/protocol/work-item-contract.md`, `core/schemas/work.schema.yaml` | plan, run, audit |
 | Machine-owned STATE fields and delivery/finalization records | `core/protocol/lifecycle.md`, `core/schemas/state.schema.yaml` | all roles |
 | High/critical review, audit scope and remediation rules | `core/protocol/risk-policy.md`, `core/protocol/audit-core.md`, `core/schemas/audit.schema.yaml`, `core/schemas/finding.schema.yaml` | run, audit |

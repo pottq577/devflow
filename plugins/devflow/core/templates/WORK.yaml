@@ -8,6 +8,8 @@ items:
       requirements: [REQ-001]
       # PRD acceptance IDs, distinct from this WORK item's local acceptance IDs.
       acceptance_criteria: [AC-001]
+      technical_decisions: []
+      policy_assumptions: []
       findings: []
       plan_items: [P01-01]
       aggregation_reason: null

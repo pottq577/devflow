@@ -127,6 +127,15 @@ devflow delivery finalize <domain>
 
 Install ELI5 and Node/Newman separately for enabled finalization. Do not treat a simulated, skipped, or structurally checked Newman run as executed verification. Follow [`finalization.md`](core/protocol/finalization.md) for server ownership, readiness, cleanup, triage, provenance, and ELI5 invocation; no automatic push, merge, or remote publication occurs.
 
+## Decision traceability
+
+`devflow decision technical` records developer-owned implementation choices;
+`devflow decision assume` records reversible provisional policy, and `approve`, `reject`,
+`reconcile`, and `list` manage its explicit product lifecycle. WORK carries
+`origin.technical_decisions` / `origin.policy_assumptions` references. Pending product
+confirmation does not block unrelated WORK but prevents integration closure. Refer to
+[`decision-policy.md`](core/protocol/decision-policy.md) for required fields and restrictions.
+
 ## Compatibility and verification
 
 Artifact protocol `1.8.0` reads older compatible STATE/WORK documents without rewriting them. Newer or incompatible versions block mutation. See [`lifecycle.md`](core/protocol/lifecycle.md) for compatibility rules.

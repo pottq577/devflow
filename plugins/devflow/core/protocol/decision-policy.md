@@ -37,3 +37,40 @@ When a decision is resolved:
 3. Run `devflow decision resolve <domain> <DEC-ID>` to update machine-owned STATE. Never edit `STATE.yaml.unresolved_decisions` directly.
 4. Re-plan affected WORK if required.
 5. Run `devflow validate <domain>` before resuming execution.
+
+## Developer decisions and provisional policy
+
+Technical implementation choices use `devflow decision technical`; the record belongs under
+`## Technical decisions` in the same `DECISIONS.md`. Link affected WORK with
+`origin.technical_decisions`. A technical record may explain a deviation in the implementation,
+but cannot amend the product contract or resolve a product decision.
+
+A reversible, low/medium-risk policy interpretation may use `devflow decision assume`.
+The record lives under `## Policy assumptions`, with the original behavior, assumed behavior,
+domain basis, alternatives, possible contract impact, rollback, affected requirement IDs,
+and the intended product confirmation owner. Link affected WORK using
+`origin.policy_assumptions`, not `decision_dependencies`. The required
+`--safe-to-prototype` flag is a developer attestation, not product approval.
+
+Do not use provisional policy for security, authorization, payment or billing, destructive
+migration, irreversible data changes, legal/compliance obligations, or high/critical risk.
+If contract impact is confirmed, a specification conflicts with another authoritative
+specification, or audit has emitted `DECISION_REQUIRED`, preserve the existing blocking
+`## Open` / `STATE.unresolved_decisions` contract. A provisional record cannot override it.
+The CLI's risk/category checks cannot independently establish product safety; the architect
+and auditor must verify actual impact.
+
+Product confirmation uses `devflow decision approve` or `devflow decision reject` with an
+identified approving authority and concrete evidence. Approval never follows automatically
+from a passing test or developer agreement. If approved policy differs from the assumption,
+register `--corrective-work` and verify every linked WORK. Rejection always requires
+corrective WORK. After rejecting, `devflow decision reconcile` requires every correction
+WORK to be done with its mandatory review verified, plus a reconciliation evidence reference.
+Update the PRD to the approved policy, re-plan where needed, and retain the original source
+snapshot and decision history. The CLI verifies references and declared evidence, not the
+semantic correctness of the product owner's statement.
+
+Unconfirmed or rejected policies, and outstanding corrective WORK, allow independent
+implementation/phase work but block the integration audit, integration verification,
+and the project's `complete` result. `devflow decision list <domain>` returns all technical
+and provisional policy records. Legacy domains without these records remain compatible.

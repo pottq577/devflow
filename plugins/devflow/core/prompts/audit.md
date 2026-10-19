@@ -8,6 +8,7 @@ Re-run `devflow status` instead of auditing another lifecycle position.
 
 1. Pin baseline/target SHAs and a valid diff range. Use `devflow phase ref` when required; do not switch occupied branches.
 2. Inspect PRD, PLAN, relevant WORK and tests against actual repository diffs. Treat prior reports as leads, never facts.
+   1. Evaluate linked developer decisions and provisional policies using `core/protocol/decision-policy.md`: verify risk and reversibility rather than treating a developer attestation as policy approval.
 3. Apply the appended `core/protocol/audit-core.md` axes for the exact scope and mode. For work scope, inspect the selected canonical WORK and its audit artifact.
 4. Record classified, evidenced findings in one canonical AUDIT Markdown with `core/schemas/audit.schema.yaml` front matter. Never issue `pass` without executed command evidence.
 5. Create traceable remediation/documentation/evidence WORK, or record unresolved decisions. Keep finding links reciprocal; do not turn missing evidence into a guessed fact.

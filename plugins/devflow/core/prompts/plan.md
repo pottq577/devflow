@@ -22,6 +22,7 @@ Re-run `devflow status` instead of rendering or executing another lifecycle acti
 10. Create each `work/phase-XX.yaml` manifest, then register the phase with `devflow phase set <domain> <phase> planned`. The CLI requires a matching manifest or an existing STATE phase entry; pin its diff range with `devflow phase ref` after the branch exists.
 11. Record each open human decision in `DECISIONS.md`, then register its ID with `devflow decision add <domain> <DEC-ID>`.
     1. Do not edit machine-owned `STATE.yaml` or create ready code-changing WORK while the decision is unresolved.
+    2. Use `core/protocol/decision-policy.md` for separately scoped technical decisions and reversible provisional policies. Link WORK with `origin.technical_decisions` or `origin.policy_assumptions`; never treat provisional assumptions as resolved product policy.
 12. Add verified domain traps to `PITFALLS.md`.
 13. Run `devflow validate <domain>` and correct structural errors.
 14. Use `devflow status <domain>` to inspect the runtime-computed next action.

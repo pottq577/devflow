@@ -38,6 +38,7 @@ import devflow_newman as newman
 import devflow_scout as scout_contract
 import devflow_sources as sources
 import devflow_traceability as traceability
+import devflow_policy as policy
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
@@ -1618,6 +1619,8 @@ def integration_verify_errors(
     if unresolved:
         errors.append(f"unresolved project decisions: {', '.join(unresolved)}")
     d = domain_dir(root, domain)
+    _, policy_index, _ = index_work_docs(docs)
+    errors.extend(policy.outstanding(d, policy_index, review_satisfied))
     integration = state.get("integration", {}) or {}
     audit_path = d / integration.get("audit_file", "audits/integration.md")
     if not audit_path.exists():
@@ -2257,6 +2260,18 @@ def compute_next_action(
 ) -> dict[str, Any]:
     """Wrap the existing lifecycle with an explicit Executor-owned whole-delivery gate."""
     action = base_next_action(root, domain, state, work_overrides)
+    # Policy assumptions permit ordinary WORK, never final integration or completion.
+    at_integration = action.get("command") == "complete" or (
+        action.get("command") == "audit" and action.get("scope") == "integration"
+    )
+    if at_integration:
+        d = domain_dir(root, domain)
+        _, policy_index, _ = load_work_index(d, work_overrides)
+        blockers = policy.outstanding(d, policy_index, review_satisfied)
+        if blockers:
+            return human_decision(
+                "project", reason="policy confirmation required: " + "; ".join(blockers[:3])
+            )
     if not finalization.active(state):
         return action
     problems = finalization.structural_errors(state)
@@ -3228,6 +3243,35 @@ def decision_update(args: argparse.Namespace) -> int:
     state["unresolved_decisions"] = unresolved
     commit_lifecycle_mutation(root, args.domain, state)
     print(f"unresolved_decisions: {', '.join(unresolved) or '<none>'}")
+    return 0
+
+
+def policy_decision_update(args: argparse.Namespace) -> int:
+    """Edit authority-scoped DECISIONS records without mutating machine-owned STATE."""
+    root = repo_root()
+    d = domain_dir(root, args.domain)
+    if not state_path(root, args.domain).is_file():
+        return reject_transition("policy", "change", ["domain is not initialized"])
+    if args.decision_command == "list":
+        print(json.dumps(policy.summary(d), ensure_ascii=False, indent=2))
+        return 0
+    state = load_yaml(state_path(root, args.domain), {}) or {}
+    if (state.get("integration") or {}).get("status") == "verified":
+        return reject_transition("policy", "change", ["verified integration is immutable"])
+    _, index, _ = load_work_index(d)
+    try:
+        content = policy.apply(d, args.decision_command, args, index, review_satisfied)
+        records, parse_errors, _ = policy.parse(content)
+        errors = parse_errors + [
+            issue for record in records.values()
+            for issue in policy.record_errors(record)
+        ]
+        if errors:
+            raise policy.PolicyError("; ".join(errors))
+        atomic_write_text(d / "DECISIONS.md", content)
+    except policy.PolicyError as exc:
+        return reject_transition(f"policy {args.decision}", "change", [str(exc)])
+    print(f"{args.decision}: {args.decision_command}")
     return 0
 
 
@@ -4401,6 +4445,12 @@ def collect_validation(
     if work_overrides:
         docs.update(work_overrides)
         docs, index, duplicates = index_work_docs(docs)
+    policy_errors, policy_warnings = policy.validate(
+        d, index, review_satisfied,
+        final=(state.get("integration") or {}).get("status") == "verified",
+    )
+    errors.extend(policy_errors)
+    warnings.extend(policy_warnings)
     for dup in duplicates:
         errors.append(f"Duplicate WORK id: {dup}")
     all_ids = set(index)
@@ -6792,6 +6842,47 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("domain")
         s.add_argument("decision")
         s.set_defaults(func=decision_update)
+
+    s = dsub.add_parser("list")
+    s.add_argument("domain")
+    s.set_defaults(func=policy_decision_update)
+    s = dsub.add_parser("technical")
+    s.add_argument("domain")
+    s.add_argument("decision")
+    s.add_argument("--title", required=True)
+    s.add_argument("--text", required=True)
+    s.add_argument("--rationale", required=True)
+    s.add_argument("--by", required=True)
+    s.add_argument("--requirement", action="append", required=True)
+    s.add_argument("--original-difference", choices=["none", "technical"], required=True)
+    s.set_defaults(func=policy_decision_update)
+    s = dsub.add_parser("assume")
+    s.add_argument("domain")
+    s.add_argument("decision")
+    for field in ("title", "original-behavior", "assumption", "basis", "alternatives",
+                  "impact-description", "rollback", "by", "confirmation-owner"):
+        s.add_argument("--" + field, required=True)
+    s.add_argument("--requirement", action="append", required=True)
+    s.add_argument("--risk", choices=["low", "medium"], required=True)
+    s.add_argument("--contract-impact", choices=["none", "possible"], required=True)
+    s.add_argument("--category", choices=["ui", "workflow", "business-rule", "calculation"], required=True)
+    s.add_argument("--safe-to-prototype", action="store_true")
+    s.set_defaults(func=policy_decision_update)
+    for name in ("approve", "reject"):
+        s = dsub.add_parser(name)
+        s.add_argument("domain")
+        s.add_argument("decision")
+        s.add_argument("--by", required=True)
+        s.add_argument("--evidence", required=True)
+        s.add_argument("--approved-policy", required=True)
+        s.add_argument("--matches-assumption", action="store_true")
+        s.add_argument("--corrective-work", action="append", default=[])
+        s.set_defaults(func=policy_decision_update)
+    s = dsub.add_parser("reconcile")
+    s.add_argument("domain")
+    s.add_argument("decision")
+    s.add_argument("--evidence", required=True)
+    s.set_defaults(func=policy_decision_update)
 
     sp = sub.add_parser("audit")
     asub = sp.add_subparsers(dest="audit_command", required=True)

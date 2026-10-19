@@ -20,3 +20,7 @@ Only decisions requiring human/product authority belong here.
 - Rationale:
 - Date:
 - Affected artifacts:
+
+## Technical decisions
+
+## Policy assumptions
