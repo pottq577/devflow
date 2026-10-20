@@ -46,6 +46,7 @@ class DocumentationConsistencyTests(unittest.TestCase):
                    "[Protocol](core/protocol/lifecycle.md#heading)\n")
         self.put_json("plugins/devflow/version.json", {"plugin": self.version, "protocol": self.protocol})
         self.write("plugins/devflow/scripts/devflow.py", f'PROTOCOL_VERSION = "{self.protocol}"\n')
+        self.write("plugins/devflow/core/templates/STATE.yaml", f'protocol_version: "{self.protocol}"\n')
         versions = {"name": "devflow", "version": self.version}
         self.put_json("plugins/devflow/.claude-plugin/plugin.json", versions)
         self.put_json("plugins/devflow/.codex-plugin/plugin.json", versions)
@@ -128,6 +129,9 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.put_json("plugins/devflow/version.json", {"plugin": "2.3.5", "protocol": self.protocol})
         self.assertTrue(any("version.json" in e for e in check_docs.check_repository(self.root)["errors"]))
         self.put_json("plugins/devflow/version.json", {"plugin": self.version, "protocol": self.protocol})
+        self.write("plugins/devflow/core/templates/STATE.yaml", 'protocol_version: "9.9.9"\n')
+        self.assertTrue(any("STATE.yaml" in e for e in check_docs.check_repository(self.root)["errors"]))
+        self.write("plugins/devflow/core/templates/STATE.yaml", f'protocol_version: "{self.protocol}"\n')
         self.put_json(".agents/plugins/marketplace.json", {
             "version": self.version, "plugins": [{"source": {"path": "./plugins/devflow"}}]
         })

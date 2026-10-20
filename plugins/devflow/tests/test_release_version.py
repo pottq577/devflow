@@ -31,6 +31,7 @@ class ReleaseVersionTests(unittest.TestCase):
         for adapter in (".claude-plugin", ".codex-plugin"):
             self.write(f"plugins/devflow/{adapter}/plugin.json", '{"version":"2.3.4"}\n')
         self.write("plugins/devflow/scripts/devflow.py", 'PROTOCOL_VERSION = "4.5.6"\n')
+        self.write("plugins/devflow/core/templates/STATE.yaml", 'protocol_version: "4.5.6"\n')
         self.write(".agents/plugins/marketplace.json", '{"plugins":[{"source": {"path":"./plugins/devflow"}}]}\n')
 
     def write(self, path: str, content: str) -> None:
@@ -63,8 +64,18 @@ class ReleaseVersionTests(unittest.TestCase):
         changed = release_version.sync_versions(self.plugin, versions={
             "plugin": "2.3.4", "protocol": "4.6.0",
         })
-        self.assertEqual({path.name for path in changed}, {"version.json", "devflow.py"})
+        self.assertEqual({path.name for path in changed}, {"version.json", "devflow.py", "STATE.yaml"})
+        self.assertEqual((self.plugin / "core/templates/STATE.yaml").read_text(), 'protocol_version: "4.6.0"\n')
         self.assertEqual(release_version.check_versions(self.plugin), [])
+
+    def test_state_template_drift_is_reported_and_repaired(self) -> None:
+        template = "plugins/devflow/core/templates/STATE.yaml"
+        self.write(template, 'protocol_version: "9.9.9"\n')
+        self.assertTrue(any("STATE.yaml" in issue for issue in release_version.check_versions(self.plugin)))
+        self.assertEqual([path.name for path in release_version.sync_versions(self.plugin)], ["STATE.yaml"])
+        self.assertEqual(release_version.check_versions(self.plugin), [])
+        self.write(template, 'protocol_version: "4.5.6"\nprotocol_version: "4.5.6"\n')
+        self.assertTrue(any("expected 1 version fields" in issue for issue in release_version.check_versions(self.plugin)))
 
     def test_invalid_or_reversed_semver_is_rejected(self) -> None:
         for invalid in ("v1.2.3", "1.2", "01.2.3", "1.2.3-rc1"):

@@ -7,8 +7,10 @@ production deployment. It never edits PRD, PLAN, WORK, audit evidence or domain 
 
 Use `plugins/devflow/version.json` as the only editable current version source.
 It contains independent `plugin` and `protocol` MAJOR.MINOR.PATCH values.
-The script synchronizes three distribution manifests and the runtime protocol
-constant without modifying CHANGELOG or runtime artifacts.
+The script synchronizes three distribution manifests, the runtime protocol constant,
+and the STATE scaffold without modifying CHANGELOG or initialized domain artifacts.
+Release provenance includes marketplace adapters and the active root documentation;
+unrelated local patch files are outside the release-source checks.
 
 - PATCH: compatible bug fixes, documentation corrections and internal tooling.
 - MINOR: backward-compatible user-facing features.

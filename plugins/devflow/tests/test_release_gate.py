@@ -7,6 +7,7 @@ import contextlib
 import copy
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -178,6 +179,49 @@ class ReleaseGateTests(unittest.TestCase):
             (root / "alias.py").symlink_to(root / "real.py")
             with self.assertRaisesRegex(ValueError, "symlink"):
                 gate.source_snapshot(root)
+
+    def test_marketplace_snapshot_covers_root_sources(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plugin = root / "plugins/devflow"
+            plugin.mkdir(parents=True)
+            for name in gate.ROOT_RELEASE_PATHS:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("original\n")
+            before = gate.source_snapshot(plugin)
+            self.assertEqual(before["files"], len(gate.ROOT_RELEASE_PATHS))
+            for changed in (".claude-plugin/marketplace.json", "README.md"):
+                path = root / changed
+                path.write_text("changed\n")
+                after = gate.source_snapshot(plugin)
+                self.assertEqual(gate.changed_source_paths(before, after),
+                                 ["marketplace/" + changed])
+                path.write_text("original\n")
+            (root / "AGENTS.md").unlink()
+            with self.assertRaisesRegex(ValueError, "missing or symlinked"):
+                gate.source_snapshot(plugin)
+
+    def test_provenance_detects_root_changes_but_not_untracked_patch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plugin = root / "plugins/devflow"
+            plugin.mkdir(parents=True)
+            for name in gate.ROOT_RELEASE_PATHS:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("original\n")
+            for argv in (
+                ("init", "-q"), ("config", "user.name", "DevFlow Fixture"),
+                ("config", "user.email", "devflow@example.invalid"),
+                ("add", "-A"), ("commit", "-qm", "baseline"),
+            ):
+                subprocess.run(["git", *argv], cwd=root, check=True, capture_output=True)
+            self.assertTrue(gate.provenance(plugin)["plugin_clean"])
+            (root / "0005-local.patch").write_text("untracked\n")
+            self.assertTrue(gate.provenance(plugin)["plugin_clean"])
+            (root / ".agents/plugins/marketplace.json").write_text("changed\n")
+            self.assertFalse(gate.provenance(plugin)["plugin_clean"])
 
     def test_declared_python_3_10_contract(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Manage DevFlow's two independent version axes from version.json.
 
-Published plugin manifests and the runtime protocol constant are generated mirrors.
+Published manifests, the runtime protocol constant, and the STATE template are mirrors.
 CHANGELOG.md is historical evidence and is never rewritten by this utility.
 """
 
@@ -19,6 +19,7 @@ PLUGIN = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 JSON_VERSION = re.compile(r'("version"\s*:\s*")([^"]+)(")')
 PYTHON_PROTOCOL = re.compile(r'(?m)^(PROTOCOL_VERSION = ")([^"]+)(")$')
+STATE_PROTOCOL = re.compile(r'(?m)^(protocol_version: ")([^"]+)(")$')
 
 
 def version_tuple(value: str) -> tuple[int, int, int]:
@@ -47,6 +48,7 @@ def mirror_paths(plugin: Path) -> tuple[tuple[Path, int, str], ...]:
         (plugin / ".claude-plugin/plugin.json", 1, "plugin"),
         (plugin / ".codex-plugin/plugin.json", 1, "plugin"),
         (plugin / "scripts/devflow.py", 1, "protocol"),
+        (plugin / "core/templates/STATE.yaml", 1, "protocol"),
     )
 
 
@@ -57,8 +59,12 @@ def updated_mirror(path: Path, text: str, count: int, version: str, kind: str) -
         if not isinstance(data, dict):
             raise ValueError(f"{path}: manifest must be an object")
         pattern = JSON_VERSION
-    else:
+    elif kind == "protocol" and path.name == "devflow.py":
         pattern = PYTHON_PROTOCOL
+    elif kind == "protocol" and path.name == "STATE.yaml":
+        pattern = STATE_PROTOCOL
+    else:
+        raise ValueError(f"{path}: unsupported version mirror")
     if len(pattern.findall(text)) != count:
         raise ValueError(f"{path}: expected {count} version fields")
     return pattern.sub(lambda match: match.group(1) + version + match.group(3), text)

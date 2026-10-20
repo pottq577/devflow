@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.2 - 2026-10-20 - Release-source provenance and protocol mirror repair
+
+- Synchronize the STATE scaffold with the canonical artifact protocol version and reject stale templates before running the full release suite.
+- Derive current-version regression assertions from `version.json` instead of fixed release numbers; preserve historical compatibility fixtures.
+- Include root marketplace adapters and active root documentation in release source digests and clean-tree checks, without treating local patch files as release artifacts.
+- Align README's decision-artifact description with product, technical, and provisional-policy records.
+- Retain artifact protocol `1.8.0` with no artifact migration. Native hosted Goal/installed ELI5 acceptance still requires separate evidence.
+
 ## 0.12.1 - 2026-10-20 - Documentation contract and version gate repair
 
 - Correct source-approval handoff guidance for captured requirements and align decision templates with technical and provisional-policy records.

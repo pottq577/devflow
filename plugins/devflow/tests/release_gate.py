@@ -44,6 +44,10 @@ EXCLUDED_PARTS = frozenset({
     ".git", ".devflow", ".pytest_cache", "__pycache__", ".mypy_cache",
     ".ruff_cache", "node_modules", ".venv", "venv", "dist", "build",
 })
+ROOT_RELEASE_PATHS = (
+    ".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json",
+    "README.md", "AGENTS.md", "CLAUDE.md",
+)
 OUTCOMES = frozenset({
     "passed", "failed", "error", "skipped", "expected_failure", "unexpected_success",
 })
@@ -58,12 +62,15 @@ def source_snapshot(plugin_root: Path = PLUGIN_ROOT) -> dict[str, Any]:
                     for part in path.relative_to(plugin_root).parts)
         and (path.is_file() or path.is_symlink())
     )
+    entries = [(path.relative_to(plugin_root).as_posix(), path) for path in files]
+    if plugin_root.name == "devflow" and plugin_root.parent.name == "plugins":
+        marketplace = plugin_root.parents[1]
+        entries.extend(("marketplace/" + rel, marketplace / rel) for rel in ROOT_RELEASE_PATHS)
     sha = hashlib.sha256()
     file_sha256: dict[str, str] = {}
-    for path in files:
-        if path.is_symlink():
-            raise ValueError("plugin source contains a symlink: " + str(path.relative_to(plugin_root)))
-        name = path.relative_to(plugin_root).as_posix()
+    for name, path in sorted(entries):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("release source missing or symlinked: " + name)
         relative = name.encode("utf-8")
         payload = path.read_bytes()
         file_sha256[name] = hashlib.sha256(payload).hexdigest()
@@ -71,7 +78,7 @@ def source_snapshot(plugin_root: Path = PLUGIN_ROOT) -> dict[str, Any]:
         sha.update(relative)
         sha.update(len(payload).to_bytes(8, "big"))
         sha.update(payload)
-    return {"sha256": sha.hexdigest(), "files": len(files), "file_sha256": file_sha256}
+    return {"sha256": sha.hexdigest(), "files": len(entries), "file_sha256": file_sha256}
 
 
 def changed_source_paths(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
@@ -98,14 +105,17 @@ def compatibility_checks(plugin_root: Path = PLUGIN_ROOT) -> list[str]:
 
 
 def provenance(plugin_root: Path = PLUGIN_ROOT) -> dict[str, Any]:
-    """Record HEAD and plugin dirtiness without including private file contents."""
+    """Record HEAD and released-source dirtiness, excluding unrelated local files."""
+    is_marketplace = plugin_root.name == "devflow" and plugin_root.parent.name == "plugins"
+    root = plugin_root.parents[1] if is_marketplace else plugin_root
+    scopes = ["plugins/devflow/", *ROOT_RELEASE_PATHS] if is_marketplace else ["."]
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=plugin_root,
+        ["git", "rev-parse", "HEAD"], cwd=root,
         capture_output=True, text=True, check=False,
     )
     changes = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all", "--", "."],
-        cwd=plugin_root, capture_output=True, text=True, check=False,
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", *scopes],
+        cwd=root, capture_output=True, text=True, check=False,
     )
     return {
         "head": head.stdout.strip() if head.returncode == 0 else None,

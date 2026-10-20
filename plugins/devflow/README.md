@@ -112,7 +112,7 @@ A domain records its intent, work, review, and progression under `docs/domains/<
 PRD.md              Product requirements
 PLAN.md             Implementation plan
 STATE.yaml          Runtime-owned lifecycle state
-DECISIONS.md        Human decisions
+DECISIONS.md        Product decisions, technical choices, policy assumptions
 PITFALLS.md         Verified domain traps
 work/               Phase and integration WORK manifests
 audits/             Canonical plan, work, phase and integration audits

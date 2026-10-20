@@ -31,6 +31,8 @@ import yaml
 
 PLUGIN = Path(__file__).resolve().parent.parent
 CLI = PLUGIN / "scripts" / "devflow.py"
+CANONICAL_VERSIONS = json.loads((PLUGIN / "version.json").read_text(encoding="utf-8"))
+CURRENT_PROTOCOL = CANONICAL_VERSIONS["protocol"]
 RUNTIME_PROTOCOL = yaml.safe_load(
     (PLUGIN / "core/templates/STATE.yaml").read_text(encoding="utf-8")
 )["protocol_version"]
@@ -7405,20 +7407,21 @@ def case_marketplace_plugin_version_matches_manifest(root: Path) -> None:
     ]
     release_version = manifest.get("version")
     check(
-        "marketplace plugin version matches manifest",
+        "marketplace plugin version matches canonical source and manifests",
         len(entries) == 1
         and isinstance(release_version, str)
         and bool(release_version)
         and entries[0].get("version")
         == release_version
         == codex_manifest.get("version")
-        == marketplace.get("version"),
+        == marketplace.get("version")
+        == CANONICAL_VERSIONS["plugin"],
         repr(entries) + repr(codex_manifest.get("version")),
     )
     check(
-        "plugin release retains protocol 1.8.0 for existing lifecycle artifacts",
-        RUNTIME_PROTOCOL == "1.8.0"
-        and load_runtime_module().PROTOCOL_VERSION == "1.8.0",
+        "runtime and STATE template match canonical protocol",
+        RUNTIME_PROTOCOL == CURRENT_PROTOCOL
+        and load_runtime_module().PROTOCOL_VERSION == CURRENT_PROTOCOL,
         repr(RUNTIME_PROTOCOL),
     )
 
@@ -9233,9 +9236,8 @@ def case_protocol_version_is_enforced(root: Path) -> None:
         out.stdout + out.stderr,
     )
 
-    # The audit-apply gate threshold is 1.3.0, not the runtime version. A genuine 1.3.0 project
-    # (config and STATE both 1.3.0) still cannot use a legacy verified transition under a 1.8.0
-    # runtime.
+    # The audit-apply gate threshold is 1.3.0, not the current runtime version.
+    # A genuine 1.3.0 project still cannot use a legacy verified transition.
     devflow(root, "init", "legacy13")
     legacy_config(root, "1.3.0")
     ld = root / "docs/domains/legacy13"
@@ -9245,7 +9247,7 @@ def case_protocol_version_is_enforced(root: Path) -> None:
     dump(ld / "STATE.yaml", doc)
     gated = devflow(root, "phase", "set", "legacy13", "01", "verified")
     check(
-        "a 1.3.0 STATE still requires audit apply under the 1.8.0 runtime",
+        "a 1.3.0 STATE still requires audit apply under the current runtime",
         gated.returncode == 2
         and "protocol 1.3+ requires devflow audit apply" in gated.stderr,
         gated.stdout + gated.stderr,
@@ -9266,7 +9268,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
         (dd / "audits/phase-01.md").write_text("# phase audit\n")
         return dd
 
-    # config 1.8.0 (from init), STATE hand-downgraded to 1.2.0
+    # Current config (from init), STATE hand-downgraded to 1.2.0.
     d = verifiable_phase("billing")
     high = high_done("P01-I02")
     dump(d / "work/phase-01.yaml", work("01", item("P01-I01"), high))
@@ -9283,7 +9285,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
     work_v = devflow(root, "work", "review", "billing", "P01-I02", "verified")
     validated = devflow(root, "validate", "billing")
     check(
-        "AC-01/AC-02: a STATE downgrade under a 1.8.0 config cannot re-enable any legacy verified transition",
+        "AC-01/AC-02: a STATE downgrade under the current config cannot re-enable a legacy verified transition",
         all(
             out.returncode == 2
             and "protocol 1.3+ requires devflow audit apply" in out.stderr
@@ -9295,7 +9297,7 @@ def case_state_protocol_downgrade_cannot_disable_the_audit_gate(root: Path) -> N
     check(
         "AC-03: validate reports the STATE-older-than-config protocol downgrade",
         validated.returncode == 1
-        and "STATE protocol_version 1.2.0 is older than the project's .devflow/config.yaml protocol_version 1.8.0"
+        and f"STATE protocol_version 1.2.0 is older than the project's .devflow/config.yaml protocol_version {CURRENT_PROTOCOL}"
         in validated.stdout,
         validated.stdout + validated.stderr,
     )
@@ -9375,9 +9377,9 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
     state_template = yaml.safe_load((PLUGIN / "core/templates/STATE.yaml").read_text())
     check(
         "new init and the STATE template record the current runtime protocol",
-        config.get("protocol_version") == "1.8.0"
-        and state_doc.get("protocol_version") == "1.8.0"
-        and state_template.get("protocol_version") == "1.8.0",
+        config.get("protocol_version") == CURRENT_PROTOCOL
+        and state_doc.get("protocol_version") == CURRENT_PROTOCOL
+        and state_template.get("protocol_version") == CURRENT_PROTOCOL,
         repr(config) + repr(state_doc) + repr(state_template),
     )
 
@@ -9404,16 +9406,16 @@ def case_config_protocol_version_is_checked(root: Path) -> None:
         older.stdout + older.stderr,
     )
 
-    config["protocol_version"] = "1.8.0"
+    config["protocol_version"] = CURRENT_PROTOCOL
     dump(config_path, config)
     human = devflow(root, "status", "billing")
     machine = devflow(root, "status", "billing", "--json")
     report = json.loads(machine.stdout) if machine.returncode == 0 else {}
     expected_versions = {
-        "runtime": "1.8.0",
-        "config": "1.8.0",
-        "state": "1.8.0",
-        "effective": "1.8.0",
+        "runtime": CURRENT_PROTOCOL,
+        "config": CURRENT_PROTOCOL,
+        "state": CURRENT_PROTOCOL,
+        "effective": CURRENT_PROTOCOL,
     }
     check(
         "human and JSON status expose runtime, config, state, and effective protocol versions",
