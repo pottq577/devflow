@@ -128,6 +128,11 @@ class ReleaseGateTests(unittest.TestCase):
             "required_regression_modules_missing:test_hosted_guard",
             self.assess(report, shortened)[0],
         )
+        missing_history = [n for n in names if not n.startswith("test_documentation_history.")]
+        self.assertIn(
+            "required_regression_modules_missing:test_documentation_history",
+            self.assess(report, missing_history)[0],
+        )
         less_legacy = names[1:]
         self.assertIn("legacy_lifecycle_coverage_shrunk", self.assess(report, less_legacy)[0])
 

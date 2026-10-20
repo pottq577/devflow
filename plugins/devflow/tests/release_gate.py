@@ -31,7 +31,7 @@ REQUIRED_MODULES = frozenset({
     "test_hosted_guard", "test_hosted_session", "test_lifecycle_cases",
     "test_newman_classification", "test_newman_integration", "test_scout_contract",
     "test_suite_runner", "test_test_infrastructure", "test_release_gate",
-    "test_docs_consistency",
+    "test_docs_consistency", "test_documentation_history",
 })
 SOURCE_SUFFIXES = frozenset({
     ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".txt", ".sh",

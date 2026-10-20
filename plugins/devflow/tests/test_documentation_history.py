@@ -39,8 +39,6 @@ class DocumentationHistoryTests(unittest.TestCase):
             "devflow status <domain>",
             "plugins/devflow/README.md",
             "plugins/devflow/CHANGELOG.md",
-            "0.11.1",
-            "1.8.0",
             "pending acceptance",
         ):
             with self.subTest(required=required):
@@ -55,8 +53,6 @@ class DocumentationHistoryTests(unittest.TestCase):
             "core/protocol/finalization.md",
             "core/routing/default.yaml",
             "core/routing/models.yaml",
-            "0.11.1",
-            "1.8.0",
             "remain pending",
         ):
             with self.subTest(required=required):
@@ -78,7 +74,8 @@ class DocumentationHistoryTests(unittest.TestCase):
                 self.assertIn(f"]({owner})", self.plugin_readme)
 
     def test_release_entries_are_nested_without_claiming_native_acceptance(self) -> None:
-        self.assertIn("## Unreleased (post-0.11.1)", self.changelog)
+        manifest = json.loads((PLUGIN / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))
+        self.assertIn(f"## {manifest['version']} - ", self.changelog)
         self.assertNotRegex(self.changelog, r"(?m)^## Unreleased - R\d")
         section = self.changelog.split("## 0.11.0 - ", 1)[1].split("## 0.10.1 - ", 1)[0]
         self.assertEqual(len(re.findall(r"(?m)^### R\d\d\b", section)), 19)
@@ -90,7 +87,11 @@ class DocumentationHistoryTests(unittest.TestCase):
         manifest = json.loads(
             (PLUGIN / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(manifest["version"], "0.11.1")
+        codex = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
+        marketplace = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], codex["version"])
+        self.assertEqual(manifest["version"], marketplace["version"])
+        self.assertEqual(manifest["version"], marketplace["plugins"][0]["version"])
         for target in (
             "plugins/devflow/README.md",
             "plugins/devflow/CHANGELOG.md",
