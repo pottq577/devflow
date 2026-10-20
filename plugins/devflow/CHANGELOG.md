@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1 - 2026-10-20 - Documentation contract and version gate repair
+
+- Correct source-approval handoff guidance for captured requirements and align decision templates with technical and provisional-policy records.
+- Clarify lifecycle mutation rollback versus persisted Newman execution evidence. Remove duplicated state-transition rules and internal implementation phase names from active documentation.
+- Remove stale `0.11.1` assertions from documentation-history tests, require that regression family in the release suite, and fail fast on unsynchronized version metadata.
+- Make `version.json` the sole current plugin and artifact protocol version source, with synchronized Claude/Codex manifests and a checked runtime protocol constant. README files link to the source instead of carrying release numbers.
+- Keep artifact protocol `1.8.0` and existing compatibility behavior. Native hosted Goal end-to-end and installed ELI5 invocation acceptance remain pending independent evidence.
+
 ## 0.12.0 - 2026-10-20 - Requirements provenance and evidence-based reporting
 
 - Capture immutable original requirements and separate supplemental context under `sources/v1/` with content hashes; supplemental context does not grant product-policy approval.
