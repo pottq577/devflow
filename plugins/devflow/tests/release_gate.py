@@ -24,6 +24,9 @@ import run_suite
 
 TEST_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = TEST_DIR.parent
+sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+import release_version  # noqa: E402
+
 MIN_LEGACY_CASES = 171
 MIN_REAL_NEWMAN_CASES = 3
 REQUIRED_MODULES = frozenset({
@@ -31,7 +34,7 @@ REQUIRED_MODULES = frozenset({
     "test_hosted_guard", "test_hosted_session", "test_lifecycle_cases",
     "test_newman_classification", "test_newman_integration", "test_scout_contract",
     "test_suite_runner", "test_test_infrastructure", "test_release_gate",
-    "test_docs_consistency", "test_documentation_history",
+    "test_docs_consistency", "test_documentation_history", "test_release_version",
 })
 SOURCE_SUFFIXES = frozenset({
     ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".txt", ".sh",
@@ -51,7 +54,7 @@ def source_snapshot(plugin_root: Path = PLUGIN_ROOT) -> dict[str, Any]:
     files = sorted(
         path for path in plugin_root.rglob("*")
         if path.suffix in SOURCE_SUFFIXES
-        and not any(part in EXCLUDED_PARTS or part.startswith(".")
+        and not any(part in EXCLUDED_PARTS or (part.startswith(".") and part not in {".claude-plugin", ".codex-plugin"})
                     for part in path.relative_to(plugin_root).parts)
         and (path.is_file() or path.is_symlink())
     )
@@ -222,6 +225,28 @@ def _evaluate_fresh(mode: str, suite_path: Path) -> dict[str, Any]:
     repo_before = provenance()
     if syntax:
         blockers.extend(syntax)
+    version_errors = release_version.check_versions(PLUGIN_ROOT)
+    if version_errors:
+        # Do not spend the complete regression-suite runtime on stale distribution metadata.
+        suite_path.parent.mkdir(parents=True, exist_ok=True)
+        suite_path.unlink(missing_ok=True)
+        blockers.append("version_metadata_mismatch")
+        if not repo_before["git_available"]:
+            blockers.append("git_provenance_unavailable")
+        if mode == "release" and not repo_before["plugin_clean"]:
+            blockers.append("release_requires_clean_plugin_tree")
+        return {
+            "schema_version": 1, "mode": mode, "verdict": "blocked",
+            "blockers": sorted(set(blockers)), "warnings": warnings,
+            "coverage": {"discovered": 0, "newman": "not_run"},
+            "evidence": {
+                "suite_report": None, "suite_sha256": None,
+                "plugin_sha256": before["sha256"], "plugin_sha256_before": before["sha256"],
+                "source_file_count": before["files"], "changed_source_paths": [],
+                "head_before": repo_before["head"], **repo_before,
+                "version_errors": version_errors,
+            },
+        }
     suite_path.parent.mkdir(parents=True, exist_ok=True)
     # No shared reports or previous results are accepted as release evidence.
     suite_path.unlink(missing_ok=True)
@@ -232,6 +257,9 @@ def _evaluate_fresh(mode: str, suite_path: Path) -> dict[str, Any]:
     after = source_snapshot()
     repo_after = provenance()
     changed_paths = changed_source_paths(before, after)
+    version_errors = release_version.check_versions(PLUGIN_ROOT)
+    if version_errors:
+        blockers.append("version_metadata_mismatch")
     if before != after:
         blockers.append("plugin_source_changed_during_suite")
     if not (repo_before["git_available"] and repo_after["git_available"]):
@@ -273,6 +301,7 @@ def _evaluate_fresh(mode: str, suite_path: Path) -> dict[str, Any]:
         "evidence": {
             "suite_report": str(suite_path),
             "suite_sha256": suite_hash,
+            "version_errors": version_errors,
             "plugin_sha256": after["sha256"],
             "plugin_sha256_before": before["sha256"],
             "source_file_count": after["files"],

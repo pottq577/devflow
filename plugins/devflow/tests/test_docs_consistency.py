@@ -25,8 +25,8 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.plugin = self.root / "plugins/devflow"
-        self.version = "0.12.0"
-        self.protocol = "1.8.0"
+        self.version = "2.3.4"  # Fixture values are independent of the current release.
+        self.protocol = "4.5.6"
         self.seed_valid_tree()
 
     def write(self, name: str, data: str) -> None:
@@ -38,13 +38,14 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.write(name, json.dumps(data))
 
     def seed_valid_tree(self) -> None:
-        self.write("README.md", "# Test marketplace\nPlugin version: **0.12.0**; artifact protocol: **1.8.0**.\n"
+        self.write("README.md", "# Test marketplace\n[version](plugins/devflow/version.json)\n"
                    "[plugin](plugins/devflow/README.md)\n")
         self.write("AGENTS.md", "# Rules\n")
         self.write("CLAUDE.md", "# Adapter\n")
-        self.write("plugins/devflow/README.md", "Plugin version `0.12.0` ships protocol version `1.8.0`.\n"
+        self.write("plugins/devflow/README.md", "[version](version.json)\n"
                    "[Protocol](core/protocol/lifecycle.md#heading)\n")
-        self.write("plugins/devflow/scripts/devflow.py", 'PROTOCOL_VERSION = "1.8.0"\n')
+        self.put_json("plugins/devflow/version.json", {"plugin": self.version, "protocol": self.protocol})
+        self.write("plugins/devflow/scripts/devflow.py", f'PROTOCOL_VERSION = "{self.protocol}"\n')
         versions = {"name": "devflow", "version": self.version}
         self.put_json("plugins/devflow/.claude-plugin/plugin.json", versions)
         self.put_json("plugins/devflow/.codex-plugin/plugin.json", versions)
@@ -91,7 +92,8 @@ class DocumentationConsistencyTests(unittest.TestCase):
         second = check_docs.check_repository(self.root)
         self.assertEqual(first, second)
         self.assertEqual(first["errors"], [])
-        self.assertEqual(first["versions"]["protocol"], "1.8.0")
+        self.assertEqual(first["versions"]["protocol"], self.protocol)
+        self.assertEqual(first["versions"]["source_plugin"], self.version)
         self.assertTrue(first["duplicate_candidates_are_advisory"])
 
     def test_relative_link_paths_and_fenced_examples(self) -> None:
@@ -100,10 +102,10 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.assertIn("broken relative link", " ".join(check_docs.check_repository(self.root)["errors"]))
         self.write("README.md", "[fine](plugins/devflow/README.md#section)\n"
                    "```md\n[fake](does-not-exist.md)\n```\n"
-                   "[external](https://example.com/docs)\nPlugin 0.12.0, protocol 1.8.0\n")
+                   "[external](https://example.com/docs)\n[version](plugins/devflow/version.json)\n")
         self.assertFalse(any("broken relative link" in error
                              for error in check_docs.check_repository(self.root)["errors"]))
-        self.write("README.md", "[escape](../../etc/passwd)\nPlugin 0.12.0, protocol 1.8.0\n")
+        self.write("README.md", "[escape](../../etc/passwd)\n[version](plugins/devflow/version.json)\n")
         self.assertTrue(any("broken relative link" in error
                             for error in check_docs.check_repository(self.root)["errors"]))
 
@@ -122,9 +124,12 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.put_json("plugins/devflow/.codex-plugin/plugin.json", {"version": "0.0.0"})
         errors = check_docs.check_repository(self.root)["errors"]
         self.assertTrue(any("versions disagree" in e for e in errors), errors)
-        self.put_json("plugins/devflow/.codex-plugin/plugin.json", {"version": "0.12.0"})
+        self.put_json("plugins/devflow/.codex-plugin/plugin.json", {"version": self.version})
+        self.put_json("plugins/devflow/version.json", {"plugin": "2.3.5", "protocol": self.protocol})
+        self.assertTrue(any("version.json" in e for e in check_docs.check_repository(self.root)["errors"]))
+        self.put_json("plugins/devflow/version.json", {"plugin": self.version, "protocol": self.protocol})
         self.put_json(".agents/plugins/marketplace.json", {
-            "version": "0.12.0", "plugins": [{"source": {"path": "./plugins/devflow"}}]
+            "version": self.version, "plugins": [{"source": {"path": "./plugins/devflow"}}]
         })
         self.assertTrue(any("must not own" in e for e in check_docs.check_repository(self.root)["errors"]))
 

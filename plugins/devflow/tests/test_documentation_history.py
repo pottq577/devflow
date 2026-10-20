@@ -33,6 +33,7 @@ class DocumentationHistoryTests(unittest.TestCase):
     def test_root_is_installation_and_current_acceptance_not_release_notes(self) -> None:
         self.assertLessEqual(len(self.root_readme.splitlines()), 55)
         self.assertNotRegex(self.root_readme, r"(?m)^## Version \d")
+        self.assertIn("plugins/devflow/version.json", self.root_readme)
         for required in (
             "claude plugin marketplace add",
             "codex plugin marketplace add",
@@ -45,6 +46,7 @@ class DocumentationHistoryTests(unittest.TestCase):
                 self.assertIn(required, self.root_readme)
 
     def test_current_guidance_retains_runtime_entrypoints(self) -> None:
+        self.assertIn("version.json", self.plugin_readme)
         for required in (
             "devflow render evidence",
             "devflow autopilot start",
@@ -87,8 +89,10 @@ class DocumentationHistoryTests(unittest.TestCase):
         manifest = json.loads(
             (PLUGIN / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
         )
+        canonical = json.loads((PLUGIN / "version.json").read_text(encoding="utf-8"))
         codex = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
         marketplace = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], canonical["plugin"])
         self.assertEqual(manifest["version"], codex["version"])
         self.assertEqual(manifest["version"], marketplace["version"])
         self.assertEqual(manifest["version"], marketplace["plugins"][0]["version"])

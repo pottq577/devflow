@@ -1,7 +1,6 @@
 # DevFlow Marketplace
 
-One source of truth for the DevFlow plugin distributed to Claude Code and OpenAI Codex.
-Both marketplace adapters load the same `plugins/devflow/` implementation; current version and acceptance status appear below.
+Claude Code and OpenAI Codex load the same `plugins/devflow/` implementation. The [canonical version metadata](plugins/devflow/version.json) and the acceptance status are maintained separately from release history.
 
 ## Claude Code
 
@@ -38,8 +37,7 @@ dependencies, evidence requirements, delivery outputs, and environment limitatio
 
 ## Current compatibility and acceptance
 
-- Plugin version: **0.12.0**; artifact protocol: **1.8.0**. Older compatible artifacts remain readable.
+- Read [version.json](plugins/devflow/version.json) for the published plugin version and artifact protocol version. Older compatible artifacts remain readable.
 - Native hosted Goal end-to-end execution and invocation of the installed ELI5 skill remain
   **pending acceptance**. Local tests and synthetic CLI measurements are not that evidence.
-- Historical releases, R00-R18 implementation notes, and measured CLI component results are
-  recorded in [CHANGELOG](plugins/devflow/CHANGELOG.md); they are not new runtime commands.
+- See [CHANGELOG](plugins/devflow/CHANGELOG.md) for historical releases and measurements.

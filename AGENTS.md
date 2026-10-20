@@ -63,8 +63,8 @@ Before editing behavior, inspect the relevant protocol, schema, implementation m
 - Run targeted regression tests and Python syntax checks for changed runtime/test modules. Execute commands from the repository root unless specified otherwise.
 - For merge or release readiness, follow `plugins/devflow/core/protocol/release-validation.md`. Its `release_gate.py` commands own full-suite coverage, Newman skip rules and fresh evidence. A focused run does not establish release readiness.
 - For adapter metadata changes, validate all changed JSON manifests and confirm both marketplace pointers still reference `plugins/devflow/`.
-- Keep plugin versions synchronized across `.claude-plugin/marketplace.json`, both `plugins/devflow/` plugin manifests and current documentation. `.agents/plugins/marketplace.json` is a discovery pointer and must not acquire `version` or `description`.
-- Treat plugin and protocol versions separately. Read the protocol constant from `plugins/devflow/scripts/devflow.py`; change it only after checking compatibility and recording the decision in `plugins/devflow/CHANGELOG.md`.
+- Edit version numbers only through `plugins/devflow/scripts/release_version.py set --plugin <version>` (and `--protocol <version>` when compatibility requires it). `plugins/devflow/version.json` owns both version axes. Distribution manifests and the runtime protocol constant are synchronized mirrors; check them with `release_version.py check`. `.agents/plugins/marketplace.json` remains an unversioned discovery pointer.
+- Keep historical release numbers in `plugins/devflow/CHANGELOG.md`. Do not copy current version numbers into README, skills or protocol documentation. Change the artifact protocol only for reviewed compatibility changes.
 
 ## Package and report accurately
 

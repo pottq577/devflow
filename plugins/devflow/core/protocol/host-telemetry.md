@@ -43,9 +43,9 @@ finish retains that start measurement. `duration_seconds` retains its existing m
 between telemetry start and finish, including supervisor overhead. It is not
 automatically a child execution duration. `token_usage` remains `unmeasured`.
 
-Protocol version remains 1.8.0: this operational format adds no STATE/WORK field,
-lifecycle artifact, transition or approval requirement. Native token accounting,
-including hosted token-budget enforcement, remains outside this contract.
+The telemetry format adds no STATE/WORK field, lifecycle artifact, transition or
+approval requirement. Native token accounting, including hosted token-budget
+enforcement, remains outside this contract.
 
 Starting telemetry prunes settled inflight files under `host-dispatch-inflight/`, keeping only
 the file whose `step_id` is the live reserved step. A supervisor that crashed between start and
@@ -96,7 +96,7 @@ termination facts, after-action fingerprint and recovery time. Repeating the sam
 outcome and evidence returns that receipt without applying accounting again; changed facts are
 rejected. Any failed write rolls back the receipt, progress and lease together. Corrupt stored
 receipts refuse recovery. These private runtime rows add no STATE/WORK fields or lifecycle
-artifact. Protocol version remains 1.8.0 with backward-readable existing operational progress.
+artifact. Existing operational progress remains backward-readable.
 
 ## Hosted resource checkpoints
 
@@ -122,4 +122,4 @@ transition evidence for one checkpoint; a single visited action supplies none. L
 cannot reconstruct the last outcome, so a historical capability failure after earlier progress
 cannot be identified. The first checkpoint writes explicit false progress and null outcome,
 preventing repeated legacy budget renewal without a newly acknowledged action transition.
-Protocol version remains 1.8.0: no lifecycle artifact, field or transition changes.
+These operational fields introduce no lifecycle artifact, field or transition changes.

@@ -2,7 +2,7 @@
 
 DevFlow runs repository-grounded planning, one-item implementation, independent audits, and delivery finalization. Use this page to start or resume a domain, choose a skill, and run verification. The authoritative rules live in [`core/protocol/role-instructions.md`](core/protocol/role-instructions.md), its owned protocols, and `core/schemas/`.
 
-Plugin version `0.12.0` ships artifact protocol `1.8.0`. See [CHANGELOG](CHANGELOG.md) for historical behavior and release notes; historical design reviews are available only through Git history.
+Read the current plugin and artifact protocol versions from [version.json](version.json). See [CHANGELOG](CHANGELOG.md) for release history; historical design reviews remain in Git history.
 
 ## Requirements and entrypoints
 
@@ -154,7 +154,7 @@ confirmation does not block unrelated WORK but prevents integration closure. Ref
 
 ## Compatibility and verification
 
-Artifact protocol `1.8.0` reads older compatible STATE/WORK documents without rewriting them. Newer or incompatible versions block mutation. See [`lifecycle.md`](core/protocol/lifecycle.md) for compatibility rules.
+The current artifact protocol reads older compatible STATE/WORK documents without rewriting them. Newer or incompatible versions block mutation. See [`lifecycle.md`](core/protocol/lifecycle.md) for compatibility rules and [version.json](version.json) for current version values.
 
 For documentation changes, run `python3 plugins/devflow/scripts/check_docs.py --json` from the marketplace root, then the affected documentation tests. For merge/release decisions, follow [`release-validation.md`](core/protocol/release-validation.md). The release gate requires actual Newman smoke-test evidence.
 

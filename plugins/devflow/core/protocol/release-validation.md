@@ -3,6 +3,32 @@
 The regression suite is a test gate, not lifecycle authority and not evidence of a
 production deployment. It never edits PRD, PLAN, WORK, audit evidence or domain STATE.
 
+## Version policy and canonical source
+
+Use `plugins/devflow/version.json` as the only editable current version source.
+It contains independent `plugin` and `protocol` MAJOR.MINOR.PATCH values.
+The script synchronizes three distribution manifests and the runtime protocol
+constant without modifying CHANGELOG or runtime artifacts.
+
+- PATCH: compatible bug fixes, documentation corrections and internal tooling.
+- MINOR: backward-compatible user-facing features.
+- MAJOR: incompatible plugin behavior or entrypoints.
+- Protocol: bump independently only when an artifact or lifecycle compatibility change requires it; document migrations or backward readability.
+
+From the marketplace root, inspect, bump and verify versions:
+
+```bash
+python3 plugins/devflow/scripts/release_version.py show
+python3 plugins/devflow/scripts/release_version.py set --plugin "$NEXT_PLUGIN_VERSION"
+python3 plugins/devflow/scripts/release_version.py check
+```
+
+Use `--protocol <version>` with `set` only after reviewing artifact compatibility.
+Update CHANGELOG manually with the actual release decision; never overwrite history.
+Commit canonical metadata and generated mirrors together. Tag/publish only after
+an independently passing release gate; pending native hosted Goal/ELI5 acceptance
+must remain explicitly disclosed.
+
 ## One fresh suite per decision
 
 From the repository root, after applying the proposed change and before merging:

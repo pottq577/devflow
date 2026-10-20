@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+import release_version
+
 
 SKILLS = ("plan", "run", "audit", "status", "goal", "autopilot")
 NULL_AUDIT_FIELDS = ("scope", "mode", "verdict", "baseline_sha", "target_sha", "diff_range")
@@ -193,6 +195,8 @@ def check_repository(root: Path) -> dict[str, object]:
         }
         if len(set(versions.values())) != 1:
             errors.append("plugin versions disagree: " + json.dumps(versions, sort_keys=True))
+        versions.update({"source_" + key: value for key, value in release_version.load_versions(plugin).items()})
+        errors.extend(release_version.check_versions(plugin))
         if claude["plugins"][0]["source"] != "./plugins/devflow":
             errors.append("Claude marketplace source must point at the shared plugin")
         if codex_market["plugins"][0]["source"]["path"] != "./plugins/devflow":
@@ -207,10 +211,11 @@ def check_repository(root: Path) -> dict[str, object]:
             versions["protocol"] = protocol.group(1)
         top = docs.get("README.md", "")
         guide = docs.get("plugins/devflow/README.md", "")
-        if versions["claude_plugin"] not in top or versions["claude_plugin"] not in guide:
-            errors.append("README plugin version differs from published manifests")
-        if "protocol" in versions and (versions["protocol"] not in top or versions["protocol"] not in guide):
-            errors.append("README protocol version differs from runtime constant")
+        if "plugins/devflow/version.json" not in top or "version.json" not in guide:
+            errors.append("README files must link to canonical version.json")
+        for name, content in (("README.md", top), ("plugins/devflow/README.md", guide)):
+            if re.search(r"(?i)\b(?:plugin|protocol)(?:\s+version)?\s*[:`]\s*\d+\.\d+\.\d+\b", content):
+                errors.append(f"{name}: remove duplicated current version numbers")
     except (OSError, UnicodeError, ValueError, KeyError, IndexError, TypeError) as exc:
         errors.append(f"cannot verify marketplace versions ({type(exc).__name__})")
 

@@ -208,6 +208,7 @@ class ReleaseGateTests(unittest.TestCase):
             with (
                 mock.patch.object(gate, "source_snapshot", side_effect=snapshots),
                 mock.patch.object(gate, "compatibility_checks", return_value=[]),
+                mock.patch.object(gate.release_version, "check_versions", return_value=[]),
                 mock.patch.object(gate, "provenance", side_effect=[
                     {"head": "c" * 40, "plugin_clean": clean, "git_available": True},
                     {"head": ("d" if head_changed else "c") * 40,
@@ -218,6 +219,27 @@ class ReleaseGateTests(unittest.TestCase):
             ):
                 result = gate._evaluate_fresh(mode, suite)
             return result
+
+    def test_version_mismatch_blocks_before_running_complete_suite(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            suite = Path(temporary) / "stale.suite.json"
+            suite.write_text("stale evidence", encoding="utf-8")
+            snapshot = {"sha256": "a" * 64, "files": 1, "file_sha256": {}}
+            with (
+                mock.patch.object(gate, "source_snapshot", return_value=snapshot),
+                mock.patch.object(gate, "compatibility_checks", return_value=[]),
+                mock.patch.object(gate.release_version, "check_versions", return_value=["mirror drift"]),
+                mock.patch.object(gate, "provenance", return_value={
+                    "head": "c" * 40, "plugin_clean": True, "git_available": True,
+                }),
+                mock.patch.object(gate.subprocess, "run") as spawned,
+            ):
+                verdict = gate._evaluate_fresh("release", suite)
+            self.assertEqual(verdict["blockers"], ["version_metadata_mismatch"])
+            self.assertEqual(verdict["coverage"]["newman"], "not_run")
+            self.assertEqual(verdict["evidence"]["version_errors"], ["mirror drift"])
+            self.assertFalse(suite.exists())
+            spawned.assert_not_called()
 
     def test_fresh_complete_merge_gate_passes_with_report_digest(self):
         result = self.run_fake_gate()
