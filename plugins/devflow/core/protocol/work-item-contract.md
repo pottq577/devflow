@@ -69,8 +69,8 @@ source range, actual implementation and linked decision against the evidence.
 `devflow requirements inspect <domain>` reads existing artifacts and reports four
 independent states and gaps; it never updates WORK or STATE. Only passing audited
 and current-HEAD evidence warrants `verification=passed`. Stale code or missing
-verification prevents an original-aligned completion claim. Markdown output is
-owned by the later report layer, not by this WORK artifact.
+verification prevents an original-aligned completion claim. Generated Markdown
+reports are derived views, not WORK evidence.
 
 ## The item must carry what the Architect learned
 
@@ -173,13 +173,7 @@ A separate remediation may reduce the operational risk without proving the missi
 `validate` and `devflow work done` both refuse a completion with no `evidence.commands`, except for `kind: documentation`.
 Record the command and its result, not a claim that it passed.
 
-The runtime also requires `in_progress` before `done`.
-A high or critical implementation completion records a pending required review unless WORK already contains a later valid review state.
-`start` only accepts ready WORK after dependency, decision, phase, and required plan-review gates pass.
-`block` only accepts ready or in-progress WORK and requires a non-empty reason. `unblock` restores the recorded active state when that execution blocker clears.
-`wait-external` records an external evidence/access wait without inventing a product decision. Independent WORK remains schedulable.
-`resume` resolves only the external wait and restores the recorded active state.
-All explicit block and recovery commands append transition history so the original blocker is not lost when the WORK becomes runnable again.
+The runtime requires `in_progress` before `done` and stores mandatory review evidence for high/critical implementation WORK. Follow `lifecycle.md` for start, block, wait, resume, review, and transition-history guards.
 
 ## Backward compatibility
 

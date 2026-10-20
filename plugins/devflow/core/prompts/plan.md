@@ -22,14 +22,14 @@ Re-run `devflow status` instead of rendering or executing another lifecycle acti
 9. For audit-derived WORK, preserve finding semantics and reciprocal `origin.findings` links. Follow the appended WORK contract for aggregation and observable verification.
 10. Create each `work/phase-XX.yaml` manifest, then register the phase with `devflow phase set <domain> <phase> planned`. The CLI requires a matching manifest or an existing STATE phase entry; pin its diff range with `devflow phase ref` after the branch exists.
 11. Record each open human decision in `DECISIONS.md`, then register its ID with `devflow decision add <domain> <DEC-ID>`.
-    1. Do not edit machine-owned `STATE.yaml` or create ready code-changing WORK while the decision is unresolved.
-    2. Use `core/protocol/decision-policy.md` for separately scoped technical decisions and reversible provisional policies. Link WORK with `origin.technical_decisions` or `origin.policy_assumptions`; never treat provisional assumptions as resolved product policy.
+    1. Before validation, record each existing product approval cited by PRD source mappings or PLAN exclusions under `## Resolved`, with the actual approving authority and evidence. Bootstrap references alone are not approval. Without that evidence, keep the choice open and correct the mapping; never fabricate a resolved decision.
+    2. Do not edit machine-owned `STATE.yaml` or create ready code-changing WORK while the decision is unresolved.
+    3. Use `core/protocol/decision-policy.md` for separately scoped technical decisions and reversible provisional policies. Link WORK with `origin.technical_decisions` or `origin.policy_assumptions`; never treat provisional assumptions as resolved product policy.
 12. Add verified domain traps to `PITFALLS.md`.
 13. Run `devflow validate <domain>` and correct structural errors.
 14. Use `devflow status <domain>` to inspect the runtime-computed next action.
 
 For a high-risk domain, leave plan review pending until its initial plan audit is verified.
-The runtime reports the next action but does not autonomously orchestrate execution or review.
 
 Do not create separate task Markdown documents or handoff prompts.
 

@@ -28,8 +28,8 @@ PRD
  -> phase remediation
  -> phase closure audit
  -> next phase
- -> whole-work ELI5 and Newman finalization (when enabled)
--> integration initial audit
+ -> whole-work Newman then ELI5 finalization (when enabled)
+ -> integration initial audit
  -> integration remediation
  -> integration closure audit
  -> integration verified
@@ -91,7 +91,6 @@ Closure provenance is machine-owned: no lifecycle artifact's history is delegate
 A closure also records the previous mapping in `audit_provenance.applied_against`, so `validate` can recheck the persisted closure after `findings` advances for the next closure.
 Existing records without `applied_against` remain readable.
 When both STATE and WORK change, same-directory backups preserve the original bytes before commit; a commit writer failure restores replaced files through an independent rename path.
-This is process-local failure rollback, not crash recovery or concurrent-writer isolation.
 Linked remediation remains ordinary WORK and becomes executable only after the outcome is applied.
 Existing protocol 1.2 and older `plan-review set`, `work review`, `phase set`, and `integration set` transitions remain readable.
 Protocol 1.3 and newer verified transitions must use `audit apply`, so the legacy commands cannot bypass metadata validation.
@@ -143,10 +142,10 @@ Manual operation remains the default. Removing a driver changes who performs the
 
 ## Runtime transition guards
 
-Mutation commands reject invalid transitions with exit code `2` before writing STATE or WORK.
-Every mutation command projects its prospective STATE, and any WORK it changes, on copies and then commits the changed documents through one transaction, mirroring `audit apply`.
-A command that exits non-zero has written nothing, including when the derived-state projection itself raises on structurally invalid input.
-This is process-local failure rollback, not crash recovery or concurrent-writer isolation.
+Lifecycle state-transition commands reject invalid transitions with exit code `2` before writing STATE or WORK.
+They project prospective STATE and changed WORK on copies, then commit them through one transaction, mirroring `audit apply`.
+A rejected lifecycle transition writes nothing, including when derived-state projection fails. This is process-local failure rollback, not crash recovery or concurrent-writer isolation.
+`delivery newman` is an execution command with a different evidence contract: after execution starts, failed attempts remain recorded even on a nonzero exit. Rejected preflight does not record a run; see `finalization.md`.
 
 - `work start` requires ready status, completed dependencies with required reviews verified, resolved decisions, an unverified containing phase, and a verified required plan review. Integration WORK also waits for all project phases.
 - `work done` requires `in_progress` and completion evidence. `work start` normalizes `evidence.delivery: null` to an empty mapping before recording delivery provenance.
@@ -202,7 +201,7 @@ Lifecycle records and their prescribed delivery outputs are:
 
 Do not create separate task Markdown files, handoff documents, remediation plans, focused-review documents, integration-test plans, or prompt handoff documents.
 STATE and the CLI reconstruct the next action.
-`devflow requirements report <domain> --write` generates both local-only status views from the same P04 snapshot.
+`devflow requirements report <domain> --write` generates both local-only status views from the canonical `requirements inspect` evidence snapshot.
 No lifecycle state, WORK, PRD or approval is modified. Checkboxes require verified implementation;
 product approval and original alignment remain independent status fields. Do not edit generated reports by hand.
 

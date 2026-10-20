@@ -1,6 +1,6 @@
 # Decision policy
 
-Use `DECISIONS.md` for human/product decisions and `STATE.yaml.unresolved_decisions` for machine-readable blocking IDs.
+Use `DECISIONS.md` for product decisions, developer technical choices, and provisional product-policy assumptions. Only open human/product decisions are blocking IDs in `STATE.yaml.unresolved_decisions`.
 
 Escalate when:
 
@@ -12,9 +12,6 @@ Escalate when:
 
 Do not escalate ordinary implementation choices that repository conventions or the approved PLAN already determine.
 
-The runtime exposes a computed next action, not autonomous orchestration.
-A human or agent still chooses whether to execute that action and records any decision that needs product authority.
-
 A `DECISION_REQUIRED` audit finding must use `disposition.action: decision`, list at least one ID in `decision_ids`, and leave `work_ids` empty.
 An initial, current-only, or `still_open` finding requires every listed ID to exist as an open record with options in `DECISIONS.md`.
 Successful initial `devflow audit apply` atomically adds those IDs to `STATE.yaml.unresolved_decisions`.
@@ -22,10 +19,7 @@ A closure outcome of `resolved`, `reopened`, or `accepted_risk` instead requires
 Do not create ready code-changing WORK for an unresolved finding.
 After resolution, create WORK for only the selected path and carry the decision ID in `decision_dependencies`; unresolved dependencies cannot be `ready`.
 
-An open decision record is a `### DEC-*` heading under `## Open` with at least two nonblank `- Option ...:` fields.
-The record ends at the next Markdown ATX heading, including a heading with up to three leading spaces.
-Four leading spaces form a code block, not a heading boundary.
-Bracketed template values, `TBD`, and `TODO` do not count as values.
+An open decision record is a `### DEC-*` heading under `## Open` with at least two concrete `- Option ...:` fields. Template placeholders, `TBD`, and `TODO` are invalid values.
 `validate` requires the open decision IDs and `STATE.yaml.unresolved_decisions` to match in both directions.
 WORK start uses the open records as blockers even when STATE is inconsistent.
 A record under `## Resolved` requires a nonblank `- Decision:` field.

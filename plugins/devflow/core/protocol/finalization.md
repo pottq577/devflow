@@ -15,14 +15,11 @@ The Executor owns this delivery stage.
 Existing WORK, risk-review, phase-audit and integration-audit gates retain their authority.
 The runtime executes explicit foreground commands; the host agent follows the rendered procedure.
 
-State projections may stop at the first definitive finalization error and keep its existing
-`finalize` action and reason. An error-free projection still requires the complete evidence
-check before it can release an audit or project completion. Explicit finalization checks and
-verified-integration validation retain complete error collection.
-Raw-report and server-log digests may be shared only within one invocation. Every reuse checks
-the resolved path and current file identity, size, modification time and change time. A file
-that changes while being read fails verification; failures are not cached. The scope is discarded
-on return or error, so later invocations always re-read content and detect byte changes.
+State projections may stop at the first definitive finalization error and retain the
+`finalize` action. A successful projection still requires complete evidence validation before
+releasing an audit or completion; explicit checks report all detected errors.
+Raw-report and server-log digests are reusable only within one invocation after verifying
+file identity and freshness. Later invocations re-read the evidence.
 
 The computed action `finalize` has role `executor`, scope `project`, and project status `delivery_finalization`.
 It is selected at integration handoff once implemented WORK exists, and again after integration remediation changes the scope.
@@ -74,8 +71,8 @@ Embed styles/assets locally in the HTML; no CDN, external script, iframe, teleme
 Follow installed ELI5 presentation guidance while preserving these scope and privacy requirements.
 
 For domains with `STATE.traceability_version: 1`, `delivery context` also returns
-`requirements_evidence`: the live P04/P05 snapshot digest, each requirement's
-four independent status axes, its WORK/source links, and the final blockers.
+`requirements_evidence`: hashes of the current requirement evidence JSON and linked
+review artifacts, each requirement's four status axes, WORK/source links, and final blockers.
 Clear all blockers before recording ELI5. This does not grant product approval.
 Do **not** trust manually edited `REQUIREMENTS_STATUS.*` files; those are disposable
 projections of the same snapshot, not alternative lifecycle authority.
@@ -181,7 +178,8 @@ readiness, environment configuration or Newman are never `not_applicable`.
 
 Return codes: 0 = passed or proven no-HTTP N/A, 1 = Newman completed with API/assertion failure,
 2 = startup, readiness, environment, Newman-tool or cleanup blocker.
-**Attempted server/Newman execution persists its result despite a nonzero return.**
+**Attempted server/Newman execution persists its result despite a nonzero return.** This is the
+execution-evidence exception to the lifecycle transition rollback rule in `lifecycle.md`.
 Newman executable lookup and `--version` run before owned-server startup; tool-check failures remain recorded `execution`/`tool` blockers with `fix_tool` retry guidance, while startup, readiness and cleanup stay `not_run` because no server was started.
 Rejected preflight (target/source authorization, timeouts, server argv, readiness URL, local environment, bounded script profile, private staging) returns exit 2 with `failure_stage: preflight` and `recorded: false`. It neither appends a Newman run nor invalidates successful-run or final-explanation provenance. No server or Newman process is started.
 Every recorded run includes `failure_stage`, `failure_kind` and `retry_policy`: `api` failures require evidence-based triage before repair; `tool` and `report` failures require runner/report inspection; `environment` failures require environment repair; `provenance` requires refreshing source and rerunning. There are no automatic blind retries. Historical runs without these fields remain readable. A preflight blocker has no run ID eligible for `delivery triage` and cannot create code/collection repair WORK.
@@ -240,9 +238,9 @@ devflow status <domain>
 ```
 
 `finalize` requires terminal WORK, current branch artifacts/source tips, fresh ELI5 evidence, current successful/N/A branch runs, intact private report/summary hashes, and traced committed repairs for every code/collection failure.
-For source-traced domains it additionally requires no P04 diagnostics/gaps, verified in-scope
-implementation and acceptance, a proven original comparison, and no provisional or
-rejected product policy. WORK/phase audit bytes and the canonical P05 JSON snapshot
+For source-traced domains it additionally rejects requirement snapshot errors or traceability
+gaps, unverified in-scope implementation/acceptance, unknown original comparisons, and
+unapproved product policy. The canonical requirements JSON and WORK/phase audit hashes
 are bound to `html_metadata`, explanation provenance, and the final receipt.
 It records a content-addressed receipt.
 It authorizes only the handoff to the original independent integration audit, never push/merge/publication.

@@ -1,6 +1,6 @@
 # Decisions
 
-Only decisions requiring human/product authority belong here.
+Record product decisions under Open/Resolved, developer-owned implementation choices under Technical decisions, and reversible policy interpretations under Policy assumptions. Follow `core/protocol/decision-policy.md` for each record's authority and lifecycle.
 
 ## Open
 

@@ -11,9 +11,9 @@ Rules:
 - Create stable `REQ-*`, `AC-*`, and `RULE-*` IDs when the approved requirements have no IDs.
 - Keep repository implementation details, file paths, class names, migration ordering, commit boundaries, and phase decomposition out of the PRD.
 - If `sources/v1/manifest.json` exists next to the target PRD, read both captured source files before writing the PRD. The original preserves the requirement's source; the supplemental context is analysis, not automatic product approval.
-- For captured sources, read the adjacent `../protocol/authority.md` source-traceability contract. Append a `## 11. Source traceability` table with `Source | Lines | Disposition | Requirements | Reason` columns. Cover every nonblank line in both snapshots without overlapping ranges.
-- Link source spans to stable `REQ-*`, `RULE-*`, `SEC-*`, `NFR-*` or `IDEM-*` headings. Preserve `AC-*` IDs under their parent requirement. For source text without IDs, assign stable IDs from the source heading/content rather than enumeration order.
-- Mark analysis as `reference`, context as `background`, and unsettled questions as `pending`. Mark a source span `mapped` only for approved requirements. An approved context-only requirement or an `excluded` span needs a resolved `DEC-*` record.
+- For captured sources, read `../protocol/authority.md` and append its required source-traceability table, covering both snapshots.
+- Keep stable PRD requirement and acceptance IDs. Derive new IDs from source anchors rather than row order.
+- Classify source spans under the authority contract. Cite an existing product approval for context-only mapped requirements or exclusions; do not invent a resolved `DEC-*`. The Architect must record cited approvals in `DECISIONS.md` before full validation.
 - Keep conflicting or unapproved product-policy interpretations in Open Decisions. Do not silently promote supplemental suggestions into approved requirements.
 - Put genuinely unresolved product choices in `## 10. Open Decisions`; never invent an answer.
 - Replace every scaffold placeholder with concrete content.
