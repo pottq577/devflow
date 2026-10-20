@@ -54,7 +54,15 @@ These are example command shapes, **not** a sequence to execute unconditionally.
 
 Use `devflow validate <domain>` to check artifacts without silently rewriting them. Record unresolved decisions in DECISIONS and operational traps in PITFALLS. The lifecycle rules and command guards live in [`lifecycle.md`](core/protocol/lifecycle.md), [`work-item-contract.md`](core/protocol/work-item-contract.md), and [`audit-core.md`](core/protocol/audit-core.md).
 
-Use `devflow requirements inspect <domain>` for a read-only JSON snapshot of each PRD requirement's implementation, original difference, approval and verification state. Missing evidence remains unknown; human-facing Markdown reports are a separate follow-up stage.
+Use `devflow requirements inspect <domain>` for the canonical read-only JSON snapshot. The human checklist and JSON report use that same snapshot:
+
+```bash
+devflow requirements report <domain>                 # print Markdown checkboxes
+devflow requirements report <domain> --format json   # print JSON
+devflow requirements report <domain> --write         # regenerate both local reports
+```
+
+`--write` produces `REQUIREMENTS_STATUS.md` and `REQUIREMENTS_STATUS.json` inside the domain directory without changing STATE, PRD or WORK. Checked boxes mean implementation plus passing verification, not product approval. The command still returns nonzero on snapshot diagnostics errors; the generated files contain those findings. These are derived local views, not extra authoritative lifecycle records.
 
 ## Run Goal or Autopilot
 

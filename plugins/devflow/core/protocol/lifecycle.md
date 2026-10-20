@@ -196,11 +196,15 @@ Lifecycle records and their prescribed delivery outputs are:
 | `DECISIONS.md`                                                               | Blocking human decisions, developer choices, provisional and approved product policies.       |
 | `work/*.yaml`                                                                | Every executable change, general and remediation alike.                                      |
 | `audits/*.md`                                                                | One file per audit scope.                                                                    |
+| `REQUIREMENTS_STATUS.md` / `REQUIREMENTS_STATUS.json`                        | Optional CLI-generated requirement views; never an independent status authority.            |
 | `docs/PR/<domain-slug-hash>/<branch-slug-hash>.md`                           | Cumulative local PR body derived from the consuming project template.                        |
 | `docs/postman/<domain-slug-hash>/<branch-slug-hash>.postman_collection.json` | Cumulative importable collection for the delivered branch.                                   |
 
 Do not create separate task Markdown files, handoff documents, remediation plans, focused-review documents, integration-test plans, or prompt handoff documents.
 STATE and the CLI reconstruct the next action.
+`devflow requirements report <domain> --write` generates both local-only status views from the same P04 snapshot.
+No lifecycle state, WORK, PRD or approval is modified. Checkboxes require verified implementation;
+product approval and original alignment remain independent status fields. Do not edit generated reports by hand.
 
 ### Why PITFALLS is a separate artifact
 

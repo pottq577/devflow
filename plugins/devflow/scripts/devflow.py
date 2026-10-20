@@ -40,6 +40,7 @@ import devflow_sources as sources
 import devflow_traceability as traceability
 import devflow_policy as policy
 import devflow_requirements as requirements
+import devflow_report as requirement_report
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
@@ -6644,6 +6645,35 @@ def requirements_inspect(args: argparse.Namespace) -> int:
     return 1 if snapshot["diagnostics"]["errors"] else 0
 
 
+def requirements_report(args: argparse.Namespace) -> int:
+    """Project P04 evidence into disposable Markdown or JSON, without lifecycle writes."""
+    root = repo_root()
+    d = domain_dir(root, args.domain)
+    if not state_path(root, args.domain).is_file():
+        print(f"Domain not initialized: {args.domain}", file=sys.stderr)
+        return 2
+    state = load_yaml(state_path(root, args.domain), {}) or {}
+    _, index, _ = load_work_index(d)
+    snapshot = requirements.collect(
+        d, index, state, root=root, head_sha=current_sha(root),
+        review_satisfied=review_satisfied,
+    )
+    if args.write:
+        paths = requirement_report.write_pair(d, snapshot)
+        print(json.dumps({
+            "domain": args.domain,
+            "written": [str(path.relative_to(root)) for path in paths],
+            "diagnostic_errors": len(snapshot["diagnostics"]["errors"]),
+        }, ensure_ascii=False, indent=2))
+    else:
+        rendered = (
+            requirement_report.render_json(snapshot)
+            if args.format == "json" else requirement_report.render_markdown(snapshot)
+        )
+        print(rendered, end="")
+    return 1 if snapshot["diagnostics"]["errors"] else 0
+
+
 def sources_command(args: argparse.Namespace) -> int:
     root = repo_root()
     d = domain_dir(root, args.domain)
@@ -6685,6 +6715,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = rsub.add_parser("inspect")
     s.add_argument("domain")
     s.set_defaults(func=requirements_inspect)
+    s = rsub.add_parser("report")
+    s.add_argument("domain")
+    s.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    s.add_argument("--write", action="store_true", help="write both local report files")
+    s.set_defaults(func=requirements_report)
 
     sp = sub.add_parser("status")
     sp.add_argument("domain")
@@ -6972,10 +7007,12 @@ def main() -> int:
         readonly_sources = (
             args.func == sources_command and args.sources_command == "verify"
         )
+        readonly_report = args.func == requirements_report and not args.write
         if (
             args.func not in {validate, print_status, requirements_inspect}
             and not readonly_delivery
             and not readonly_sources
+            and not readonly_report
         ):
             config_errors, _config_warnings, newer_config = config_protocol_diagnostics(
                 repo_root()
