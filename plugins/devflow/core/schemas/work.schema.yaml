@@ -23,6 +23,7 @@ optional_item_fields:
   origin.acceptance_criteria: Optional stable PRD AC IDs this WORK addresses; traced-source domains validate reciprocal coverage. Different from WORK-local acceptance IDs.
   origin.technical_decisions: Optional DEC IDs under DECISIONS.md Technical decisions; must share PRD requirement origin. Never grants product-policy authority.
   origin.policy_assumptions: Optional DEC IDs under DECISIONS.md Policy assumptions; must share PRD requirement origin. Does not count as a resolved decision dependency.
+  origin.original_comparison: Optional map from PRD requirement IDs to relation, source, and evidence fields. Relation is aligned, technical_deviation, or policy_deviation. Source is original:v1 Lstart-Lend within the PRD mapping. Missing comparisons remain unknown and deviations require matching decision links.
   context: Repository facts the Architect already verified, so the Executor does not re-derive them. Expected for high and critical risk.
   premise_checks: Facts to re-confirm at current HEAD before editing anything. Mandatory for high and critical risk.
   pitfalls: Known failure modes for this specific change. Each entry names what breaks and why.

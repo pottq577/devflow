@@ -54,6 +54,8 @@ These are example command shapes, **not** a sequence to execute unconditionally.
 
 Use `devflow validate <domain>` to check artifacts without silently rewriting them. Record unresolved decisions in DECISIONS and operational traps in PITFALLS. The lifecycle rules and command guards live in [`lifecycle.md`](core/protocol/lifecycle.md), [`work-item-contract.md`](core/protocol/work-item-contract.md), and [`audit-core.md`](core/protocol/audit-core.md).
 
+Use `devflow requirements inspect <domain>` for a read-only JSON snapshot of each PRD requirement's implementation, original difference, approval and verification state. Missing evidence remains unknown; human-facing Markdown reports are a separate follow-up stage.
+
 ## Run Goal or Autopilot
 
 In a Codex session with host-native subagents, invoke the `goal` skill. It uses the host supervisor to dispatch one routed specialist at a time; it does **not** start nested `codex exec` or the standalone Autopilot controller.

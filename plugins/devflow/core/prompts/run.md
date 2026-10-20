@@ -22,6 +22,7 @@ Re-run `devflow status` instead of selecting a different ready item.
 7. Record commit, changed files, commands with their results, deviations, and discoveries in `evidence`.
    1. Keep executed results in `evidence.commands`; the verification mapping does not replace them.
    2. A command's result means what it printed, not what you expected it to print.
+   3. When captured original sources exist, compare changed behavior against the exact original line range and fill `origin.original_comparison` for each affected requirement only with cited evidence. Missing comparison stays unknown; refer to the appended WORK contract.
 8. Mark the item `done` only when acceptance criteria are supported by evidence.
    1. `devflow work done` refuses a completion with no recorded command.
    2. High and critical completed WORK then waits for its initial work audit before dependents run.

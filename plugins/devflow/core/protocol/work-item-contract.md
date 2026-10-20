@@ -56,6 +56,22 @@ The runtime validates the declared mapping but does not infer whether a command 
 Record executed command results in the existing `evidence.commands` list.
 Coverage declarations do not replace execution evidence.
 
+## Original comparison provenance
+
+For each finished WORK, the Executor may declare `origin.original_comparison` keyed by
+an `origin.requirements` ID. Each entry contains `relation` (`aligned`,
+`technical_deviation`, or `policy_deviation`), `source` (`original:v1 Lx-Ly`
+within that requirement's PRD source mapping), and concrete implementation `evidence`.
+A technical deviation requires a linked technical decision stating an original
+technical difference; a policy deviation requires a linked policy record. A missing
+comparison is `unknown`, not implicitly aligned. The Auditor checks the declared
+source range, actual implementation and linked decision against the evidence.
+`devflow requirements inspect <domain>` reads existing artifacts and reports four
+independent states and gaps; it never updates WORK or STATE. Only passing audited
+and current-HEAD evidence warrants `verification=passed`. Stale code or missing
+verification prevents an original-aligned completion claim. Markdown output is
+owned by the later report layer, not by this WORK artifact.
+
 ## The item must carry what the Architect learned
 
 The Architect records verified repository facts so the Executor can avoid broad reconnaissance. The Executor must still verify `premise_checks` against current HEAD and inspect relevant implementation before editing.

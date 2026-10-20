@@ -39,6 +39,7 @@ import devflow_scout as scout_contract
 import devflow_sources as sources
 import devflow_traceability as traceability
 import devflow_policy as policy
+import devflow_requirements as requirements
 
 PROTOCOL_VERSION = "1.8.0"
 HIGH_RISK = {"high", "critical"}
@@ -4451,6 +4452,8 @@ def collect_validation(
     )
     errors.extend(policy_errors)
     warnings.extend(policy_warnings)
+    comparison_errors, _ = requirements.validate_comparisons(d, index)
+    errors.extend(comparison_errors)
     for dup in duplicates:
         errors.append(f"Duplicate WORK id: {dup}")
     all_ids = set(index)
@@ -6624,6 +6627,23 @@ def autopilot_command(args: argparse.Namespace) -> int:
     return 0 if result.get("status") in {"complete", "checkpoint"} else 1
 
 
+def requirements_inspect(args: argparse.Namespace) -> int:
+    """Emit a read-only, deterministic requirement snapshot; P05 owns human reports."""
+    root = repo_root()
+    d = domain_dir(root, args.domain)
+    if not state_path(root, args.domain).is_file():
+        print(f"Domain not initialized: {args.domain}", file=sys.stderr)
+        return 2
+    state = load_yaml(state_path(root, args.domain), {}) or {}
+    _, index, _ = load_work_index(d)
+    snapshot = requirements.collect(
+        d, index, state, root=root, head_sha=current_sha(root),
+        review_satisfied=review_satisfied,
+    )
+    print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+    return 1 if snapshot["diagnostics"]["errors"] else 0
+
+
 def sources_command(args: argparse.Namespace) -> int:
     root = repo_root()
     d = domain_dir(root, args.domain)
@@ -6659,6 +6679,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("validate")
     sp.add_argument("domain")
     sp.set_defaults(func=validate)
+
+    sp = sub.add_parser("requirements")
+    rsub = sp.add_subparsers(dest="requirements_command", required=True)
+    s = rsub.add_parser("inspect")
+    s.add_argument("domain")
+    s.set_defaults(func=requirements_inspect)
 
     sp = sub.add_parser("status")
     sp.add_argument("domain")
@@ -6947,7 +6973,7 @@ def main() -> int:
             args.func == sources_command and args.sources_command == "verify"
         )
         if (
-            args.func not in {validate, print_status}
+            args.func not in {validate, print_status, requirements_inspect}
             and not readonly_delivery
             and not readonly_sources
         ):

@@ -10,6 +10,12 @@ items:
       acceptance_criteria: [AC-001]
       technical_decisions: []
       policy_assumptions: []
+      # Fill after comparing implemented code with the captured original; omit if unassessed.
+      # original_comparison:
+      #   REQ-001:
+      #     relation: aligned  # or technical_deviation / policy_deviation
+      #     source: original:v1 L2-L3
+      #     evidence: Verified source and implementation locations.
       findings: []
       plan_items: [P01-01]
       aggregation_reason: null
