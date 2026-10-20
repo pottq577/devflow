@@ -73,6 +73,34 @@ Include an honest disposition for every WORK ID in visible content and source re
 Embed styles/assets locally in the HTML; no CDN, external script, iframe, telemetry, credentials or raw response payloads.
 Follow installed ELI5 presentation guidance while preserving these scope and privacy requirements.
 
+For domains with `STATE.traceability_version: 1`, `delivery context` also returns
+`requirements_evidence`: the live P04/P05 snapshot digest, each requirement's
+four independent status axes, its WORK/source links, and the final blockers.
+Clear all blockers before recording ELI5. This does not grant product approval.
+Do **not** trust manually edited `REQUIREMENTS_STATUS.*` files; those are disposable
+projections of the same snapshot, not alternative lifecycle authority.
+
+In that case include exactly one visible HTML section and one table row per requirement:
+
+```html
+<section id="devflow-requirements"
+  data-snapshot-sha256="<requirements_evidence.snapshot_sha256>"
+  data-evidence-sha256="<requirements_evidence.sha256>">
+  <table><tbody>
+    <tr data-requirement-id="REQ-001"
+      data-implementation="implemented" data-difference="aligned"
+      data-decision="not_required" data-verification="passed">
+      <td>REQ-001</td><td>Implemented; audited; matches original.</td>
+    </tr>
+  </tbody></table>
+</section>
+```
+
+Use the **exact** four-axis values for each ID from `requirements_evidence`.
+Rows must visibly name their ID; describe exceptions and decisions in plain language.
+The `html_metadata` comment also contains the requirement evidence hash and count.
+Legacy domains without `traceability_version: 1` keep the previous ELI5 HTML contract.
+
 Copy the exact `html_metadata` object from context into one HTML comment:
 `<!-- devflow-explanation: {the exact metadata object} -->`.
 Then record actual invocation evidence:
@@ -212,6 +240,10 @@ devflow status <domain>
 ```
 
 `finalize` requires terminal WORK, current branch artifacts/source tips, fresh ELI5 evidence, current successful/N/A branch runs, intact private report/summary hashes, and traced committed repairs for every code/collection failure.
+For source-traced domains it additionally requires no P04 diagnostics/gaps, verified in-scope
+implementation and acceptance, a proven original comparison, and no provisional or
+rejected product policy. WORK/phase audit bytes and the canonical P05 JSON snapshot
+are bound to `html_metadata`, explanation provenance, and the final receipt.
 It records a content-addressed receipt.
 It authorizes only the handoff to the original independent integration audit, never push/merge/publication.
 New evidence or content changes invalidate the receipt; finalization repeats after remediation.

@@ -18,7 +18,9 @@ Follow this execution order without replacing those contracts.
 5. After Newman, obtain fresh `delivery context`. Read and invoke the installed
    `eli5` skill through the host (Codex `$eli5`). Generate one whole-domain HTML
    with exact metadata, every WORK disposition, cross-branch behavior and current
-   test outcomes. Record actual invocation evidence with `delivery explain`.
+   test outcomes. For traced domains, resolve `requirements_evidence.blockers` and
+   include its exact requirement-status table per `finalization.md`. Record actual
+   invocation evidence with `delivery explain`.
 6. Run `delivery check --final`, `delivery finalize`, `validate`, then `status`.
    Hand off to the computed independent audit or decision, not publication.
 

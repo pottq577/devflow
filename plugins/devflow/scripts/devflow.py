@@ -6199,7 +6199,8 @@ def render(args: argparse.Namespace) -> int:
         # Whole-work integrity stays computed from every WORK and branch; only the rendering is
         # paged, so a continuation page repeats the digest and the pinned sources, not every row.
         projection = finalization.render_scope(
-            finalization.scope(root, args.domain, state, docs, d)
+            finalization.scope(root, args.domain, state, docs, d),
+            include_requirement_rows=first_page,
         )
         if not first_page:
             # The complete id list is page 1's; this page's manifest slice plus its digest is enough.
@@ -6394,6 +6395,8 @@ def delivery_command(args: argparse.Namespace) -> int:
             "scope_sha256": ctx["html_metadata"]["scope_sha256"],
             "html_sha256": fin["explanation"]["html_sha256"],
         }
+        if "requirements_sha256" in ctx["html_metadata"]:
+            fin["receipt"]["requirements_sha256"] = ctx["html_metadata"]["requirements_sha256"]
         commit_lifecycle_mutation(root, args.domain, state)
         print(
             "Whole-work delivery finalized; independent lifecycle audits retain their gates."

@@ -64,6 +64,12 @@ devflow requirements report <domain> --write         # regenerate both local rep
 
 `--write` produces `REQUIREMENTS_STATUS.md` and `REQUIREMENTS_STATUS.json` inside the domain directory without changing STATE, PRD or WORK. Checked boxes mean implementation plus passing verification, not product approval. The command still returns nonzero on snapshot diagnostics errors; the generated files contain those findings. These are derived local views, not extra authoritative lifecycle records.
 
+For new `traceability_version: 1` domains, final ELI5 HTML must include a verified
+requirement table derived from the **current** P04 snapshot (not stored reports).
+Its evidence hash is pinned with the existing Newman/WORK finalization scope and
+receipt. See [`finalization.md`](core/protocol/finalization.md) for the exact HTML
+contract. Existing domains without strict source traceability remain compatible.
+
 ## Run Goal or Autopilot
 
 In a Codex session with host-native subagents, invoke the `goal` skill. It uses the host supervisor to dispatch one routed specialist at a time; it does **not** start nested `codex exec` or the standalone Autopilot controller.

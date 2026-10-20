@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import devflow_delivery as delivery
+import devflow_explanation_requirements as requirement_evidence
 import yaml
 from devflow_postman import strict_json
 
@@ -168,32 +169,53 @@ def scope(
         "newman_runs": fin["runs"],
         "diagnoses": fin["diagnoses"],
     }
+    requirements = requirement_evidence.derive(root, domain_path, state, docs)
+    if requirements is not None:
+        # P05 JSON and closed WORK/phase audit bytes belong to this exact ELI5 scope.
+        snapshot["requirements_sha256"] = requirements["sha256"]
     metadata = {
         "domain": domain,
         "scope_sha256": digest(snapshot),
         "work_ids": sorted(row["id"] for row in works),
         "branches": sorted(branches),
     }
-    return {
+    if requirements is not None:
+        metadata["requirements_sha256"] = requirements["sha256"]
+        metadata["requirements_count"] = len(requirements["requirements"])
+    result = {
         "scope": snapshot,
         "html_file": html_path(domain),
         "html_metadata": metadata,
     }
+    if requirements is not None:
+        result["requirements_evidence"] = requirements
+    return result
 
 
-def render_scope(ctx: dict[str, Any]) -> dict[str, Any]:
+def render_scope(
+    ctx: dict[str, Any], *, include_requirement_rows: bool = True
+) -> dict[str, Any]:
     """What one rendered page shows: pinned sources, branches and runs, not the WORK dump.
 
     Every WORK row stays inside `scope_sha256`, so a page reads less while the final gates keep
     verifying the same whole-work scope. The manifest rows and `work_file` paths carry the
     per-item detail, and each original WORK document remains readable on disk.
     """
-    return {
+    result = {
         "html_file": ctx["html_file"],
         "html_metadata": ctx["html_metadata"],
         "work_items_in_scope": len(ctx["scope"]["works"]),
         "scope": {key: value for key, value in ctx["scope"].items() if key != "works"},
     }
+    if "requirements_evidence" in ctx:
+        evidence = ctx["requirements_evidence"]
+        result["requirements_evidence"] = (
+            evidence if include_requirement_rows else {
+                key: evidence[key]
+                for key in ("snapshot_sha256", "sha256", "summary", "blockers")
+            }
+        )
+    return result
 
 
 class ExplanationHTML(HTMLParser):
@@ -249,6 +271,8 @@ def inspect_html(root: Path, ctx: dict[str, Any]) -> str:
     for item_id in ctx["html_metadata"]["work_ids"]:
         if item_id not in visible:
             errors.append(f"explanation visible WORK coverage is missing: {item_id}")
+    if "requirements_evidence" in ctx:
+        errors.extend(requirement_evidence.html_errors(text, ctx["requirements_evidence"]))
     errors.extend(parsed.errors)
     if errors:
         raise ValueError("; ".join(errors))
@@ -310,6 +334,8 @@ def record_explanation(
         "skill_sha256": skill_hash,
         "invocation": invocation.strip(),
     }
+    if "requirements_sha256" in ctx["html_metadata"]:
+        policy(state)["explanation"]["requirements_sha256"] = ctx["html_metadata"]["requirements_sha256"]
     policy(state).pop("receipt", None)
 
 
@@ -653,6 +679,13 @@ def final_errors(
     for item_id, item in index.items():
         if item.get("status") not in TERMINAL:
             errors.append(f"whole-work finalization has open WORK: {item_id}")
+    # Existing Newman/ELI5 checks remain intact; only strict source-traced domains
+    # receive this additional final gate. No generated report file is trusted.
+    if "requirements_evidence" in ctx:
+        errors.extend(
+            "requirement final gate: " + issue
+            for issue in ctx["requirements_evidence"]["blockers"]
+        )
     if first_error_only and errors:
         return errors[:1]
     explanation = fin.get("explanation")
@@ -676,6 +709,12 @@ def final_errors(
                     errors.append(
                         "ELI5 explanation scope is stale after work/artifact/Newman changes"
                     )
+                if (
+                    "requirements_sha256" in ctx["html_metadata"]
+                    and explanation.get("requirements_sha256")
+                    != ctx["html_metadata"]["requirements_sha256"]
+                ):
+                    errors.append("ELI5 requirement evidence is stale; regenerate explanation")
                 if (
                     explanation.get("skill_name") != "eli5"
                     or not delivery.HASH.fullmatch(
@@ -871,6 +910,11 @@ def final_errors(
             not isinstance(receipt, dict)
             or receipt.get("scope_sha256") != ctx["html_metadata"]["scope_sha256"]
             or receipt.get("html_sha256") != explanation_sha
+            or (
+                "requirements_sha256" in ctx["html_metadata"]
+                and receipt.get("requirements_sha256")
+                != ctx["html_metadata"]["requirements_sha256"]
+            )
         ):
             errors.append(
                 "whole-work finalization receipt missing or stale; run delivery finalize"
