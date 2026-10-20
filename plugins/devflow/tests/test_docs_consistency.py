@@ -25,7 +25,7 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.plugin = self.root / "plugins/devflow"
-        self.version = "0.11.1"
+        self.version = "0.12.0"
         self.protocol = "1.8.0"
         self.seed_valid_tree()
 
@@ -38,11 +38,11 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.write(name, json.dumps(data))
 
     def seed_valid_tree(self) -> None:
-        self.write("README.md", "# Test marketplace\nPlugin version: **0.11.1**; artifact protocol: **1.8.0**.\n"
+        self.write("README.md", "# Test marketplace\nPlugin version: **0.12.0**; artifact protocol: **1.8.0**.\n"
                    "[plugin](plugins/devflow/README.md)\n")
         self.write("AGENTS.md", "# Rules\n")
         self.write("CLAUDE.md", "# Adapter\n")
-        self.write("plugins/devflow/README.md", "Plugin version `0.11.1` ships protocol version `1.8.0`.\n"
+        self.write("plugins/devflow/README.md", "Plugin version `0.12.0` ships protocol version `1.8.0`.\n"
                    "[Protocol](core/protocol/lifecycle.md#heading)\n")
         self.write("plugins/devflow/scripts/devflow.py", 'PROTOCOL_VERSION = "1.8.0"\n')
         versions = {"name": "devflow", "version": self.version}
@@ -100,10 +100,10 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.assertIn("broken relative link", " ".join(check_docs.check_repository(self.root)["errors"]))
         self.write("README.md", "[fine](plugins/devflow/README.md#section)\n"
                    "```md\n[fake](does-not-exist.md)\n```\n"
-                   "[external](https://example.com/docs)\nPlugin 0.11.1, protocol 1.8.0\n")
+                   "[external](https://example.com/docs)\nPlugin 0.12.0, protocol 1.8.0\n")
         self.assertFalse(any("broken relative link" in error
                              for error in check_docs.check_repository(self.root)["errors"]))
-        self.write("README.md", "[escape](../../etc/passwd)\nPlugin 0.11.1, protocol 1.8.0\n")
+        self.write("README.md", "[escape](../../etc/passwd)\nPlugin 0.12.0, protocol 1.8.0\n")
         self.assertTrue(any("broken relative link" in error
                             for error in check_docs.check_repository(self.root)["errors"]))
 
@@ -122,9 +122,9 @@ class DocumentationConsistencyTests(unittest.TestCase):
         self.put_json("plugins/devflow/.codex-plugin/plugin.json", {"version": "0.0.0"})
         errors = check_docs.check_repository(self.root)["errors"]
         self.assertTrue(any("versions disagree" in e for e in errors), errors)
-        self.put_json("plugins/devflow/.codex-plugin/plugin.json", {"version": "0.11.1"})
+        self.put_json("plugins/devflow/.codex-plugin/plugin.json", {"version": "0.12.0"})
         self.put_json(".agents/plugins/marketplace.json", {
-            "version": "0.11.1", "plugins": [{"source": {"path": "./plugins/devflow"}}]
+            "version": "0.12.0", "plugins": [{"source": {"path": "./plugins/devflow"}}]
         })
         self.assertTrue(any("must not own" in e for e in check_docs.check_repository(self.root)["errors"]))
 

@@ -2,7 +2,7 @@
 
 DevFlow runs repository-grounded planning, one-item implementation, independent audits, and delivery finalization. Use this page to start or resume a domain, choose a skill, and run verification. The authoritative rules live in [`core/protocol/role-instructions.md`](core/protocol/role-instructions.md), its owned protocols, and `core/schemas/`.
 
-Plugin version `0.11.1` ships artifact protocol `1.8.0`. See [CHANGELOG](CHANGELOG.md) for historical behavior and release notes; historical design reviews are available only through Git history.
+Plugin version `0.12.0` ships artifact protocol `1.8.0`. See [CHANGELOG](CHANGELOG.md) for historical behavior and release notes; historical design reviews are available only through Git history.
 
 ## Requirements and entrypoints
 

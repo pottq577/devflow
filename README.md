@@ -38,7 +38,7 @@ dependencies, evidence requirements, delivery outputs, and environment limitatio
 
 ## Current compatibility and acceptance
 
-- Plugin version: **0.11.1**; artifact protocol: **1.8.0**. Older compatible artifacts remain readable.
+- Plugin version: **0.12.0**; artifact protocol: **1.8.0**. Older compatible artifacts remain readable.
 - Native hosted Goal end-to-end execution and invocation of the installed ELI5 skill remain
   **pending acceptance**. Local tests and synthetic CLI measurements are not that evidence.
 - Historical releases, R00-R18 implementation notes, and measured CLI component results are
