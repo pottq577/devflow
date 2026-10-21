@@ -5505,8 +5505,10 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
                 add_explicit_paths(item.get("references"))
                 add_references(item.get("premise_checks"))
                 add_references(item.get("pitfalls"))
+                # Command syntax (e.g. 'cd backend && ./gradlew') is not an
+                # evidence file path. Structured log_file/output_file fields
+                # above are the authoritative command-produced sources.
                 add_explicit_paths(evidence.get("commands"))
-                add_references(evidence.get("commands"))
         except (KeyError, OSError, ValueError):
             return {}, False
     for key in ("PRD", "PLAN", "STATE"):
@@ -5530,8 +5532,9 @@ def evidence_scope(root: Path, index: dict[str, Any]) -> tuple[dict[str, str], b
     for path in (root / "AGENTS.md", root / "CLAUDE.md"):
         add(str(path), required=False)
 
-    # File references inside recorded verification output and failure logs are source inputs too.
-    add_references(selected.get("verification_evidence"))
+    # Never infer files from shell syntax or human-readable command output.
+    # Structured run logs remain part of the digest and source snapshot.
+    add_explicit_paths(selected.get("verification_evidence"))
     add_references(selected.get("references"))
 
     for name, _required in list(names):

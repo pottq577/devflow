@@ -111,6 +111,43 @@ class ScoutContractTests(unittest.TestCase):
         )
 
 
+    def test_requirements_text_does_not_invent_source_paths(self):
+        narrative = (
+            "The 239/240/479/480-minute bounds and 2280/2400/2520 "
+            "weekly totals differ. DEV-02/03 compares day/break and "
+            "recognition/work. WorkStandardService.update is the symbol. "
+            "Use `src/WorkStandardService.java:12` for source verification."
+        )
+        self.assertEqual(
+            scout.referenced_paths(narrative), ["src/WorkStandardService.java"]
+        )
+
+    def test_scout_capsule_binds_rooted_sources_but_not_short_class_names(self):
+        capsule = VALID.replace(
+            "`src/service.py:42-58`: existing validation path.",
+            "`src/service.py:42-58`: 239/240 minutes, `WorkStandardMigrationIT.java:409` "
+            "and WorkStandardService.update; compare day/break and DEV-02/03.",
+        )
+        self.assertIsNotNone(scout.validated_capsule(capsule))
+        self.assertEqual(scout.evidence_map_paths(capsule), ["src/service.py"])
+        self.assertEqual(
+            scout.evidence_map_paths(capsule.replace(
+                "Verify whether existing tests cover null input.",
+                "Verify `src/unindexed.py:4` before deciding.",
+            )),
+            ["src/service.py", "src/unindexed.py"],
+            "A concrete rooted source cited outside the map must still be snapshotted.",
+        )
+        self.assertIn(
+            "../outside.py",
+            scout.evidence_map_paths(capsule.replace(
+                "Verify whether existing tests cover null input.",
+                "Do not follow `../outside.py`.",
+            )),
+            "Traversal citations must reach the host containment guard.",
+        )
+
+
 class ReservedTelemetryContractTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

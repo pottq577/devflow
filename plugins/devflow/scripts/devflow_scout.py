@@ -27,6 +27,27 @@ _PATH = re.compile(
     r"(?:^|[\s`([{\"'])((?:(?:/|\./)[\w.-]+|(?:/|\./)?(?:[\w.-]+/)+[\w.-]+|(?:/|\./)?[\w.-]+\.[A-Za-z][\w.-]*))(?::\d+(?:-\d+)?)?(?=$|[\s`),;}\]\"'])",
     re.MULTILINE,
 )
+# A path-like expression is not necessarily a file: 239/240, day/break and
+# WorkStandardService.update are ordinary requirement / symbol references.
+# These hints only select candidate files; the host still checks their exact
+# existence, containment and content in its reserved evidence snapshot.
+_FILE_SUFFIXES = frozenset({
+    ".bat", ".c", ".cfg", ".conf", ".cpp", ".cs", ".css", ".csv",
+    ".diff", ".env", ".go", ".gradle", ".graphql", ".h", ".hpp",
+    ".html", ".ini", ".ipynb", ".java", ".js", ".json", ".jsx",
+    ".kt", ".kts", ".lock", ".log", ".md", ".patch", ".php",
+    ".proto", ".properties", ".ps1", ".py", ".rb", ".rs",
+    ".scss", ".sh", ".sql", ".svelte", ".swift", ".toml",
+    ".ts", ".tsx", ".txt", ".vue", ".xml", ".yaml", ".yml",
+})
+# Extensionless scripts are common; slash-separated policy concepts are not.
+_FILE_ROOTS = frozenset({"bin", "scripts"})
+_REPOSITORY_ROOTS = frozenset({
+    ".github", "app", "apps", "core", "docs", "infra", "lib",
+    "plugins", "src", "test", "tests",
+})
+_EVIDENCE_BULLET = re.compile(r"^\s*[-*]\s+(?:`([^`]+)`|(\S+))")
+_TRAVERSAL = re.compile(r"(?<![\w.])(?:\.\./)+[\w./-]+")
 
 
 def capsule_sha256(text: str) -> str:
@@ -47,9 +68,73 @@ def evidence_digest(index: Any, scope: dict[str, str] | None = None) -> str:
     return "ev1:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _plausible_file_path(value: str) -> bool:
+    """Exclude numeric fractions, domain pairs and method references from paths."""
+    name = value.removeprefix("./").lstrip("/")
+    parts = name.split("/")
+    if not name or any(part in {"", ".", ".."} for part in parts):
+        return False
+    basename = parts[-1]
+    if not re.search(r"[A-Za-z_]", basename):
+        return False
+    if any(basename.endswith(suffix) for suffix in _FILE_SUFFIXES):
+        return True
+    if "/" not in value:
+        return False
+    if basename in {"Dockerfile", "Makefile", "gradlew", "devflow"}:
+        return True
+    if value.startswith(("/", "./")):
+        return True
+    if parts[0] in _REPOSITORY_ROOTS and "." in basename:
+        return True
+    return parts[0] in _FILE_ROOTS
+
+
 def referenced_paths(text: str) -> list[str]:
-    """Extract only path-shaped citations; line ranges are not part of the path."""
-    return sorted({match.group(1) for match in _PATH.finditer(text)})
+    """Find plausible source paths, never interpreting fractions or method names as files.
+
+    This is only a lexical filter. A referenced *file* remains binding evidence:
+    the host rejects paths missing from or escaping the reserved evidence scope.
+    """
+    return sorted({
+        match.group(1) for match in _PATH.finditer(text)
+        if _plausible_file_path(match.group(1))
+    })
+
+
+def evidence_map_paths(capsule: str) -> list[str]:
+    """Bind the Evidence map and every unambiguous rooted path in the capsule.
+
+    A bullet's primary source may be a root-level file. Elsewhere, bare Java
+    class filenames are ambiguous shorthand, not additional root-level sources.
+    Rooted citations anywhere in the capsule stay bound and fail closed when
+    they fall outside the original reserved source snapshot.
+    """
+    headings = list(_HEADING.finditer(capsule))
+    for position, heading in enumerate(headings):
+        if heading.group(1) != "Evidence map":
+            continue
+        end = headings[position + 1].start() if position + 1 < len(headings) else len(capsule)
+        body = capsule[heading.end():end]
+        anchors: set[str] = set()
+        for line in body.splitlines():
+            bullet = _EVIDENCE_BULLET.match(line)
+            if not bullet:
+                continue
+            # The primary bullet anchor is an explicit source assertion. Keep
+            # uncommon filename extensions so an unlisted path cannot evade
+            # the host's out-of-scope citation check.
+            anchors.update(m.group(1) for m in _PATH.finditer(bullet.group(1) or bullet.group(2)))
+        if not anchors:
+            anchors.update(referenced_paths(body))
+        if not anchors:
+            return []
+        anchors.update(path for path in referenced_paths(capsule) if "/" in path)
+        # A traversal-looking citation is never dismissed as mere prose.
+        # Let the host's reserved-scope guard reject it explicitly.
+        anchors.update(_TRAVERSAL.findall(capsule))
+        return sorted(anchors)
+    return []
 
 
 def capsule_binding(
@@ -139,6 +224,6 @@ def validated_capsule(value: Any, max_chars: int = 12000) -> str | None:
         body = capsule[match.end() : end].strip()
         if not body:
             return None
-        if match.group(1) == "Evidence map" and not _PATH.search(body):
+        if match.group(1) == "Evidence map" and not evidence_map_paths(capsule):
             return None
     return capsule

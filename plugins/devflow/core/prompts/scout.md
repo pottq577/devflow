@@ -5,7 +5,7 @@ Perform bounded read-only pre-analysis for the routed Sol lifecycle action. Star
 Return exactly six populated Markdown level-two sections, in this order. No preamble or epilogue:
 
 - `## Action`: exact lifecycle action, scope and specialist decision.
-- `## Evidence map`: paths, symbols, tests and line ranges. Include a concrete file path such as `src/service.py:42`; report missing evidence without inventing paths.
+- `## Evidence map`: paths, symbols, tests and line ranges. Begin each source bullet with a concrete repository-relative path such as **`src/service.py:42`**; do not substitute bare class names or arithmetic expressions for source paths. Report missing evidence without inventing paths.
 - `## Existing patterns`: repository conventions that constrain the decision.
 - `## Constraints and risks`: evidenced invariants, requirements, edge cases and pitfalls.
 - `## Candidate concerns`: possible defects to verify, not confirmed findings.

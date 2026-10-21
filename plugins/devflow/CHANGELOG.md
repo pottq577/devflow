@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.3 - 2026-10-21 - Hosted Scout evidence accuracy and critical cache reuse
+
+- Keep shell command text (including `./gradlew`) out of the evidence-file snapshot; continue hashing explicit structured log/output paths. Treat requirement arithmetic, domain slash pairs and Java method names as narrative instead of filesystem citations. Bind the primary Evidence map source anchors and explicitly rooted references anywhere in a Scout capsule, while still refusing any out-of-scope path or changed source digest.
+- Make critical verifier retries reuse an existing host-verified capsule instead of always respawning Scout. Unconditional `scout_before` and fresh evidence checks remain unchanged.
+- Return bounded causes when Scout binding is stale (creation/current scope confirmation, moved digest or HEAD, and out-of-scope citations) without repairing provenance.
+- Add regressions based on observed hosted Goal Scout text. Keep artifact protocol 1.8.0 and the independent audit, remediation and native usage-measurement boundaries unchanged; this release does not claim measured token savings.
+
 ## 0.12.2 - 2026-10-20 - Release-source provenance and protocol mirror repair
 
 - Synchronize the STATE scaffold with the canonical artifact protocol version and reject stale templates before running the full release suite.

@@ -96,6 +96,16 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assertFalse(required("finalizer"))
         self.assertTrue(required("finalizer", attempt=1))
 
+    def test_critical_verifier_reuses_only_an_already_validated_scout(self):
+        spec = {"role": "verifier", "effective_risk": "critical"}
+        controls = {"scout_on_critical": {"verifier"}, "scout_on_retry": {"verifier"}}
+        self.assertTrue(self.ap.should_run_scout(spec, 0, **controls))
+        self.assertTrue(self.ap.should_run_scout(spec, 1, **controls))
+        self.assertFalse(self.ap.should_run_scout(spec, 1, scout_cached=True, **controls))
+        self.assertTrue(self.ap.should_run_scout(
+            spec, 1, scout_before={"verifier"}, scout_cached=True, **controls,
+        ), "An explicit mandatory Scout remains unconditional.")
+
     def test_routing_and_model_registry_schemas_match_split_sources(self):
         routing_schema = self.ap._load_yaml(
             PLUGIN / "core" / "schemas" / "routing.schema.yaml"

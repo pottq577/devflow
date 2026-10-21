@@ -1237,7 +1237,7 @@ def main() -> int:
                     )
                     metadata = receipt["metadata"]
                     cited = set()
-                    for name in scout_contract.referenced_paths(valid or ""):
+                    for name in scout_contract.evidence_map_paths(valid or ""):
                         relative = Path(name)
                         if ".." in relative.parts:
                             cited.add(name)
@@ -1258,7 +1258,19 @@ def main() -> int:
                         or metadata.get("head_sha") != devflow.current_sha(root)
                         or not cited <= set(metadata.get("scope", {}))
                     ):
-                        result = {"status": "stale", "chars": len(text), "evidence_digest": digest}
+                        # Operational diagnostics, not permission to extend the
+                        # reserved scope or to re-sign a stale capsule.
+                        outside = sorted(cited - set(metadata.get("scope", {})))
+                        result = {
+                            "status": "stale", "chars": len(text),
+                            "evidence_digest": digest,
+                            "reserved_scope_confirmed": metadata.get("scope_confirmed"),
+                            "current_scope_confirmed": confirmed,
+                            "scope_digest_changed": metadata.get("evidence_digest") != digest,
+                            "head_changed": metadata.get("head_sha") != devflow.current_sha(root),
+                            "cited_outside_scope": outside[:12],
+                            "cited_outside_scope_omitted": max(0, len(outside) - 12),
+                        }
                     else:
                         _write_scout_capsule_record(
                             file_path,

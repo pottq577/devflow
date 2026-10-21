@@ -1580,7 +1580,12 @@ def should_run_scout(
     role = str(spec.get("role") or "")
     if role in set(scout_before or set()):
         return True
-    if int(attempt) > 0 and role in set(scout_on_retry or set()) and not scout_cached:
+    # scout_before is an unconditional fresh-analysis policy. For all other
+    # triggers, a capsule revalidated by the host is already sufficient, even
+    # when the action is critical and a prior verifier was capacity-blocked.
+    if scout_cached:
+        return False
+    if int(attempt) > 0 and role in set(scout_on_retry or set()):
         return True
     return str(spec.get("effective_risk") or "") == "critical" and role in set(
         scout_on_critical or set()

@@ -336,6 +336,55 @@ class ScoutEvidenceCacheTests(unittest.TestCase):
         self.assertEqual(result["status"], "stale", result)
         self.assertFalse(self.sidecar().exists())
 
+    def test_incidental_citation_text_does_not_invalidate_scout_binding(self) -> None:
+        self.selected_work_item()
+        work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
+        document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
+        document["items"][0]["references"] = [
+            "DEV-02/03 requires day/break and recognition/work review; "
+            "WorkStandardService.update checks 239/240/479/480-minute boundaries."
+        ]
+        work_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        self.capsule.write_text(
+            scout_contract_tests.VALID.replace(
+                "existing validation path.",
+                "existing validation path, 2280/2400/2520 minutes and "
+                "`WorkStandardMigrationIT.java:409` test shorthand.",
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.bind(self.current_fingerprint())["status"], "bound")
+        self.assertEqual(self.validate(self.current_fingerprint())["status"], "valid")
+
+    def test_rooted_secondary_citation_outside_scope_is_still_rejected(self) -> None:
+        self.selected_work_item()
+        self.capsule.write_text(
+            scout_contract_tests.VALID.replace(
+                "Verify whether existing tests cover null input.",
+                "Also inspect `src/hidden.py:7`.",
+            ),
+            encoding="utf-8",
+        )
+        result = self.bind(self.current_fingerprint())
+        self.assertEqual(result["status"], "stale", result)
+        self.assertTrue(result["cited_outside_scope"])
+        self.assertFalse(self.sidecar().exists())
+
+    def test_gradle_command_is_not_a_missing_root_file(self) -> None:
+        self.selected_work_item()
+        work_file = self.root / "docs/domains/billing/work/phase-01.yaml"
+        document = yaml.safe_load(work_file.read_text(encoding="utf-8"))
+        document["items"][0]["evidence"]["commands"] = [
+            'cd peoplo-backend && ./gradlew :core:domain-hr:test --tests "*WorkStandard*" '
+            '-> BUILD SUCCESSFUL'
+        ]
+        work_file.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        state = self.host._load_state(self.root, "billing")
+        index = self.host.devflow.evidence_index(self.root, "billing", state)
+        scope, confirmed = self.host.devflow.evidence_scope(self.root, index)
+        self.assertTrue(confirmed, "An executable command is not a root-level evidence file")
+        self.assertFalse(any(path.endswith("/gradlew") for path in scope))
+
     def test_root_level_file_citation_and_work_reference_are_snapshotted(self) -> None:
         self.selected_work_item()
         helper = self.root / "helper.py"
