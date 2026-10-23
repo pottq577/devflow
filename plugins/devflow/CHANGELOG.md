@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.2 - 2026-10-23 - Read-only hosted observations and cross-host CLI parity
+
+- Open existing hosted coordinators strictly read-only; absent domains are inspected without creating runtime directories or SQLite databases. Reject malformed coordinator paths instead of treating them as idle.
+- Add subscription-free subprocess acceptance tests across Codex and Claude native wrappers: idle status, ownership transfer in both directions, stale owner denial and release, plus read-only lease and expiry checks.
+- Preserve existing child fencing, WORK authority, and host-specific routing. Live Claude/Codex native Agent E2E and full release gate remain deferred; artifact protocol stays `1.8.0`.
+
 ## 0.13.1 - 2026-10-23 - Claude dynamic-model agents and offline host parity
 
 - Consolidate 16 Claude model/effort/read-only agents into six effort/read-only presets. Supply the selected `haiku|sonnet|opus` model explicitly on each native Agent invocation; never rely on the fallback inherited model.

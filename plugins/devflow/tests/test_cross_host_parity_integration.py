@@ -7,6 +7,7 @@ A simulated terminal child does not mark WORK done, nor does it prove Claude Age
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -180,6 +181,96 @@ class CrossHostParityIntegrationTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
         self.assertIn("session-handoff", process.stdout)
         self.assertIn("step-start", process.stdout)
+
+
+    def test_readonly_lease_probes_do_not_initialize_an_absent_domain(self):
+        untouched = self.root / ".devflow/runtime/untouched"
+        self.assertFalse(untouched.exists())
+        self.assertEqual(session.status(untouched)["status"], "idle")
+        with self.assertRaises(session.SessionConflict):
+            session.require(untouched, "unknown-session")
+        with self.assertRaises(session.SessionConflict):
+            guard.inspect(untouched, "unknown-session", "a", self.policy)
+        self.assertFalse(untouched.exists())
+
+    def test_readonly_probes_reject_malformed_existing_storage(self):
+        malformed = self.root / ".devflow/runtime/malformed"
+        leases = malformed / "leases"
+        leases.parent.mkdir(parents=True, exist_ok=True)
+        leases.write_text("not a directory", encoding="utf-8")
+        with self.assertRaises(sqlite3.DatabaseError):
+            session.status(malformed)
+        self.assertEqual(leases.read_text(encoding="utf-8"), "not a directory")
+        leases.unlink()
+        leases.mkdir()
+        database = leases / "coordinator.sqlite3"
+        database.write_bytes(b"not-sqlite")
+        with self.assertRaises(sqlite3.DatabaseError):
+            session.status(malformed)
+        self.assertEqual(database.read_bytes(), b"not-sqlite")
+
+    def test_readonly_lease_probes_do_not_change_existing_storage(self):
+        # A completed reservation exercises read-only projections over persisted
+        # child progress rather than a newly initialized empty coordinator.
+        reservation = self.reserve(self.owner)
+        self.finish(self.owner, reservation, outcome="failed")
+        database = self.runtime / "leases/coordinator.sqlite3"
+        before = database.read_bytes()
+        modified = database.stat().st_mtime_ns
+        expires = session.status(self.runtime)["expires_at"]
+        for _ in range(3):
+            status = session.status(self.runtime)
+            self.assertEqual(status["host"], "codex")
+            session.require(self.runtime, self.owner)
+            guard.inspect(self.runtime, self.owner, "a", self.policy)
+        self.assertEqual(session.status(self.runtime)["expires_at"], expires)
+        self.assertEqual(database.read_bytes(), before)
+        self.assertEqual(database.stat().st_mtime_ns, modified)
+
+    def test_real_cli_wrappers_exchange_idle_host_ownership_without_models(self):
+        """Run both production wrappers in different processes; do not call a provider."""
+        subprocess.run(["git", "init", "-q", str(self.root)],
+                       check=True, capture_output=True, text=True)
+        codex = PLUGIN / "skills/goal/scripts/host.py"
+        claude_wrapper = PLUGIN / "skills/goal/scripts/claude_host.py"
+        def call(wrapper, *args, success=True):
+            proc = subprocess.run(
+                [sys.executable, str(wrapper), *args], cwd=self.root,
+                text=True, capture_output=True, timeout=20,
+            )
+            if success:
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                return json.loads(proc.stdout)
+            self.assertNotEqual(proc.returncode, 0)
+            return proc
+
+        fresh = self.root / ".devflow/runtime/fresh-cli"
+        self.assertEqual(call(claude_wrapper, "session-status", "fresh-cli")["status"], "idle")
+        self.assertFalse(fresh.exists())
+        initial = call(codex, "session-start", "fresh-cli")
+        self.assertEqual(initial["host"], "codex")
+        marker = call(claude_wrapper, "session-status", "fresh-cli")["owner_marker"]
+        call(claude_wrapper, "session-start", "fresh-cli", success=False)
+        transferred = call(claude_wrapper, "session-handoff", "fresh-cli",
+                           "--to-host", "claude", "--expected-owner-marker", marker,
+                           "--confirm-source-stopped", "--source-stop-evidence",
+                           "Test operator verified Codex session stopped and no child is active")
+        self.assertEqual(transferred["host"], "claude")
+        self.assertNotEqual(initial["session_id"], transferred["session_id"])
+        call(codex, "session-end", "fresh-cli", "--session-id", initial["session_id"],
+             success=False)
+        self.assertEqual(call(claude_wrapper, "session-start", "fresh-cli",
+                              "--session-id", transferred["session_id"])["host"], "claude")
+        marker2 = call(codex, "session-status", "fresh-cli")["owner_marker"]
+        returned = call(codex, "session-handoff", "fresh-cli", "--to-host", "codex",
+                        "--expected-owner-marker", marker2, "--confirm-source-stopped",
+                        "--source-stop-evidence",
+                        "Test operator verified Claude session stopped and no child is active")
+        self.assertEqual(returned["host"], "codex")
+        self.assertNotEqual(transferred["session_id"], returned["session_id"])
+        self.assertEqual(call(codex, "session-end", "fresh-cli",
+                              "--session-id", returned["session_id"])["status"], "released")
+        self.assertEqual(call(claude_wrapper, "session-status", "fresh-cli")["status"], "idle")
 
 
 if __name__ == "__main__":

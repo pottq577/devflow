@@ -129,17 +129,36 @@ def coordinator(
 ) -> Iterator[sqlite3.Connection]:
     """Hold a short, transactional cross-process lock around lease transitions.
 
-    `write=False` opens a read-only transaction: ownership checks and health projections
-    verify the owner without extending the lease or taking the write lock.
+    `write=False` never creates the runtime directory, SQLite database, or lease
+    sidecars. Missing storage is inspected through an empty in-memory database;
+    existing storage is opened in SQLite read-only mode. Only a write transaction
+    may initialize or change coordinator state.
     """
     leases = runtime_dir / "leases"
-    leases.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if os.name == "posix":
-        leases.chmod(0o700)
     db_path = leases / "coordinator.sqlite3"
-    connection = sqlite3.connect(str(db_path), timeout=5)
-    if os.name == "posix":
-        db_path.chmod(0o600)
+    if write:
+        leases.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name == "posix":
+            leases.chmod(0o700)
+        connection = sqlite3.connect(str(db_path), timeout=5)
+        if os.name == "posix":
+            db_path.chmod(0o600)
+    else:
+        # A status probe must not silently create ownership storage. Do not
+        # mistake an existing non-file or symlinked coordinator for an empty one.
+        if leases.is_symlink() or db_path.is_symlink():
+            raise sqlite3.DatabaseError("hosted coordinator path is symlinked")
+        if leases.exists() and not leases.is_dir():
+            raise sqlite3.DatabaseError("hosted coordinator parent is not a directory")
+        if db_path.exists():
+            if not db_path.is_file():
+                raise sqlite3.DatabaseError("hosted coordinator is not a regular file")
+            connection = sqlite3.connect(
+                db_path.resolve(strict=True).as_uri() + "?mode=ro",
+                uri=True, timeout=5,
+            )
+        else:
+            connection = sqlite3.connect(":memory:", timeout=5)
     try:
         connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         if write:
