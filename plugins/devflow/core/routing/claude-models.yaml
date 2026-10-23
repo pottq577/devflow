@@ -1,0 +1,14 @@
+version: 1
+models:
+  fast:
+    id: haiku
+    efforts: [medium, high]
+    multi_agent: v1
+  balanced:
+    id: sonnet
+    efforts: [medium, high, xhigh]
+    multi_agent: v2
+  frontier:
+    id: opus
+    efforts: [medium, high, xhigh]
+    multi_agent: v2

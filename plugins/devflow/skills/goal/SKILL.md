@@ -5,15 +5,17 @@ description: Start or resume a DevFlow autonomous delivery goal, optionally boun
 
 # DevFlow Goal
 
-Operate as the thin **Goal Supervisor**. The DevFlow runtime selects lifecycle actions and model routes. The Codex host owns sub-agent lifecycle when host-native delegation is available.
+Operate as the thin **Goal Supervisor**. The DevFlow runtime selects lifecycle actions and model routes. Codex and Claude Code own their native sub-agent lifecycle; DevFlow never launches either host CLI as a nested supervisor.
 
 ## Use host-native delegation
 
-This skill explicitly authorizes sub-agent delegation for DevFlow lifecycle work. Use the host `spawn_agent` and wait tools for routed specialists. Pass the routed `model`, `reasoning_effort`, `task_name`, `fork_turns`, and `message` from the host dispatch envelope without rewriting them.
+This skill explicitly authorizes sub-agent delegation for DevFlow lifecycle work. In **Codex**, use `spawn_agent` and wait, passing the routed `model`, `reasoning_effort`, `task_name`, `fork_turns`, and `message` without rewriting them. In **Claude Code**, use the foreground `Agent` tool with the exact `primary.claude.agent_type` or `scout.claude.agent_type` from the host dispatch envelope and the corresponding routed message. The plugin Agent preset pins `model` and `effort`; do not request a generic subagent or inherit the parent model. `fork_turns` is Codex-specific and is ignored by Claude Code.
 
-Do not launch a nested `codex exec` session from a Codex-hosted `/goal` run. Do not call `autopilot start` or `autopilot resume` from this host-native path. Those commands remain standalone compatibility drivers for environments that do not expose native sub-agents.
+For every CLI example in this skill, **Claude Code** replaces `skills/goal/scripts/host.py` with `skills/goal/scripts/claude_host.py` (including resume, dispatch, step reservation, finish, telemetry and recovery). Codex continues to use `host.py`. Do not mix wrappers inside one active host session. Read `core/protocol/claude-native-host.md` before Claude native dispatch.
 
-If the host does not expose model or reasoning-effort overrides required by the dispatch envelope, report a capability blocker. Do not silently inherit the parent model because that bypasses DevFlow routing policy.
+Do not launch nested `codex exec` or `claude -p`. Do not call `autopilot start` or `autopilot resume` from a host-native `/goal`. They are standalone compatibility drivers.
+
+If the host cannot invoke the **exact** routed model and effort, report a capability blocker. Do not silently inherit or downgrade the model. In Claude Code, inspect the native Agent result for an explicit terminal outcome; partial output on API quota exhaustion is not a successful completion and never authorizes `step-finish --outcome completed`.
 
 ## Own the domain before any hosted work
 
@@ -31,11 +33,10 @@ If a child is pending, do not hand off: retain the existing administrator child
 recovery gate. Do not interpret a journal checkpoint as WORK completion.
 
 For a fresh domain or after a clean release, acquire the lease with the native
-host label (Codex currently uses `codex`; Claude-native execution remains a
-separate integration):
+host wrapper. The wrapper binds `codex` or `claude` atomically:
 
 ```bash
-python3 <this-skill-directory>/scripts/host.py session-start <domain> --host codex
+python3 <this-skill-directory>/scripts/host.py session-start <domain>
 ```
 
 Keep the returned `session_id` private. Pass it to every `bootstrap`, `bootstrap-finalize`, and `dispatch` call. Resume a restarted Supervisor only with `session-start <domain> --session-id <session_id>`; never invent an owner from telemetry or replace a live session.

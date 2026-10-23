@@ -81,7 +81,7 @@ HTML contract. Legacy domains remain compatible.
 
 ## Run Goal or Autopilot
 
-In a Codex session with host-native subagents, invoke the `goal` skill. It uses the host supervisor to dispatch one routed specialist at a time; it does **not** start nested `codex exec` or the standalone Autopilot controller.
+In a Codex or Claude Code session with host-native subagents, invoke the `goal` skill. Codex uses `spawn_agent`; Claude Code uses plugin-scoped native `Agent` definitions. Both dispatch one routed specialist at a time and never launch a nested host CLI or the standalone Autopilot controller. See [`claude-native-host.md`](core/protocol/claude-native-host.md) for Claude routing, tool limits and activation.
 
 Before resuming a Goal on another host, use `devflow execution handoff <domain>`
 and inspect the current hosted owner. A live, idle source lease can only be

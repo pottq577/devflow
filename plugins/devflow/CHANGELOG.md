@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0 - 2026-10-23 - Claude Code host-native Goal integration
+
+- Add an explicit Claude Code host wrapper using the existing hosted Goal guard, lease and operational handoff without starting nested CLI sessions.
+- Separate Claude model policy and Agent definitions from Codex routes. Resolve Scout to Haiku, Workers to Sonnet, and high-reasoning review roles to Opus with verified per-effort native Agent presets.
+- Fail closed on unsupported model/effort combinations or a higher-priority forced subagent model. Preserve WORK/STATE authority, no-progress counters, child fencing and manual cross-host ownership transfer.
+- Add Claude routing/preset tests and operator instructions. Live Claude native Agent activation and bidirectional quota-interruption acceptance remain external verification work; artifact protocol stays 1.8.0.
+
 ## 0.12.6 - 2026-10-23 - Durable primary dispatch anchors and recovery visibility
 
 - Persist a bounded action and selected-WORK snapshot at each hosted primary reservation, including the original WORK status, start SHA and dispatch HEAD; no source bodies, transcripts, or extra lifecycle authority.

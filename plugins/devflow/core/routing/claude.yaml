@@ -1,0 +1,35 @@
+# Claude Code host only. This overlays core/routing/default.yaml; Codex is unchanged.
+version: 1
+profiles:
+  scout: { candidates: [fast] }
+  economy: { candidates: [balanced] }
+  balanced: { candidates: [balanced, frontier] }
+  alternative: { candidates: [balanced] }
+  frontier: { candidates: [frontier, balanced] }
+  hardest: { candidates: [frontier] }
+profile_order: [scout, economy, balanced, alternative, frontier, hardest]
+roles:
+  scout: { profile: scout, effort: medium, permissions: read-only }
+  architect: { profile: frontier, effort: high, permissions: inherit }
+  worker: { profile: economy, effort: high, permissions: inherit }
+  verifier: { profile: frontier, effort: high, permissions: inherit }
+  auditor: { profile: frontier, effort: high, permissions: inherit }
+  integration_auditor: { profile: hardest, effort: xhigh, permissions: inherit }
+  diagnostician: { profile: frontier, effort: xhigh, permissions: read-only }
+  finalizer: { profile: frontier, effort: high, permissions: inherit }
+escalation:
+  kind:
+    remediation: { worker_profile: economy, worker_effort: xhigh }
+    migration: { worker_profile: economy, worker_effort: xhigh }
+  risk:
+    high: { worker_profile: economy, worker_effort: xhigh }
+    critical: { worker_profile: economy, worker_effort: xhigh }
+  retries:
+    worker_stages:
+      - { attempt: 1, profile: economy, effort: xhigh }
+      - { attempt: 2, profile: economy, effort: xhigh }
+      - { attempt: 4, profile: economy, effort: xhigh }
+      - { attempt: 5, profile: alternative, effort: xhigh, replace: true }
+# The native Agent tool is invoked sequentially. Do not inherit Codex exec backends.
+backends:
+  preference: [native_agent]

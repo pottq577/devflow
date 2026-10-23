@@ -27,6 +27,7 @@ import devflow_traceability as traceability
 import devflow_autopilot as autopilot
 import devflow_session as session
 import devflow_execution as execution
+import devflow_claude as claude_native
 import devflow_host_guard as guard
 import devflow_scout as scout_contract
 from devflow_postman import strict_json
@@ -964,6 +965,7 @@ def build_parser() -> argparse.ArgumentParser:
             "codex exec sessions."
         ),
     )
+    parser.add_argument("--native-host", choices=("codex", "claude"), default="codex")
     sub = parser.add_subparsers(dest="command", required=True)
 
     session_start = sub.add_parser("session-start")
@@ -1088,9 +1090,18 @@ def main() -> int:
         args = build_parser().parse_args()
         root = devflow.repo_root()
         plugin_root = devflow.plugin_root()
-        policy = autopilot.load_policy(plugin_root, root)
+        policy = (claude_native.load_policy(plugin_root, root)
+                  if args.native_host == "claude" else autopilot.load_policy(plugin_root, root))
 
         runtime_dir = _telemetry_dir(root, args.domain)
+        if args.native_host == "claude" and args.command in {"dispatch", "bootstrap", "step-start"}:
+            claude_native.assert_model_environment()
+        # Provider and owner label must agree: a session token does not switch hosts.
+        if args.command not in {"session-start", "session-status", "session-handoff", "session-recover"}:
+            current_host = session.status(runtime_dir).get("host")
+            if (current_host not in {None, args.native_host}
+                    or (args.native_host == "claude" and current_host != "claude")):
+                raise session.SessionBlocked("hosted_host_mismatch")
         # Observation verifies ownership without extending the lease; a lifecycle edge renews it.
         if args.command in {"dispatch", "guard-status"} | SCOUT_COMMANDS:
             session.require(runtime_dir, args.session_id)
@@ -1098,7 +1109,10 @@ def main() -> int:
             session.renew(runtime_dir, args.session_id)
 
         if args.command == "session-start":
-            result = session.start(runtime_dir, session_id=args.session_id, host=args.host)
+            if args.host is not None and args.host != args.native_host:
+                raise session.SessionBlocked("hosted_host_mismatch")
+            result = session.start(runtime_dir, session_id=args.session_id,
+                                   host=args.native_host)
         elif args.command == "session-handoff":
             result = session.handoff(
                 runtime_dir, expected_owner_marker=args.expected_owner_marker,
@@ -1362,6 +1376,8 @@ def main() -> int:
         else:
             raise AssertionError(f"Unhandled host command: {args.command}")
 
+        if args.native_host == "claude":
+            result = claude_native.decorate(result)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1 if result.get("status") == "blocked" else 0
     except KeyboardInterrupt:
