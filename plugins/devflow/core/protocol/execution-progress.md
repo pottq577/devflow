@@ -32,6 +32,14 @@ WORK/PLAN/DECISIONS/audit evidence and Git paths. No new mandatory checkpoint
 or lifecycle artifact is introduced, and this facility requires no additional model call. If a journal write fails,
 continue the ordinary lifecycle and report the missing observation.
 
+At a new hosted `/goal` entry, inspect `devflow execution handoff <domain>` before
+claiming a session. Its `orchestration.hosted.host`, `owner_marker`, and
+`requires_termination_verification` guide the operator; they are not ownership
+credentials. If an idle older host retains a live lease, only a human who has
+independently confirmed the source host stopped may run `session-handoff` per
+`core/protocol/host-telemetry.md`. A pending or unknown child cannot be handed
+off; use the pre-existing administrator recovery procedure after termination.
+
 On another host, run `devflow execution handoff <domain>` once when recovery
 context is needed. Use `devflow status` to select the actual next action, verify
 source changes and test outcomes, and inspect original cited files on demand.

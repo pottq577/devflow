@@ -77,7 +77,8 @@ ownership atomically; there is no gap permitting a new reservation between those
 Ownership verification and health projections are read-only: they open a deferred transaction,
 verify the current owner and the pending-child fence, and never extend the lease. Only the lifecycle
 edges `bootstrap`, `bootstrap-finalize`, `step-start`, `step-finish`, `session-start`,
-`session-checkpoint` and `session-recover` write `expires_at`. Polling `dispatch`, `guard-status`,
+`session-checkpoint`, `session-handoff` and `session-recover` write `expires_at`.
+Polling `dispatch`, `guard-status`,
 `scout-validate` or `session-status` therefore cannot keep a dead owner alive, and still refuses a
 foreign, orphan or expired owner exactly as before.
 
@@ -86,7 +87,7 @@ requires `--outcome completed|failed|cancelled|capability_blocked`, `--confirm-c
 and nonblank `--termination-evidence`. This is a trusted administrator's
 `explicit_admin_attestation`, not runtime-verified native child termination. The Goal Supervisor
 must not supply its own assertion or equate TTL expiry with child termination. Unknown or live
-child state remains fenced. No arbitrary takeover or abandon command is provided.
+child state remains fenced. There is no automated takeover or abandon command.
 
 Recovery accepts the exact persisted progress owner, including an expired or absent lease, and
 rejects another current owner. Within one coordinator transaction it applies ordinary step-finish
@@ -97,6 +98,44 @@ outcome and evidence returns that receipt without applying accounting again; cha
 rejected. Any failed write rolls back the receipt, progress and lease together. Corrupt stored
 receipts refuse recovery. These private runtime rows add no STATE/WORK fields or lifecycle
 artifact. Existing operational progress remains backward-readable.
+
+## Operator-attested idle host handoff
+
+Hosted Goal sessions may retain a live lease when their native CLI host stops
+without reaching `session-end`. `session-status <domain>` and
+`devflow execution handoff <domain>` return a read-only `host` label and
+`owner_marker`; the marker is a one-owner observation fingerprint, **not** the
+private session ID or a permission to take ownership. Legacy unlabeled sessions
+remain readable and acquire an optional `host` column on the next write.
+
+If there is no live owner and no pending child, `session-start --host <target>`
+remains sufficient. If the old owner still holds a live lease, an **operator** who
+independently verified the source CLI has stopped and no child is running may
+run the following command from the same repository:
+
+```bash
+python3 <goal-skill-directory>/scripts/host.py session-status <domain>
+python3 <goal-skill-directory>/scripts/host.py session-handoff <domain> \
+  --to-host claude --expected-owner-marker '<marker-from-status>' \
+  --confirm-source-stopped --source-stop-evidence '<observed source termination>'
+```
+
+`session-handoff` atomically compares the current marker, validates the
+persisted pending-child guard, checks for a standalone mutating lease, records
+operator evidence and previous/target hosts, and rotates the session owner.
+The old token is fenced. The operator must provide the returned **new private
+session ID** only to the resumed host, which calls `session-start --session-id
+<new_id> --host <target>`. No second host may be started in parallel. A stale
+marker, unknown child, corrupt guard or missing attestation never changes the
+owner. The Goal Supervisor must never manufacture the operator's attestation.
+
+The transition preserves existing WORK, STATE, Git edits, attempt/visit counts,
+resource steps, and completion gates. A pending child **cannot** use idle handoff,
+even after TTL expiry; first use `session-recover` with exact original owner,
+step ID and truthful observed child outcome. Handoff receipts stay inside the
+private SQLite coordinator. They are operational evidence, not lifecycle
+completion or a release-gate waiver. Claude-native invocation and model routing
+are separate work; a stored target label alone does not enable Claude execution.
 
 ## Hosted resource checkpoints
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.5 - 2026-10-23 - Operator-attested cross-host session handoff
+
+- Add host-labeled hosted sessions, read-only owner markers and explicit operator-attested idle handoff. Fenced reservations and other live owners cannot be taken over; stale observations fail closed.
+- Rotate the hosted session token atomically while preserving WORK/STATE, hosted retry and resource counters. Record source/target host transitions and operator evidence in the private coordinator.
+- Surface host ownership in execution handoff projections and teach the Codex Goal wrapper to inspect it before claiming a session. Claude native routing remains a separate integration.
+- Add bidirectional, pending-child, concurrency and legacy migration regressions. Artifact protocol remains `1.8.0`, with no lifecycle migration.
+
 ## 0.12.4 - 2026-10-23 - Host-independent execution progress and handoff observations
 
 - Add a bounded SQLite journal for start/finish of lifecycle-mutating DevFlow CLI operations, and explicitly distinguish incomplete observations from successful transitions.

@@ -184,6 +184,17 @@ class ExecutionProgressTests(unittest.TestCase):
             state = progress.read(self.runtime, action=action, git_state=self.git)
             self.assertEqual(state["checkpoint"]["details"]["note"], f"{command} in progress")
 
+    def test_handoff_projection_exposes_host_without_private_session_id(self):
+        import devflow_session as hosted
+        owner = hosted.start(self.runtime, host="codex")["session_id"]
+        before = hosted.status(self.runtime)
+        observed = progress.orchestration_snapshot(self.runtime)
+        self.assertEqual(observed["hosted"]["host"], "codex")
+        self.assertEqual(observed["hosted"]["owner_marker"], before["owner_marker"])
+        self.assertNotIn(owner, json.dumps(observed))
+        self.assertTrue(observed["hosted"]["lease_active"])
+        hosted.end(self.runtime, owner)
+
     def test_handoff_surfaces_unacknowledged_hosted_child_without_lease_mutation(self):
         leases = self.runtime / "leases"
         leases.mkdir(parents=True)

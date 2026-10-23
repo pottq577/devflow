@@ -7,8 +7,10 @@ other surface's occupancy check and acquisition.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -19,6 +21,41 @@ from typing import Iterator
 from devflow_postman import strict_json
 
 SESSION_TTL_SECONDS = 24 * 60 * 60
+HOST_LABEL = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
+OWNER_MARKER = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def owner_marker(session_id: str) -> str:
+    """Non-secret observation marker; never an authorization credential."""
+    return hashlib.sha256(b"devflow-host-owner-v1\0" + session_id.encode("utf-8")).hexdigest()
+
+
+def _host_label(value: str | None, *, required: bool = False) -> str | None:
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or not HOST_LABEL.fullmatch(value):
+        raise ValueError("host must be a lowercase label of 1-32 characters")
+    return value
+
+
+def _stored_host(connection: sqlite3.Connection) -> str | None:
+    """Legacy coordinator databases have no host column; reads never migrate."""
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(hosted_session)")}
+    if "host" not in columns:
+        return None
+    row = connection.execute("SELECT host FROM hosted_session WHERE slot=1").fetchone()
+    if row is not None and row[0] is not None:
+        try:
+            return _host_label(row[0], required=True)
+        except ValueError:
+            raise SessionBlocked("hosted_host_corrupt") from None
+    return None
+
+
+def _ensure_host_column(connection: sqlite3.Connection) -> None:
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(hosted_session)")}
+    if "host" not in columns:
+        connection.execute("ALTER TABLE hosted_session ADD COLUMN host TEXT")
 
 
 class SessionConflict(RuntimeError):
@@ -171,9 +208,12 @@ def _standalone_active(runtime_dir: Path) -> bool:
     return active
 
 
-def start(runtime_dir: Path, *, session_id: str | None = None) -> dict:
+def start(runtime_dir: Path, *, session_id: str | None = None,
+          host: str | None = None) -> dict:
     """Create or resume a hosted session without ever stealing an active owner."""
+    host = _host_label(host)
     with coordinator(runtime_dir) as connection:
+        _ensure_host_column(connection)
         now = time.time()
         progress = read_progress(connection)
         active = _active_row(connection, now=now)
@@ -183,6 +223,10 @@ def start(runtime_dir: Path, *, session_id: str | None = None) -> dict:
         if active:
             if session_id != active[0]:
                 raise SessionConflict("another hosted Goal session owns this domain")
+            current_host = _stored_host(connection)
+            if host is not None and current_host is not None and host != current_host:
+                raise SessionBlocked("hosted_host_mismatch")
+            host = current_host or host  # Bind older unlabeled owners once, never relabel them.
             owner, acquired, _ = active
         else:
             if session_id:
@@ -192,13 +236,71 @@ def start(runtime_dir: Path, *, session_id: str | None = None) -> dict:
             owner, acquired = uuid.uuid4().hex, now
         expires = now + SESSION_TTL_SECONDS
         connection.execute(
-            "INSERT INTO hosted_session (slot, session_id, acquired_at, expires_at) "
-            "VALUES (1, ?, ?, ?) ON CONFLICT(slot) DO UPDATE SET "
+            "INSERT INTO hosted_session (slot, session_id, acquired_at, expires_at, host) "
+            "VALUES (1, ?, ?, ?, ?) ON CONFLICT(slot) DO UPDATE SET "
             "session_id = excluded.session_id, acquired_at = excluded.acquired_at, "
-            "expires_at = excluded.expires_at",
-            (owner, acquired, expires),
+            "expires_at = excluded.expires_at, host = excluded.host",
+            (owner, acquired, expires, host),
         )
-        return {"status": "acquired", "session_id": owner, "expires_at": expires}
+        return {"status": "acquired", "session_id": owner, "expires_at": expires,
+                "host": host}
+
+
+def handoff(runtime_dir: Path, *, expected_owner_marker: str,
+            target_host: str, confirm_source_stopped: bool,
+            source_stop_evidence: str) -> dict:
+    """Operator-attested, atomic *idle* host transition, not child recovery.
+
+    An observation marker prevents stale confirmations from replacing a newer
+    owner. It is not a credential and cannot replace explicit human evidence.
+    Pending or corrupt child state always remains fenced.
+    """
+    target_host = _host_label(target_host, required=True)
+    if not isinstance(expected_owner_marker, str) or not OWNER_MARKER.fullmatch(expected_owner_marker):
+        raise ValueError("handoff requires the exact marker from session-status")
+    if (not confirm_source_stopped or not isinstance(source_stop_evidence, str)
+            or not source_stop_evidence.strip() or len(source_stop_evidence) > 1024):
+        raise SessionBlocked("hosted_source_stop_unconfirmed")
+    evidence = source_stop_evidence.strip()
+    with coordinator(runtime_dir) as connection:
+        progress = read_progress(connection)
+        if progress and progress[1]["inflight"] is not None:
+            raise SessionBlocked("hosted_step_inflight")
+        active = _active_row(connection)
+        if not active:
+            raise SessionConflict("no active hosted owner to hand off; use session-start")
+        source_marker = owner_marker(active[0])
+        if source_marker != expected_owner_marker:
+            raise SessionBlocked("hosted_stale_handoff_marker")
+        if _standalone_active(runtime_dir):
+            raise SessionConflict("standalone Autopilot holds a mutating domain lease")
+        source_host = _stored_host(connection)
+        _ensure_host_column(connection)
+        new_owner = uuid.uuid4().hex
+        now = time.time()
+        expires = now + SESSION_TTL_SECONDS
+        connection.execute(
+            "UPDATE hosted_session SET session_id=?, acquired_at=?, expires_at=?, host=? WHERE slot=1",
+            (new_owner, now, expires, target_host),
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS hosted_handoff ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "source_marker TEXT NOT NULL, source_host TEXT, target_host TEXT NOT NULL, "
+            "stopped_evidence TEXT NOT NULL, recorded_at REAL NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO hosted_handoff "
+            "(source_marker, source_host, target_host, stopped_evidence, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (source_marker, source_host, target_host, evidence, now),
+        )
+        return {
+            "status": "handed_off", "session_id": new_owner,
+            "host": target_host, "previous_host": source_host,
+            "owner_marker": owner_marker(new_owner), "expires_at": expires,
+            "confirmation": "explicit_operator_attestation",
+        }
 
 
 def require(runtime_dir: Path, session_id: str | None) -> None:
@@ -258,4 +360,7 @@ def status(runtime_dir: Path) -> dict:
             "status": "blocked" if blocked else "active" if active else "idle",
             "expires_at": active[2] if active else None,
             "reason": "hosted_step_inflight" if blocked else None,
+            "host": _stored_host(connection) if active else None,
+            "owner_marker": owner_marker(active[0]) if active else None,
+            "pending_child": bool(progress and progress[1]["inflight"] is not None),
         }

@@ -83,6 +83,13 @@ HTML contract. Legacy domains remain compatible.
 
 In a Codex session with host-native subagents, invoke the `goal` skill. It uses the host supervisor to dispatch one routed specialist at a time; it does **not** start nested `codex exec` or the standalone Autopilot controller.
 
+Before resuming a Goal on another host, use `devflow execution handoff <domain>`
+and inspect the current hosted owner. A live, idle source lease can only be
+transferred with a human-verified `host.py session-handoff` operation; a pending
+child stays fenced under the existing `session-recover` contract. See
+[`host-telemetry.md`](core/protocol/host-telemetry.md). Host labels record
+ownership only: Claude Code native delegation and policy remain separate work.
+
 Use these commands for standalone foreground operation and inspection:
 
 ```bash

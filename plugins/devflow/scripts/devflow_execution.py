@@ -305,13 +305,20 @@ def orchestration_snapshot(runtime_dir: Path) -> dict[str, Any]:
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_session'"
             ).fetchone()
             lease = connection.execute(
-                "SELECT expires_at FROM hosted_session WHERE slot=1"
+                "SELECT session_id, expires_at FROM hosted_session WHERE slot=1"
             ).fetchone() if active else None
-            lease_active = bool(lease and lease[0] > time.time())
+            lease_active = bool(lease and lease[1] > time.time())
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(hosted_session)")}
+            host = connection.execute("SELECT host FROM hosted_session WHERE slot=1").fetchone() \
+                if active and "host" in columns else None
             pending = progress[1]["inflight"] if progress else None
+            # The marker is only a stale-observation precondition, not a session credential.
+            marker = hosted.owner_marker(lease[0]) if lease_active and hasattr(hosted, "owner_marker") else None
             result["hosted"] = {
                 "status": "pending_child" if pending else "active" if lease_active else "idle",
                 "lease_active": lease_active,
+                "host": host[0] if lease_active and host else None,
+                "owner_marker": marker,
                 "pending_kind": pending.get("kind") if pending else None,
                 "pending_model_alias": pending.get("candidate_alias") if pending else None,
                 "requires_termination_verification": bool(pending),

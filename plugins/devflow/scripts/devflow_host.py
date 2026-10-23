@@ -968,6 +968,7 @@ def build_parser() -> argparse.ArgumentParser:
     session_start = sub.add_parser("session-start")
     session_start.add_argument("domain")
     session_start.add_argument("--session-id")  # resume existing owner only
+    session_start.add_argument("--host", help="Optional native host label, e.g. codex or claude")
     session_end = sub.add_parser("session-end")
     session_end.add_argument("domain")
     session_end.add_argument("--session-id", required=True)
@@ -983,6 +984,12 @@ def build_parser() -> argparse.ArgumentParser:
     session_recover.add_argument("--termination-evidence", required=True)
     session_status = sub.add_parser("session-status")
     session_status.add_argument("domain")
+    session_handoff = sub.add_parser("session-handoff")
+    session_handoff.add_argument("domain")
+    session_handoff.add_argument("--to-host", required=True)
+    session_handoff.add_argument("--expected-owner-marker", required=True)
+    session_handoff.add_argument("--confirm-source-stopped", action="store_true")
+    session_handoff.add_argument("--source-stop-evidence", required=True)
 
     dispatch = sub.add_parser("dispatch")
     dispatch.add_argument("domain")
@@ -1090,7 +1097,14 @@ def main() -> int:
             session.renew(runtime_dir, args.session_id)
 
         if args.command == "session-start":
-            result = session.start(runtime_dir, session_id=args.session_id)
+            result = session.start(runtime_dir, session_id=args.session_id, host=args.host)
+        elif args.command == "session-handoff":
+            result = session.handoff(
+                runtime_dir, expected_owner_marker=args.expected_owner_marker,
+                target_host=args.to_host,
+                confirm_source_stopped=args.confirm_source_stopped,
+                source_stop_evidence=args.source_stop_evidence,
+            )
         elif args.command == "session-end":
             result = session.end(runtime_dir, args.session_id)
         elif args.command == "session-checkpoint":

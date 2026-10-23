@@ -17,10 +17,25 @@ If the host does not expose model or reasoning-effort overrides required by the 
 
 ## Own the domain before any hosted work
 
-Before writing goal requirements, bootstrapping, or dispatching, acquire the domain lease from the repository root:
+Before writing goal requirements, bootstrapping, or dispatching, inspect the
+read-only handoff projection from the repository root:
 
 ```bash
-python3 <this-skill-directory>/scripts/host.py session-start <domain>
+python3 <this-skill-directory>/../../scripts/devflow.py execution handoff <domain>
+```
+
+Read the computed lifecycle action and hosted ownership separately. If the prior
+host still owns the live lease and you lack its exact private session ID, stop
+and request a human-verified idle handoff. Never self-attest source termination.
+If a child is pending, do not hand off: retain the existing administrator child
+recovery gate. Do not interpret a journal checkpoint as WORK completion.
+
+For a fresh domain or after a clean release, acquire the lease with the native
+host label (Codex currently uses `codex`; Claude-native execution remains a
+separate integration):
+
+```bash
+python3 <this-skill-directory>/scripts/host.py session-start <domain> --host codex
 ```
 
 Keep the returned `session_id` private. Pass it to every `bootstrap`, `bootstrap-finalize`, and `dispatch` call. Resume a restarted Supervisor only with `session-start <domain> --session-id <session_id>`; never invent an owner from telemetry or replace a live session.
@@ -44,6 +59,14 @@ python3 <this-skill-directory>/scripts/host.py session-recover <domain> \
 ```
 
 `session-recover` records an administrator's explicit attestation, not native termination evidence. The Supervisor must never self-attest or infer termination from TTL. Unknown or live children remain blocked. See `core/protocol/host-telemetry.md` for receipt, idempotence and fencing details.
+
+For an idle source host that stopped but retains a live lease, an operator may
+run `session-status` then `session-handoff --to-host <target>
+--expected-owner-marker <observed_marker> --confirm-source-stopped
+--source-stop-evidence <observed_fact>`. Never call `session-handoff` as the
+Supervisor or invent termination evidence. The operator must pass the new
+private `session_id` to the new host. Resume that exact owner via `session-start
+--session-id <new_id> --host <target>`; do not create a competing owner.
 
 ## Bootstrap a new domain
 
