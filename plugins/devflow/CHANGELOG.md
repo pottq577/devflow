@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.1 - 2026-10-23 - Claude dynamic-model agents and offline host parity
+
+- Consolidate 16 Claude model/effort/read-only agents into six effort/read-only presets. Supply the selected `haiku|sonnet|opus` model explicitly on each native Agent invocation; never rely on the fallback inherited model.
+- Keep foreground/one-child-at-a-time behavior explicit, reject conflicting host-wide model and fork-subagent overrides, and document actual-model verification limitations.
+- Add subscription-free, host-neutral integration scenarios covering Codex/Claude routing, idle handoff, inflight fencing, retry and WORK authority continuity. Defer live native-agent E2E and the complete release gate.
+- No change to STATE/WORK authority, artifact protocol `1.8.0`, or Codex model registry.
+
 ## 0.13.0 - 2026-10-23 - Claude Code host-native Goal integration
 
 - Add an explicit Claude Code host wrapper using the existing hosted Goal guard, lease and operational handoff without starting nested CLI sessions.

@@ -12,8 +12,9 @@ from typing import Any
 
 import devflow_autopilot as autopilot
 
-# Each plugin-shipped agent definition pins both the model family and effort.
-# Do not fall back to inherited models or invent a missing agent definition.
+# Native Agent definitions pin effort and tool boundaries only. The supervisor must
+# supply the routed model explicitly on every Agent invocation. The frontmatter's
+# model: inherit is a fallback, not permission to omit the invocation model.
 FAMILIES = {"fast": "haiku", "balanced": "sonnet", "frontier": "opus"}
 SUPPORTED_EFFORTS = {
     "haiku": frozenset({"medium", "high"}),
@@ -63,7 +64,7 @@ def agent_type(payload: dict[str, Any], *, readonly: bool | None = None) -> str:
         raise ValueError("Claude dispatch has no supported model/effort agent")
     if readonly is None:
         readonly = payload.get("permissions") == "read-only"
-    return f"devflow:devflow-{family}-{effort}" + ("-ro" if readonly else "")
+    return f"devflow:devflow-{effort}" + ("-ro" if readonly else "")
 
 
 def decorate(result: dict[str, Any]) -> dict[str, Any]:
@@ -79,6 +80,8 @@ def decorate(result: dict[str, Any]) -> dict[str, Any]:
         payload["claude"] = {
             "tool": "Agent",
             "agent_type": agent_type(payload),
+            "model": payload["model"],
+            "run_in_background": False,
             "foreground": True,
             "isolation": "shared_checkout",
         }
@@ -96,29 +99,39 @@ def validate_agent_files(plugin_root: Path) -> list[str]:
     import yaml
 
     errors: list[str] = []
-    for family, efforts in sorted(SUPPORTED_EFFORTS.items()):
-        for effort in sorted(efforts):
-            for readonly in (False, True):
-                suffix = "-ro" if readonly else ""
-                name = f"devflow-{family}-{effort}{suffix}"
-                path = plugin_root / "agents" / f"{name}.md"
-                if not path.is_file():
-                    errors.append(f"missing Claude agent: {name}")
-                    continue
-                raw = path.read_text(encoding="utf-8")
-                if not raw.startswith("---\n") or "\n---\n" not in raw[4:]:
-                    errors.append(f"invalid Claude agent frontmatter: {name}")
-                    continue
+    expected: set[str] = set()
+    for effort in ("medium", "high", "xhigh"):
+        for readonly in (False, True):
+            suffix = "-ro" if readonly else ""
+            name = f"devflow-{effort}{suffix}"
+            expected.add(name + ".md")
+            path = plugin_root / "agents" / (name + ".md")
+            if not path.is_file():
+                errors.append(f"missing Claude agent: {name}")
+                continue
+            raw = path.read_text(encoding="utf-8")
+            if not raw.startswith("---\n") or "\n---\n" not in raw[4:]:
+                errors.append(f"invalid Claude agent frontmatter: {name}")
+                continue
+            try:
                 meta = yaml.safe_load(raw.split("---", 2)[1])
-                if not isinstance(meta, dict) or any(meta.get(k) != v for k, v in {
-                    "name": name, "model": family, "effort": effort,
-                    "background": False,
-                }.items()):
-                    errors.append(f"Claude agent preset drift: {name}")
-                denied = {value.strip() for value in str((meta or {}).get("disallowedTools", "")).split(",")}
-                required = {"Agent"} | ({"Write", "Edit", "NotebookEdit"} if readonly else set())
-                if not required <= denied:
-                    errors.append(f"Claude agent tools not fenced: {name}")
+            except yaml.YAMLError:
+                meta = None
+            if not isinstance(meta, dict):
+                errors.append(f"Claude agent preset drift: {name}")
+                continue
+            if any(meta.get(key) != value for key, value in {
+                "name": name, "model": "inherit", "effort": effort,
+                "background": False,
+            }.items()):
+                errors.append(f"Claude agent preset drift: {name}")
+            denied = {str(value).strip() for value in str(meta.get("disallowedTools", "")).split(",")}
+            required = {"Agent"} | ({"Write", "Edit", "NotebookEdit"} if readonly else set())
+            if not required <= denied:
+                errors.append(f"Claude agent tools not fenced: {name}")
+    actual = {path.name for path in (plugin_root / "agents").glob("devflow-*.md")}
+    if actual != expected:
+        errors.append("Claude agent preset set drift: extra or missing definitions")
     return errors
 
 
@@ -129,3 +142,5 @@ def assert_model_environment(env: dict[str, str] | None = None) -> None:
     forced = environment.get("CLAUDE_CODE_SUBAGENT_MODEL", "").strip()
     if forced not in {"", "inherit"}:
         raise ValueError("CLAUDE_CODE_SUBAGENT_MODEL overrides DevFlow native Agent routing")
+    if environment.get("CLAUDE_CODE_FORK_SUBAGENT", "").strip() == "1":
+        raise ValueError("CLAUDE_CODE_FORK_SUBAGENT forces background execution")

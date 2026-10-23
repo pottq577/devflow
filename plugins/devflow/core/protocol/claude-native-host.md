@@ -28,8 +28,9 @@ host-specific `.devflow/claude-routing.yaml` override, but concrete native
 model families remain pinned to `haiku`, `sonnet`, `opus` so every route maps
 to an installed plugin Agent definition. Unsupported model/effort combinations
 are **blockers**, never silently inherited or downgraded. If the environment
-forces `CLAUDE_CODE_SUBAGENT_MODEL` to a non-`inherit` value, stop before
-routing; that override can silently supersede the DevFlow model decision.
+forces `CLAUDE_CODE_SUBAGENT_MODEL` to a non-`inherit` value or sets
+`CLAUDE_CODE_FORK_SUBAGENT=1`, stop before routing: these overrides can change
+the selected model or force asynchronous child execution.
 
 Default: Scout uses Haiku (read-only intent); implementation, tests and
 remediation use Sonnet; architecture, independent review, diagnostics and
@@ -39,14 +40,23 @@ comparison. Family aliases track provider releases and are not fixed model
 snapshots.
 
 Every `dispatch_required` / `bootstrap` envelope supplies
-`primary.claude.agent_type` and, when needed, `scout.claude.agent_type`.
-Call Claude Code's **Agent** tool using the exact plugin-scoped agent type,
-passing the supplied `message` (or validated `scout_message` + capsule) without
-rewriting its pinned render. Use the foreground completion result. The static
-agent definitions pin both `model` and `effort`; do not use the parent model,
-spawn a generic unpinned agent, or substitute `fork_turns` for Claude arguments.
-A capability error, an unexpected agent type, or an unverified model selection
-stops dispatch and leaves the WORK state unchanged.
+`primary.claude.agent_type` and `primary.claude.model` (and equivalent `scout`
+fields when routed). Call Claude Code's **Agent** tool with the exact scoped
+`subagent_type`, explicit per-invocation `model`, exact routed `message` as the
+prompt (or validated `scout_message` + capsule), and `run_in_background: false`.
+Use the foreground terminal result. The six shared Agent definitions pin effort
+(`medium|high|xhigh`) and a limited tool set, with `model: inherit` only as a
+fallback. **Never omit the explicit model** or use the parent model to choose it.
+On a fallback candidate, use both that candidate's `model` and
+`claude_agent_type`. Do not substitute Codex `fork_turns` for Claude arguments.
+A capability error, unavailable Agent type/model, or unverified model selection
+stops dispatch; it cannot authorize WORK completion. Claude Code 2.1.196 or newer
+is required for correct `CLAUDE_CODE_SUBAGENT_MODEL=inherit` precedence, and
+2.1.222+ is recommended for current organization allowlist substitution rules.
+An organization model allowlist can substitute a family alias or fall back to
+an inherited model. The Python envelope checks **cannot** prove which concrete
+model actually executed; verify it in the native host before treating routing
+as validated.
 
 Read-only agent presets deny Edit/Write/NotebookEdit, but a Bash tool is needed
 for DevFlow's pinned render and can execute shell side effects. These presets
@@ -62,8 +72,10 @@ or reissue a still-running child; the host guard is authoritative.
 
 ## Verification boundary
 
-The Python regressions validate route selection, native Agent definitions,
-provider isolation and persisted guard invariants. They do not verify a live
-Claude Code Agent tool call, plan entitlements, exact provider model selection,
-permission enforcement or quota interruption. Those require an installed
-Claude Code session and the final bidirectional acceptance run.
+The subscription-free Python integration tests simulate Codex/Claude child
+execution across the *same* SQLite domain coordinator, including pending-child
+fences, role routes, conservative completion claims, and handoff retries. No
+live Claude or Codex model is called. They cannot verify plugin discovery in an
+actual Claude client, exact provider-side model selection, permission enforcement,
+usage-limit behavior, or native subagent completion. Keep live E2E pending until
+an authenticated Claude Code environment is available.

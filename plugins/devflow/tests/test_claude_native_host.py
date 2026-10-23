@@ -19,7 +19,7 @@ import devflow_claude as claude
 class ClaudeNativeHostTests(unittest.TestCase):
     def test_native_agent_presets_match_supported_routes(self):
         self.assertEqual(claude.validate_agent_files(PLUGIN), [])
-        self.assertEqual(len(list((PLUGIN / "agents").glob("devflow-*.md"))), 16)
+        self.assertEqual(len(list((PLUGIN / "agents").glob("devflow-*.md"))), 6)
 
     def test_default_codex_policy_is_not_modified(self):
         before = autopilot.load_policy(PLUGIN, None)
@@ -76,11 +76,31 @@ class ClaudeNativeHostTests(unittest.TestCase):
         saved = json.dumps(envelope, sort_keys=True)
         routed = claude.decorate(envelope)
         self.assertEqual(json.dumps(envelope, sort_keys=True), saved)
-        self.assertEqual(routed["primary"]["claude"]["agent_type"], "devflow:devflow-sonnet-high")
-        self.assertEqual(routed["scout"]["claude"]["agent_type"], "devflow:devflow-haiku-medium-ro")
-        self.assertEqual(routed["primary"]["candidates"][0]["claude_agent_type"], "devflow:devflow-sonnet-high")
+        self.assertEqual(routed["primary"]["claude"]["agent_type"], "devflow:devflow-high")
+        self.assertEqual(routed["scout"]["claude"]["agent_type"], "devflow:devflow-medium-ro")
+        self.assertEqual(routed["primary"]["claude"]["model"], "sonnet")
+        self.assertEqual(routed["scout"]["claude"]["model"], "haiku")
+        self.assertEqual(routed["primary"]["candidates"][0]["claude_agent_type"], "devflow:devflow-high")
+        self.assertIs(routed["scout"]["claude"]["run_in_background"], False)
         self.assertEqual(routed["scout"]["claude"]["foreground"], True)
         self.assertNotIn("claude", envelope["primary"])
+
+    def test_invocation_model_changes_without_new_agent_definition(self):
+        model_types = [
+            claude.agent_type({"model": family, "reasoning_effort": "high",
+                               "permissions": "read-only"})
+            for family in ("haiku", "sonnet", "opus")
+        ]
+        self.assertEqual(model_types, ["devflow:devflow-high-ro"] * 3)
+        for family in ("haiku", "sonnet", "opus"):
+            payload = {"status": "dispatch_required", "primary": {
+                "model": family, "reasoning_effort": "high", "permissions": "read-only",
+                "candidates": [],
+            }}
+            route = claude.decorate(payload)["primary"]["claude"]
+            self.assertEqual(route["model"], family)
+            self.assertEqual(route["agent_type"], "devflow:devflow-high-ro")
+            self.assertIs(route["run_in_background"], False)
 
     def test_unsupported_model_effort_or_candidate_fails_closed(self):
         for model, effort in (("sonnet", "max"), ("gpt-6-luna", "high"), ("opus", "invalid"), ("", "high")):
@@ -103,6 +123,8 @@ class ClaudeNativeHostTests(unittest.TestCase):
         claude.assert_model_environment({"CLAUDE_CODE_SUBAGENT_MODEL": "inherit"})
         with self.assertRaisesRegex(ValueError, "overrides DevFlow"):
             claude.assert_model_environment({"CLAUDE_CODE_SUBAGENT_MODEL": "opus"})
+        with self.assertRaisesRegex(ValueError, "forces background"):
+            claude.assert_model_environment({"CLAUDE_CODE_FORK_SUBAGENT": "1"})
 
     def test_host_parser_accepts_both_native_hosts_without_claude_cli(self):
         import devflow_host as host
