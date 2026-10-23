@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.4 - 2026-10-23 - Host-independent execution progress and handoff observations
+
+- Add a bounded SQLite journal for start/finish of lifecycle-mutating DevFlow CLI operations, and explicitly distinguish incomplete observations from successful transitions.
+- Introduce `devflow execution handoff` and optional `execution checkpoint` for host-independent resumption hints, action correlation and Git worktree navigation without duplicating STATE or WORK.
+- Keep operational checkpoints advisory: no new lifecycle states, required artifacts, lease transfer, or protocol migration. Hosted child termination and ownership fencing remain unchanged.
+- Add targeted synthetic regression coverage; native Codex/Claude Code handoffs still require end-to-end acceptance.
+
 ## 0.12.3 - 2026-10-21 - Hosted Scout evidence accuracy and critical cache reuse
 
 - Keep shell command text (including `./gradlew`) out of the evidence-file snapshot; continue hashing explicit structured log/output paths. Treat requirement arithmetic, domain slash pairs and Java method names as narrative instead of filesystem citations. Bind the primary Evidence map source anchors and explicitly rooted references anywhere in a Scout capsule, while still refusing any out-of-scope path or changed source digest.

@@ -37,6 +37,15 @@ devflow status <domain> --json
 
 Use `devflow status <domain>` before each action. The reported next action determines the role, scope, mode, and WORK target. For audit-only remediation of an existing codebase, initialize with `--workflow audit-remediation`; it does not invent phases.
 
+For a manual Codex/Claude Code handoff, inspect the host-independent recovery projection:
+
+```bash
+devflow execution handoff <domain>
+devflow execution checkpoint <domain> --stage verification --note 'Tests pending' --pending 'Run integration tests' --host codex
+```
+
+Checkpoints and the automatically recorded lifecycle CLI attempts are **operational observations**, not completed WORK or verified test evidence. A missing command finish remains unknown; verify Git and the original STATE/WORK before repeating it. See [`execution-progress.md`](core/protocol/execution-progress.md).
+
 ### Manual plan, run, and audit
 
 Render the indicated role's authoritative instructions, perform the bounded work, and record evidence through the CLI:

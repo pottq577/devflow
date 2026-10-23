@@ -15,6 +15,7 @@ relied on.
 | Developer decisions, provisional policies, product approval and final policy gate | `core/protocol/decision-policy.md` | plan, run, audit |
 | WORK schema, versions, evidence and acceptance/verification mapping | `core/protocol/work-item-contract.md`, `core/schemas/work.schema.yaml` | plan, run, audit |
 | Machine-owned STATE fields and delivery/finalization records | `core/protocol/lifecycle.md`, `core/schemas/state.schema.yaml` | all roles |
+| Non-authoritative execution journaling and cross-host context checkpoints | `core/protocol/execution-progress.md` | all roles |
 | High/critical review, audit scope and remediation rules | `core/protocol/risk-policy.md`, `core/protocol/audit-core.md`, `core/schemas/audit.schema.yaml`, `core/schemas/finding.schema.yaml` | run, audit |
 | Branch, commit, comment anchor, PR body and Postman collection contract | `core/protocol/delivery-artifacts.md` | plan, run, audit |
 | Newman ownership, readiness, evidence, diagnosis, ELI5, final receipt | `core/protocol/finalization.md` | plan, run, audit, finalize |

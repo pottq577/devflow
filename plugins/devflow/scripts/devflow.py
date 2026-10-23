@@ -33,6 +33,7 @@ if SCRIPT_DIRECTORY not in sys.path:
     sys.path.insert(0, SCRIPT_DIRECTORY)
 import devflow_autopilot as autopilot
 import devflow_delivery as delivery
+import devflow_execution as execution
 import devflow_finalization as finalization
 import devflow_newman as newman
 import devflow_scout as scout_contract
@@ -81,6 +82,7 @@ MARKDOWN_SECTION_ANCHORS = {
 
 PROMPT_PROTOCOLS = {
     "finalize": [
+        "execution-progress",
         "authority",
         "work-item-contract",
         "risk-policy",
@@ -88,6 +90,7 @@ PROMPT_PROTOCOLS = {
         "finalization",
     ],
     "plan": [
+        "execution-progress",
         "authority",
         "lifecycle",
         "work-item-contract",
@@ -95,12 +98,14 @@ PROMPT_PROTOCOLS = {
         "delivery-artifacts",
     ],
     "run": [
+        "execution-progress",
         "authority",
         "work-item-contract",
         "risk-policy",
         "delivery-artifacts",
     ],
     "audit": [
+        "execution-progress",
         "authority",
         "audit-core",
         "work-item-contract",
@@ -6695,6 +6700,96 @@ def sources_command(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def execution_context(root: Path, domain: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    """Derived lifecycle plus Git; the journal never selects the next action."""
+    domain_dir(root, domain)  # Enforce the existing consuming-project domain containment.
+    base = (root / ".devflow" / "runtime").resolve()
+    runtime = (base / domain).resolve()
+    try:
+        runtime.relative_to(base)
+    except ValueError as exc:
+        raise ValueError("execution runtime domain escapes .devflow/runtime") from exc
+    path = state_path(root, domain)
+    if path.is_file():
+        state = project_state(root, domain, load_yaml(path, {}) or {})
+    else:
+        state = {"next_action": {
+            "role": "architect", "command": "bootstrap", "scope": "project",
+            "phase": None, "work_item": None,
+        }, "project_status": "planning"}
+    return runtime, state, execution.git_snapshot(root)
+
+
+def execution_command(args: argparse.Namespace) -> int:
+    root = repo_root()
+    runtime, state, git_state = execution_context(root, args.domain)
+    action = state.get("next_action") or {}
+    if args.execution_command == "checkpoint":
+        result = execution.checkpoint(
+            runtime, action=action, git_state=git_state,
+            stage=args.stage, note=args.note, completed=args.completed,
+            pending=args.pending, verification=args.verification,
+            host=args.host,
+        )
+    else:
+        result = execution.read(runtime, action=action, git_state=git_state)
+        result["project_status"] = state.get("project_status")
+        result["orchestration"] = execution.orchestration_snapshot(runtime)
+        selected = action.get("work_item")
+        if selected:
+            try:
+                _path, _doc, item = find_item(root, args.domain, selected)
+                evidence = item.get("evidence") or {}
+                result["work"] = {
+                    "id": selected, "status": item.get("status"),
+                    "start_sha": evidence.get("start_sha"),
+                    "recorded_commit": evidence.get("commit"),
+                }
+            except KeyError:
+                result["work"] = {"id": selected, "status": "unavailable"}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def execution_journal_context(root: Path, domain: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    """Cheap, advisory CLI boundary capture. Full derived state is read on handoff."""
+    domain_dir(root, domain)
+    base = (root / ".devflow" / "runtime").resolve()
+    runtime = (base / domain).resolve()
+    try:
+        runtime.relative_to(base)
+    except ValueError as exc:
+        raise ValueError("execution runtime domain escapes .devflow/runtime") from exc
+    path = state_path(root, domain)
+    state = load_yaml(path, {}) if path.is_file() else {}
+    action = (state or {}).get("next_action") or {}
+    return runtime, action, {
+        "head": current_sha(root), "status": "not_scanned",
+        "paths": [], "path_count": None, "digest": None,
+    }
+
+
+def execution_operation(args: argparse.Namespace) -> str | None:
+    """Monitor lifecycle mutations across all roles, without storing raw CLI arguments."""
+    if args.command not in {
+        "work", "phase", "plan-review", "integration", "decision", "audit",
+        "delivery", "autopilot", "sources", "requirements",
+    } or not getattr(args, "domain", None):
+        return None
+    detail = getattr(args, f"{args.command.replace('-', '_')}_command", None)
+    if args.command == "delivery" and detail in {"paths", "check", "context"}:
+        return None
+    if args.command == "autopilot" and detail in {"status", "capabilities"}:
+        return None
+    if args.command == "sources" and detail != "capture":
+        return None
+    if args.command == "requirements" and (detail != "report" or not getattr(args, "write", False)):
+        return None
+    if args.command == "decision" and detail == "list":
+        return None
+    return args.command + ("." + detail if detail else "")
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="devflow", description="State-based agent development protocol runtime"
@@ -6997,6 +7092,20 @@ def build_parser() -> argparse.ArgumentParser:
         render_parser.add_argument("--expected-head")
         render_parser.add_argument("--expected-fingerprint")
         render_parser.add_argument("--check-only", action="store_true")
+    sp = sub.add_parser("execution")
+    esub = sp.add_subparsers(dest="execution_command", required=True)
+    s = esub.add_parser("handoff", help="Read-only state, Git and checkpoint recovery view")
+    s.add_argument("domain")
+    s.set_defaults(func=execution_command)
+    s = esub.add_parser("checkpoint", help="Record a bounded, non-authoritative progress observation")
+    s.add_argument("domain")
+    s.add_argument("--stage", required=True)
+    s.add_argument("--note", required=True)
+    s.add_argument("--completed", action="append", default=[])
+    s.add_argument("--pending", action="append", default=[])
+    s.add_argument("--verification", action="append", default=[])
+    s.add_argument("--host", help="Optional caller-reported host label, e.g. codex or claude")
+    s.set_defaults(func=execution_command)
     return p
 
 
@@ -7014,8 +7123,10 @@ def main() -> int:
             args.func == sources_command and args.sources_command == "verify"
         )
         readonly_report = args.func == requirements_report and not args.write
+        readonly_execution = (args.func == execution_command and args.execution_command == "handoff")
         if (
             args.func not in {validate, print_status, requirements_inspect}
+            and not readonly_execution
             and not readonly_delivery
             and not readonly_sources
             and not readonly_report
@@ -7035,7 +7146,33 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 2
-        return int(args.func(args))
+        operation = execution_operation(args)
+        command_id = None
+        journal_dir = None
+        if operation is not None:
+            try:
+                journal_dir, action_before, git_before = execution_journal_context(repo_root(), args.domain)
+                command_id = execution.record_command_start(
+                    journal_dir, action=action_before,
+                    git_state=git_before, command=operation,
+                )
+            except Exception as exc:
+                print(f"WARN: execution journal start unavailable: {exc}", file=sys.stderr)
+        code = None
+        try:
+            code = int(args.func(args))
+            return code
+        finally:
+            if command_id is not None and journal_dir is not None:
+                try:
+                    _dir, action_after, git_after = execution_journal_context(repo_root(), args.domain)
+                    execution.record_command_finish(
+                        journal_dir, command_id=command_id,
+                        action=action_after,
+                        git_state=git_after, exit_code=code,
+                    )
+                except Exception as exc:
+                    print(f"WARN: execution journal finish unavailable: {exc}", file=sys.stderr)
     except KeyboardInterrupt:
         return 130
     except KeyError as exc:
