@@ -6772,23 +6772,29 @@ def execution_journal_context(root: Path, domain: str) -> tuple[Path, dict[str, 
 
 def execution_operation(args: argparse.Namespace) -> str | None:
     """Monitor lifecycle mutations across all roles, without storing raw CLI arguments."""
-    if args.command not in {
+    # `work done --command` uses the same argparse destination as the root
+    # subparser. On this command args.command is a list of verification evidence,
+    # not the string "work". Identify WORK from its dedicated subcommand instead.
+    root_command = (
+        "work" if getattr(args, "work_command", None) else getattr(args, "command", None)
+    )
+    if not isinstance(root_command, str) or root_command not in {
         "work", "phase", "plan-review", "integration", "decision", "audit",
         "delivery", "autopilot", "sources", "requirements",
     } or not getattr(args, "domain", None):
         return None
-    detail = getattr(args, f"{args.command.replace('-', '_')}_command", None)
-    if args.command == "delivery" and detail in {"paths", "check", "context"}:
+    detail = getattr(args, f"{root_command.replace('-', '_')}_command", None)
+    if root_command == "delivery" and detail in {"paths", "check", "context"}:
         return None
-    if args.command == "autopilot" and detail in {"status", "capabilities"}:
+    if root_command == "autopilot" and detail in {"status", "capabilities"}:
         return None
-    if args.command == "sources" and detail != "capture":
+    if root_command == "sources" and detail != "capture":
         return None
-    if args.command == "requirements" and (detail != "report" or not getattr(args, "write", False)):
+    if root_command == "requirements" and (detail != "report" or not getattr(args, "write", False)):
         return None
-    if args.command == "decision" and detail == "list":
+    if root_command == "decision" and detail == "list":
         return None
-    return args.command + ("." + detail if detail else "")
+    return root_command + ("." + detail if detail else "")
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(

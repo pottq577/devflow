@@ -32,6 +32,27 @@ class ExecutionProgressTests(unittest.TestCase):
         }
         self.git = {"head": "a" * 40, "status": "available", "paths": [], "path_count": 0, "digest": "b" * 64}
 
+    def test_cli_work_done_verification_flags_do_not_break_execution_journal(self):
+        # The `--command` option of `work done` shadows the root `command`
+        # argparse destination. Exercise the actual parser rather than a hand-
+        # constructed Namespace so this regression cannot hide in CLI wiring.
+        import devflow
+        parser = devflow.build_parser()
+        for evidence in ([], ["pytest -> passed"], ["pytest -> passed", "gradle -> passed"]):
+            argv = ["work", "done", "attendance", "P01-I07"]
+            for value in evidence:
+                argv.extend(["--command", value])
+            with self.subTest(evidence=evidence):
+                args = parser.parse_args(argv)
+                self.assertEqual(args.command, evidence)
+                self.assertEqual(devflow.execution_operation(args), "work.done")
+        start = parser.parse_args(["work", "start", "attendance", "P01-I07"])
+        self.assertEqual(devflow.execution_operation(start), "work.start")
+        audit = parser.parse_args([
+            "audit", "apply", "attendance", "--scope", "work", "--task", "P01-I07",
+        ])
+        self.assertEqual(devflow.execution_operation(audit), "audit.apply")
+
     def test_read_is_read_only_for_new_domain(self):
         output = progress.read(self.runtime, action=self.action, git_state=self.git)
         self.assertEqual(output["events"], [])
