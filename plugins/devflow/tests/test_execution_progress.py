@@ -53,6 +53,21 @@ class ExecutionProgressTests(unittest.TestCase):
         ])
         self.assertEqual(devflow.execution_operation(audit), "audit.apply")
 
+    def test_autopilot_read_only_commands_skip_execution_journal(self):
+        # Route computes a model choice but must never create a runtime directory.
+        # Status is also observational; mutating start/resume remain journaled.
+        import devflow
+        parser = devflow.build_parser()
+        for subcommand in ("route", "status"):
+            with self.subTest(command=subcommand):
+                args = parser.parse_args(["autopilot", subcommand, "attendance"])
+                self.assertIsNone(devflow.execution_operation(args))
+        for subcommand in ("start", "resume"):
+            with self.subTest(command=subcommand):
+                args = parser.parse_args(["autopilot", subcommand, "attendance"])
+                self.assertEqual(devflow.execution_operation(args), f"autopilot.{subcommand}")
+        self.assertFalse(self.runtime.exists())
+
     def test_read_is_read_only_for_new_domain(self):
         output = progress.read(self.runtime, action=self.action, git_state=self.git)
         self.assertEqual(output["events"], [])

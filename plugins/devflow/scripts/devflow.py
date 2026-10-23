@@ -6786,7 +6786,7 @@ def execution_operation(args: argparse.Namespace) -> str | None:
     detail = getattr(args, f"{root_command.replace('-', '_')}_command", None)
     if root_command == "delivery" and detail in {"paths", "check", "context"}:
         return None
-    if root_command == "autopilot" and detail in {"status", "capabilities"}:
+    if root_command == "autopilot" and detail in {"status", "capabilities", "route"}:
         return None
     if root_command == "sources" and detail != "capture":
         return None
