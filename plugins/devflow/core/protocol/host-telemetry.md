@@ -137,6 +137,19 @@ private SQLite coordinator. They are operational evidence, not lifecycle
 completion or a release-gate waiver. Claude-native invocation and model routing
 are separate work; a stored target label alone does not enable Claude execution.
 
+## Primary child dispatch provenance
+
+A hosted primary `step-start` stores a bounded snapshot of the chosen lifecycle
+action and, for a `run` action, the selected WORK ID/status/recorded evidence
+SHA at reservation. The guard retains it with the pending step and the last
+acknowledged step. Cross-host projections omit session and step tokens. These
+are navigation facts only; a child receipt, even `completed`, never completes
+WORK or replaces review. On recovery, compare this original identity to the
+current repository WORK and next action before repeating or skipping work.
+Administrative `session-recover` also retains this anchor in the last-step
+operational receipt, labeled recovered, after the existing termination attestation.
+No new replay permission or automatic orphan-child release is introduced.
+
 ## Hosted resource checkpoints
 
 `orchestration.hosted.max_steps` bounds reserved child spawns within one resource segment, including Scouts and capability fallbacks (default 100). A non-progressing primary increments the persisted semantic retry index; Scout and spawn-capability failures do not. The default final no-progress retry index is five (attempts 0 through 5), and the default per-action visit ceiling is four. Every reserved spawn consumes a resource step. These counts are execution guards, not measured Codex child tokens.

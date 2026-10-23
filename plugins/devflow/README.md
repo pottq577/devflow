@@ -89,6 +89,8 @@ transferred with a human-verified `host.py session-handoff` operation; a pending
 child stays fenced under the existing `session-recover` contract. See
 [`host-telemetry.md`](core/protocol/host-telemetry.md). Host labels record
 ownership only: Claude Code native delegation and policy remain separate work.
+The handoff projection also contains bounded pending/last primary dispatch
+anchors; these are advisory and never make a WORK item complete.
 
 Use these commands for standalone foreground operation and inspection:
 

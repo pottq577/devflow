@@ -40,6 +40,17 @@ independently confirmed the source host stopped may run `session-handoff` per
 `core/protocol/host-telemetry.md`. A pending or unknown child cannot be handed
 off; use the pre-existing administrator recovery procedure after termination.
 
+Hosted primary steps additionally retain a bounded **dispatch anchor** inside the
+existing guarded reservation: original action, selected WORK ID, WORK status and
+commit evidence fields at reservation, plus HEAD. This is a historical pointer,
+not live WORK state or proof that a child completed. `orchestration.hosted`
+projects `pending_primary` and `last_primary` without exposing session/step IDs.
+A `completed` child outcome means the native child was acknowledged, **not** that
+`work done`, acceptance verification, or an audit happened. On handoff, always
+re-read the referenced WORK from the repository; if it is still `in_progress`,
+continue that WORK and verify actual source changes before editing. Existing
+pre-anchor records yield `null` for these pointers and keep existing fencing.
+
 On another host, run `devflow execution handoff <domain>` once when recovery
 context is needed. Use `devflow status` to select the actual next action, verify
 source changes and test outcomes, and inspect original cited files on demand.

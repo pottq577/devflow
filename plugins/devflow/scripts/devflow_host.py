@@ -26,6 +26,7 @@ import devflow
 import devflow_traceability as traceability
 import devflow_autopilot as autopilot
 import devflow_session as session
+import devflow_execution as execution
 import devflow_host_guard as guard
 import devflow_scout as scout_contract
 from devflow_postman import strict_json
@@ -1188,6 +1189,20 @@ def main() -> int:
             if args.candidate_alias not in {row["alias"] for row in candidates}:
                 raise guard.GuardBlocked("hosted_candidate_not_routed")
             metadata = None
+            if args.kind == "primary":
+                action = (state or {}).get("next_action") or {}
+                work = None
+                if action.get("command") == "run":
+                    work_id = action.get("work_item")
+                    if not isinstance(work_id, str) or not work_id:
+                        raise guard.GuardBlocked("hosted_selected_work_missing")
+                    try:
+                        _path, _doc, work = devflow.find_item(root, args.domain, work_id)
+                    except KeyError:
+                        raise guard.GuardBlocked("hosted_selected_work_missing") from None
+                metadata = {"primary_anchor": execution.primary_anchor(
+                    action, devflow.current_sha(root), work,
+                )}
             if args.kind == "scout":
                 # One WORK snapshot per invocation: the index, scope and digest are built once.
                 with devflow._work_snapshot():

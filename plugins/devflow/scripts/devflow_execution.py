@@ -48,6 +48,72 @@ def action_fingerprint(action: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def primary_anchor(action: dict[str, Any], head_sha: str | None,
+                   work_item: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Bounded dispatch-time facts. Never use this snapshot to mark WORK done."""
+    action_ref = _action_ref(action)
+    anchor: dict[str, Any] = {"action": action_ref, "head_sha": head_sha}
+    if action_ref["command"] == "run":
+        work_id = action_ref["work_item"]
+        if not isinstance(work_id, str) or not work_id or not isinstance(work_item, dict):
+            raise ValueError("primary run requires its selected WORK at reservation")
+        evidence = work_item.get("evidence") or {}
+        anchor["work"] = {
+            "id": work_id,
+            "status": work_item.get("status"),
+            "start_sha": evidence.get("start_sha"),
+            "recorded_commit": evidence.get("commit"),
+        }
+    return anchor
+
+
+def primary_anchor_view(step: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Expose only a validated subset of recorded child context on handoff."""
+    if not isinstance(step, dict) or step.get("kind") != "primary":
+        return None
+    metadata = step.get("metadata")
+    anchor = metadata.get("primary_anchor") if isinstance(metadata, dict) else None
+    if not isinstance(anchor, dict) or not isinstance(anchor.get("action"), dict):
+        return None  # Pre-0.12.6 reservations are still readable.
+    action = anchor["action"]
+    if (not isinstance(action.get("command"), str)
+            or not 1 <= len(action["command"]) <= 32
+            or any(value is not None and (not isinstance(value, str) or len(value) > 128)
+                   for value in _action_ref(action).values())):
+        return None
+    head = anchor.get("head_sha")
+    if head is not None and (not isinstance(head, str) or len(head) > 64):
+        return None
+    view: dict[str, Any] = {
+        "action": _action_ref(action), "head_at_dispatch": head,
+        "work_at_dispatch": None,
+        "authority": "dispatch_observation_only",
+    }
+    work = anchor.get("work")
+    if work is not None:
+        if not isinstance(work, dict):
+            return None
+        work_id = work.get("id")
+        status = work.get("status")
+        if (not isinstance(work_id, str) or not 1 <= len(work_id) <= 128
+                or status not in {"ready", "in_progress", "blocked", "done"}):
+            return None
+        for field in ("start_sha", "recorded_commit"):
+            value = work.get(field)
+            if value is not None and (not isinstance(value, str) or len(value) > 64):
+                return None
+        view["work_at_dispatch"] = {
+            "id": work_id, "status": status,
+            "start_sha": work.get("start_sha"),
+            "recorded_commit": work.get("recorded_commit"),
+        }
+    if step.get("outcome") in {"completed", "failed", "cancelled", "capability_blocked"}:
+        view["child_outcome"] = step["outcome"]
+    if step.get("recovered") is True:
+        view["recovered_after_termination_attestation"] = True
+    return view
+
+
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         ["git", "-C", str(root), *args],
@@ -312,6 +378,7 @@ def orchestration_snapshot(runtime_dir: Path) -> dict[str, Any]:
             host = connection.execute("SELECT host FROM hosted_session WHERE slot=1").fetchone() \
                 if active and "host" in columns else None
             pending = progress[1]["inflight"] if progress else None
+            last_step = progress[1].get("last_step") if progress else None
             # The marker is only a stale-observation precondition, not a session credential.
             marker = hosted.owner_marker(lease[0]) if lease_active and hasattr(hosted, "owner_marker") else None
             result["hosted"] = {
@@ -321,6 +388,8 @@ def orchestration_snapshot(runtime_dir: Path) -> dict[str, Any]:
                 "owner_marker": marker,
                 "pending_kind": pending.get("kind") if pending else None,
                 "pending_model_alias": pending.get("candidate_alias") if pending else None,
+                "pending_primary": primary_anchor_view(pending),
+                "last_primary": primary_anchor_view(last_step),
                 "requires_termination_verification": bool(pending),
             }
         except (ImportError, OSError, ValueError, TypeError, sqlite3.DatabaseError):

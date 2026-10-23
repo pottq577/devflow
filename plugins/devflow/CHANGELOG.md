@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.6 - 2026-10-23 - Durable primary dispatch anchors and recovery visibility
+
+- Persist a bounded action and selected-WORK snapshot at each hosted primary reservation, including the original WORK status, start SHA and dispatch HEAD; no source bodies, transcripts, or extra lifecycle authority.
+- Expose the original primary action, pending reservation and most recently acknowledged or administrator-recovered primary via the read-only cross-host handoff projection. Legacy reservations remain readable; child completion is never treated as WORK completion.
+- Add focused tests for interrupted primary work, cross-host resume, duplicate/stale acknowledgements, untouched WORK, and no disclosure of private session or step IDs. Keep protocol `1.8.0` and all existing execution guards.
+
 ## 0.12.5 - 2026-10-23 - Operator-attested cross-host session handoff
 
 - Add host-labeled hosted sessions, read-only owner markers and explicit operator-attested idle handoff. Fenced reservations and other live owners cannot be taken over; stale observations fail closed.

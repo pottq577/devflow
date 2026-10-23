@@ -343,13 +343,21 @@ def recover(
         value = progress[1]
         pending = copy.deepcopy(value["inflight"])
         result = _finish(value, step_id, after_fingerprint, bounds, outcome=outcome)
+        recovered_at = time.time()
+        # Keep the interrupted child identity visible after the fence is released.
+        # This is an operational receipt, not a WORK completion assertion.
+        value["last_step"] = {
+            **(pending or {}), "session_id": session_id,
+            "step_id": step_id, "after_fingerprint": after_fingerprint,
+            "outcome": outcome, "finished_at": recovered_at, "recovered": True,
+        }
         receipt = {
             **result, "status": "recovered", "session_id": session_id,
             "step_id": step_id, "pending_step": pending,
             "after_fingerprint": after_fingerprint,
             "termination_confirmation": "explicit_admin_attestation",
             "termination_evidence": termination_evidence,
-            "recovered_at": time.time(),
+            "recovered_at": recovered_at,
         }
         _save(connection, session_id, value)
         connection.execute(
