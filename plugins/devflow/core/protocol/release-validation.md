@@ -63,6 +63,10 @@ During development, prefer the compact test runner rather than dumping per-test
 tracebacks or the entire `*.suite.json` file into an agent context:
 
 ```bash
+# Advisory impacted selection, including staged/untracked changes relative to HEAD:
+python3 plugins/devflow/tests/run_suite.py --changed-from HEAD \
+  --report /tmp/devflow-impact.json
+# Use HEAD~1 after committing the patch to include that commit's changes.
 python3 plugins/devflow/tests/run_suite.py --profile focused \
   --match CodexCrashResume --report /tmp/devflow-focused.json
 python3 plugins/devflow/tests/run_suite.py --summary-from /tmp/devflow-focused.json
@@ -77,6 +81,15 @@ or source-sized assertion diffs). Use `--verbose` only when a full traceback is
 required. `--summary-from` does not run tests, and `--rerun-from` always marks
 its report **partial**, even if every retried test passes. Neither command
 replaces a fresh, unfiltered `release_gate.py` run.
+
+`--changed-from <Git ref>` is also **advisory and partial**. It selects exact
+unittest IDs from known source-to-test mappings (not substring guesses) and
+includes committed differences from the ref, staged/unstaged edits and untracked
+files. Unmapped plugin source changes conservatively expand to the complete
+focused profile; missing test modules, invalid refs, and empty DevFlow changes
+fail closed. The selected strategy and count are recorded in JSON under `impact`.
+The mapping is a fast-feedback heuristic, not proof of complete coverage.
+Never pass this partial report to the release gate as full suite evidence.
 
 ## Required checks
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.5 - 2026-10-26 - Advisory change-aware focused regression selection
+
+- Add `run_suite.py --changed-from <ref>` to select exact impacted test modules using committed, staged, unstaged and untracked paths; unclassified plugin changes expand to all focused tests instead of silently passing.
+- Preserve compact output, explicit partial evidence and full release-gate authority; keep `--rerun-from` and `--summary-from` independent from change selection.
+- Cover Git path collection, mapping drift, fallback and CLI partial-report semantics without running the complete regression gate. Artifact protocol remains `1.8.0`.
+
 ## 0.13.4 - 2026-10-26 - Structured execution receipts and compact resume briefs
 
 - Extend existing optional execution checkpoints with bounded decisions, assumptions, constraints, source path pointers and next steps. All values remain caller-reported, never completion or policy approval evidence.

@@ -232,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true", help="list without executing")
     parser.add_argument("--report", type=Path, help="write an atomic JSON execution report")
+    parser.add_argument("--changed-from", metavar="GIT_REF",
+                        help="run advisory tests affected since Git ref (includes worktree/untracked)")
     parser.add_argument("--rerun-from", type=Path, metavar="SUITE_JSON",
                         help="run only nonpassing IDs from earlier suite evidence (always partial)")
     parser.add_argument("--summary-from", type=Path, metavar="SUITE_JSON",
@@ -241,16 +243,25 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.summary_from is not None:
-            if args.rerun_from or args.match or args.list or args.report or args.profile != "full":
+            if args.rerun_from or args.changed_from or args.match or args.list or args.report or args.profile != "full":
                 raise ValueError("--summary-from cannot be combined with selection or reporting")
             print(json.dumps(_summary(_load_suite_report(args.summary_from)), ensure_ascii=False))
             return 0
         if any(not part for part in args.match):
             raise ValueError("--match requires a nonempty substring")
-        if args.rerun_from and (args.match or args.profile != "full"):
-            raise ValueError("--rerun-from cannot be combined with --match or a partial profile")
+        if args.rerun_from and (args.match or args.profile != "full" or args.changed_from):
+            raise ValueError("--rerun-from cannot be combined with other selections")
+        if args.changed_from and (args.match or args.profile != "full"):
+            raise ValueError("--changed-from cannot be combined with --match or a partial profile")
         discovered = collect_cases()
         selected = select_cases(discovered, args.profile, args.match)
+        impact = None
+        if args.changed_from:
+            import devflow_test_impact
+            changed = devflow_test_impact.changed_paths(TEST_DIR.parents[2], args.changed_from)
+            selected, impact = devflow_test_impact.choose_cases(
+                changed, discovered, base=args.changed_from,
+            )
         if args.rerun_from:
             targets = _nonpassing_ids(_load_suite_report(args.rerun_from))
             if not targets:
@@ -265,12 +276,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"DevFlow test selection error: {exc}", file=sys.stderr)
         return 2
 
-    complete = args.profile == "full" and not args.match and not args.rerun_from
+    complete = (args.profile == "full" and not args.match
+                and not args.rerun_from and not args.changed_from)
     label = "complete" if complete else "PARTIAL"
     print(
         f"DevFlow {label} suite: {len(selected)}/{len(discovered)} tests"
         f" (profile={args.profile})", file=sys.stderr,
     )
+    if impact is not None:
+        print(
+            f"Impact: {impact['strategy']}; files={impact['changed_files']}; "
+            f"modules={impact['selected_modules']}; unmapped={impact['unmapped_count']} "
+            "(advisory partial only)", file=sys.stderr,
+        )
     if args.list:
         for case in selected:
             print(case.id())
@@ -301,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
             "seconds": round(time.monotonic() - started, 3),
             "tests": result.rows,
         }
+        if impact is not None:
+            report["impact"] = impact
         write_report(args.report, report)
     if executed == 0:
         return 2  # A completely skipped selection is not a successful test run.
