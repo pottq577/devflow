@@ -59,6 +59,25 @@ the gate could not run or persist its evidence.
 The optional `run_suite.py --profile focused|legacy|newman` modes support development
 feedback only. A filtered `--profile full --match ...` is also partial.
 
+During development, prefer the compact test runner rather than dumping per-test
+tracebacks or the entire `*.suite.json` file into an agent context:
+
+```bash
+python3 plugins/devflow/tests/run_suite.py --profile focused \
+  --match CodexCrashResume --report /tmp/devflow-focused.json
+python3 plugins/devflow/tests/run_suite.py --summary-from /tmp/devflow-focused.json
+# Rerun only nonpassing exact IDs from the latest complete suite evidence:
+python3 plugins/devflow/tests/run_suite.py \
+  --rerun-from /tmp/devflow-merge-verdict.suite.json \
+  --report /tmp/devflow-rerun.json
+```
+
+The default console prints a bounded exception line per failure (no success dots
+or source-sized assertion diffs). Use `--verbose` only when a full traceback is
+required. `--summary-from` does not run tests, and `--rerun-from` always marks
+its report **partial**, even if every retried test passes. Neither command
+replaces a fresh, unfiltered `release_gate.py` run.
+
 ## Required checks
 
 - Full, unfiltered discovery and test execution, with no duplicate, missing or

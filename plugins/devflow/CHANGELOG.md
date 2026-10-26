@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.3 - 2026-10-23 - Codex crash recovery and compact regression feedback
+
+- Add subscription-free Codex-only subprocess-crash regression covering persisted WORK anchors, incomplete command journal, guarded restart, termination attestation and retry continuity.
+- Make the full/focused suite console output compact by default; preserve detailed unittest traces on `--verbose` and atomic machine-readable test reports.
+- Provide bounded prior-suite summary and exact-ID nonpassing reruns without treating a partial rerun as release evidence. Protocol remains `1.8.0`.
+
 ## 0.13.2 - 2026-10-23 - Read-only hosted observations and cross-host CLI parity
 
 - Open existing hosted coordinators strictly read-only; absent domains are inspected without creating runtime directories or SQLite databases. Reject malformed coordinator paths instead of treating them as idle.

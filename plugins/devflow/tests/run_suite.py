@@ -11,6 +11,7 @@ import argparse
 import collections
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -77,6 +78,18 @@ def select_cases(
     return selected
 
 
+def _diagnostic_line(traceback_text: str, limit: int = 360) -> str:
+    """Print only the exception line, never an entire document-sized assertion diff."""
+    lines = [line.strip() for line in traceback_text.splitlines() if line.strip()]
+    cause = next(
+        (line for line in reversed(lines)
+         if re.match(r"^[A-Za-z_][A-Za-z_0-9.]*(?:Error|Exception|Failure):?", line)),
+        lines[-1] if lines else "unknown failure",
+    )
+    # Keep all diagnostics bounded even when a failing assertion embeds source files.
+    return cause if len(cause) <= limit else cause[:limit] + "... [truncated]"
+
+
 class RecordingResult(unittest.TextTestResult):
     """Machine-readable results without logging stdout or private test fixtures."""
 
@@ -85,6 +98,14 @@ class RecordingResult(unittest.TextTestResult):
         self.rows: list[dict[str, object]] = []
         self._started: dict[unittest.case.TestCase, float] = {}
         self._outcomes: dict[unittest.case.TestCase, str] = {}
+
+    def printErrorList(self, flavour, errors):
+        if self.showAll:  # --verbose preserves the original full traceback.
+            return super().printErrorList(flavour, errors)
+        for test, traceback_text in errors:
+            self.stream.writeln(f"{flavour} {test.id()}: {_diagnostic_line(traceback_text)}")
+        if errors:
+            self.stream.writeln("Full traceback: rerun with --verbose (or the exact unittest ID).")
 
     def startTest(self, test):
         self._started[test] = time.monotonic()
@@ -151,6 +172,54 @@ def write_report(path: Path, report: dict) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _load_suite_report(path: Path) -> dict:
+    """Read existing suite evidence without treating a previous pass as fresh."""
+    try:
+        if path.stat().st_size > 16 * 1024 * 1024:
+            raise ValueError("suite report too large")
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise ValueError(f"cannot read suite report: {exc}") from exc
+    if (not isinstance(data, dict) or data.get("schema_version") != 1
+            or not isinstance(data.get("tests"), list)):
+        raise ValueError("invalid suite report schema")
+    rows = data["tests"]
+    ids: set[str] = set()
+    allowed = {"passed", "failed", "error", "skipped", "expected_failure", "unexpected_success"}
+    for row in rows:
+        if (not isinstance(row, dict)
+                or not isinstance(row.get("id"), str) or not row["id"]
+                or len(row["id"]) > 256 or row["id"] in ids
+                or row.get("status") not in allowed
+                or type(row.get("seconds")) not in (int, float)
+                or not 0 <= row["seconds"] < 10**9):
+            raise ValueError("invalid or duplicate suite test row")
+        ids.add(row["id"])
+    if type(data.get("run")) is not int or data["run"] != len(rows):
+        raise ValueError("suite row count mismatch")
+    return data
+
+
+def _nonpassing_ids(report: dict) -> set[str]:
+    return {row["id"] for row in report["tests"] if row["status"] != "passed"}
+
+
+def _summary(report: dict, *, max_issues: int = 8, slowest: int = 3) -> dict:
+    """Bounded presentation of existing evidence; does not certify a release gate."""
+    issues = [row for row in report["tests"] if row["status"] != "passed"]
+    ranked = sorted(report["tests"], key=lambda item: (-item["seconds"], item["id"]))
+    return {
+        "profile": report.get("profile"), "complete": report.get("complete"),
+        "discovered": report.get("discovered"), "run": report["run"],
+        "passed": report.get("passed"), "failures": report.get("failures"),
+        "errors": report.get("errors"), "skipped": report.get("skipped"),
+        "nonpassing": [{"id": row["id"], "status": row["status"]} for row in issues[:max_issues]],
+        "omitted_nonpassing": max(0, len(issues) - max_issues),
+        "slowest": [{"id": row["id"], "seconds": row["seconds"]} for row in ranked[:slowest]],
+        "note": "Historical suite evidence only; partial reruns never replace a fresh full release gate.",
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -163,18 +232,40 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true", help="list without executing")
     parser.add_argument("--report", type=Path, help="write an atomic JSON execution report")
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--rerun-from", type=Path, metavar="SUITE_JSON",
+                        help="run only nonpassing IDs from earlier suite evidence (always partial)")
+    parser.add_argument("--summary-from", type=Path, metavar="SUITE_JSON",
+                        help="print bounded summary of a report without running tests")
+    parser.add_argument("--verbose", action="store_true",
+                        help="show per-test output and full failures; default is compact")
     args = parser.parse_args(argv)
     try:
+        if args.summary_from is not None:
+            if args.rerun_from or args.match or args.list or args.report or args.profile != "full":
+                raise ValueError("--summary-from cannot be combined with selection or reporting")
+            print(json.dumps(_summary(_load_suite_report(args.summary_from)), ensure_ascii=False))
+            return 0
         if any(not part for part in args.match):
             raise ValueError("--match requires a nonempty substring")
+        if args.rerun_from and (args.match or args.profile != "full"):
+            raise ValueError("--rerun-from cannot be combined with --match or a partial profile")
         discovered = collect_cases()
         selected = select_cases(discovered, args.profile, args.match)
+        if args.rerun_from:
+            targets = _nonpassing_ids(_load_suite_report(args.rerun_from))
+            if not targets:
+                raise ValueError("prior suite has no nonpassing tests to rerun")
+            available = {case.id() for case in discovered}
+            missing = targets - available
+            if missing:
+                raise ValueError("prior suite contains missing test IDs: " +
+                                 ", ".join(sorted(missing)[:5]))
+            selected = [case for case in selected if case.id() in targets]
     except ValueError as exc:
         print(f"DevFlow test selection error: {exc}", file=sys.stderr)
         return 2
 
-    complete = args.profile == "full" and not args.match
+    complete = args.profile == "full" and not args.match and not args.rerun_from
     label = "complete" if complete else "PARTIAL"
     print(
         f"DevFlow {label} suite: {len(selected)}/{len(discovered)} tests"
@@ -187,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
 
     started = time.monotonic()
     runner = unittest.TextTestRunner(
-        verbosity=2 if args.verbose else 1, resultclass=RecordingResult,
+        verbosity=2 if args.verbose else 0, resultclass=RecordingResult,
     )
     result = runner.run(unittest.TestSuite(selected))
     executed = sum(row["status"] != "skipped" for row in result.rows)
