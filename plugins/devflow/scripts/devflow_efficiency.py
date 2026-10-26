@@ -238,7 +238,70 @@ def read_suite(raw: bytes) -> dict:
     }
 
 
-def report(*, telemetry: bytes | None = None, suite: bytes | None = None) -> dict:
+
+def compare_suites(baseline: bytes, current: bytes) -> dict:
+    """Compare exact test IDs from two *historical* reports, never certify a gate.
+
+    Different test selections are explicitly disclosed; only shared test IDs
+    contribute to outcome transitions and timing comparisons. Timing slowdowns
+    are diagnostic candidates, not a statistically established performance claim.
+    """
+    old_summary = read_suite(baseline)
+    new_summary = read_suite(current)
+    old = {row["id"]: row for row in _decode(baseline)["tests"]}
+    new = {row["id"]: row for row in _decode(current)["tests"]}
+    old_ids, new_ids = set(old), set(new)
+    shared = old_ids & new_ids
+    failures = SUITE_OUTCOMES - {"passed"}
+    regressed = []
+    recovered = []
+    slowdowns = []
+    for name in sorted(shared):
+        previous, latest = old[name], new[name]
+        before, after = previous["status"], latest["status"]
+        if before == "passed" and after in failures:
+            regressed.append({"id": name[:96], "before": before, "after": after})
+        elif before in failures and after == "passed":
+            recovered.append({"id": name[:96], "before": before, "after": after})
+        if before == after == "passed":
+            earlier, later = float(previous["seconds"]), float(latest["seconds"])
+            increase = later - earlier
+            if increase >= 1.0 and increase >= earlier * 0.25:
+                slowdowns.append({
+                    "id": name[:96], "before_seconds": round(earlier, 3),
+                    "after_seconds": round(later, 3), "increase_seconds": round(increase, 3),
+                })
+    slowdowns.sort(key=lambda x: (-x["increase_seconds"], x["id"]))
+    new_nonpassing = sorted(name for name in new_ids - old_ids
+                            if new[name]["status"] != "passed")
+
+    def sample(items: list[dict], count: int = 3) -> dict:
+        return {"count": len(items), "sample": items[:count],
+                "omitted": max(0, len(items) - count)}
+
+    return {
+        "authority": "historical_comparison_only",
+        "baseline_scope": old_summary["scope"],
+        "current_scope": new_summary["scope"],
+        "identical_test_ids": old_ids == new_ids,
+        "shared_tests": len(shared),
+        "added_tests": len(new_ids - old_ids),
+        "removed_tests": len(old_ids - new_ids),
+        "regressed": sample(regressed),
+        "recovered": sample(recovered),
+        "added_nonpassing": {"count": len(new_nonpassing),
+                             "sample": [s[:96] for s in new_nonpassing[:3]],
+                             "omitted": max(0, len(new_nonpassing) - 3)},
+        "slowdowns": sample(slowdowns),
+        "slowdown_rule": "both passed; >=1 second and >=25% slower",
+        "note": "Matched-ID observation only; different selection is not comparable coverage. "
+                "Timing deltas are not benchmarks or release evidence.",
+    }
+
+def report(*, telemetry: bytes | None = None, suite: bytes | None = None,
+           baseline_suite: bytes | None = None) -> dict:
+    if baseline_suite is not None and suite is None:
+        raise ValueError("baseline comparison requires a current suite report")
     result = {
         "schema_version": 1,
         "authority": "advisory_not_release_or_lifecycle_evidence",
@@ -250,7 +313,19 @@ def report(*, telemetry: bytes | None = None, suite: bytes | None = None) -> dic
             "historical or partial suite results never replace a fresh release gate",
         ],
     }
+    if baseline_suite is not None:
+        result["suite_comparison"] = compare_suites(baseline_suite, suite)
     encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    # Prefer a useful bounded summary over failure when valid historical reports
+    # contain several long test IDs alongside multiple telemetry groups.
+    comparison = result.get("suite_comparison")
+    if comparison is not None:
+        for category in ("added_nonpassing", "recovered", "slowdowns", "regressed"):
+            field = comparison[category]
+            while len(encoded) > MAX_OUTPUT and field["sample"]:
+                field["sample"].pop()
+                field["omitted"] += 1
+                encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(encoded) > MAX_OUTPUT:
         raise ValueError("aggregated report exceeds 4 KiB output bound")
     return result
@@ -262,10 +337,14 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--domain", metavar="DOMAIN", help="read existing .devflow/runtime/DOMAIN/host-dispatch.jsonl")
     source.add_argument("--telemetry", type=Path, help="read an explicitly named hosted dispatch JSONL file")
     parser.add_argument("--repo-root", type=Path, default=Path("."), help="repository root for --domain")
-    parser.add_argument("--suite", type=Path, help="existing run_suite.py JSON report")
+    parser.add_argument("--suite", type=Path, help="current run_suite.py JSON report")
+    parser.add_argument("--baseline-suite", type=Path,
+                        help="optional earlier suite report for exact-ID, read-only comparison")
     args = parser.parse_args(argv)
     if not (args.domain or args.telemetry or args.suite):
         parser.error("provide --domain, --telemetry, or --suite")
+    if args.baseline_suite and not args.suite:
+        parser.error("--baseline-suite requires --suite")
     try:
         if args.domain:
             if not DOMAIN.fullmatch(args.domain):
@@ -278,7 +357,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             telemetry = _read(args.telemetry) if args.telemetry else None
         suite = _read(args.suite) if args.suite else None
-        result = report(telemetry=telemetry, suite=suite)
+        baseline = _read(args.baseline_suite) if args.baseline_suite else None
+        result = report(telemetry=telemetry, suite=suite, baseline_suite=baseline)
     except (ValueError, OSError) as exc:
         print("DevFlow efficiency analysis error: " + str(exc)[:180], file=sys.stderr)
         return 2

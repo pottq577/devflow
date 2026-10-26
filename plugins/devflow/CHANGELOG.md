@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.7 - 2026-10-26 - Historical suite comparison and regression deltas
+
+- Compare previous and current suite reports by exact test ID, surfacing new failures, recoveries, added failing tests and measured runtime increases. Explicitly disclose unequal selections and never infer full coverage from a partial run.
+- Keep the combined efficiency summary under 4 KiB while retaining hosted dispatch metrics and unmeasured token usage. No model routing decisions or lifecycle authority changes.
+- Cover invalid evidence, changed selection, bounded reporting and read-only CLI behavior with offline tests. Artifact protocol remains `1.8.0`.
+
 ## 0.13.6 - 2026-10-26 - Bounded routing and regression efficiency analysis
 
 - Add a read-only, 4 KiB-bounded efficiency analyzer for existing hosted dispatch JSONL and suite JSON, grouping observed role/model/effort wall time, outcomes, retries and optional caller-observed wait/packet bytes. Never infer billed tokens, model quality, or WORK completion.

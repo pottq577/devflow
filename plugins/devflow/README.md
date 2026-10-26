@@ -117,7 +117,16 @@ python3 plugins/devflow/scripts/devflow_efficiency.py --domain <domain> \
   --suite /tmp/devflow-focused.json
 ```
 
-It never estimates token usage or replaces a fresh release gate.
+To compare earlier and current test results without reading the full logs:
+
+```bash
+python3 plugins/devflow/scripts/devflow_efficiency.py \
+  --baseline-suite /tmp/devflow-before.json \
+  --suite /tmp/devflow-after.json
+```
+
+The comparison reports exact-ID outcome changes and measured time increases;
+it never estimates token usage or replaces a fresh release gate.
 
 ## Rendered context and evidence
 

@@ -77,6 +77,10 @@ python3 plugins/devflow/tests/run_suite.py \
 # Inspect bounded routing and test duration metrics without exposing full logs:
 python3 plugins/devflow/scripts/devflow_efficiency.py --domain <domain> \
   --suite /tmp/devflow-focused.json
+# Compare prior/current suite reports without reading every test row:
+python3 plugins/devflow/scripts/devflow_efficiency.py \
+  --baseline-suite /tmp/devflow-prior.json \
+  --suite /tmp/devflow-current.json
 ```
 
 The default console prints a bounded exception line per failure (no success dots

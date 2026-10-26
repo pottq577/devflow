@@ -186,5 +186,108 @@ class EfficiencyReportTests(unittest.TestCase):
         self.assertEqual(result["hosted"]["groups_omitted"], 80 - efficiency.MAX_GROUPS)
 
 
+    def suite_rows(self, cases, *, complete=False):
+        return json.dumps({
+            "schema_version": 1, "profile": "full" if complete else "focused",
+            "complete": complete, "selected": len(cases), "run": len(cases),
+            "passed": sum(row[1] == "passed" for row in cases),
+            "tests": [{"id": name, "status": status, "seconds": seconds}
+                      for name, status, seconds in cases],
+        }).encode("utf-8")
+
+    def test_comparison_finds_only_matched_regressions_fixes_and_slowdowns(self):
+        old = self.suite_rows([
+            ("a.Case.test_regressed", "passed", 1.0),
+            ("a.Case.test_recovered", "failed", 3.0),
+            ("a.Case.test_slow", "passed", 3.0),
+            ("a.Case.test_normal", "passed", 4.0),
+        ], complete=True)
+        new = self.suite_rows([
+            ("a.Case.test_regressed", "failed", 1.0),
+            ("a.Case.test_recovered", "passed", 3.0),
+            ("a.Case.test_slow", "passed", 5.0),
+            ("a.Case.test_normal", "passed", 4.2),
+        ], complete=True)
+        result = efficiency.report(suite=new, baseline_suite=old)["suite_comparison"]
+        self.assertTrue(result["identical_test_ids"])
+        self.assertEqual(result["regressed"]["count"], 1)
+        self.assertEqual(result["recovered"]["count"], 1)
+        self.assertEqual(result["slowdowns"]["count"], 1)
+        self.assertEqual(result["slowdowns"]["sample"][0]["increase_seconds"], 2.0)
+        self.assertEqual(result["authority"], "historical_comparison_only")
+
+    def test_different_test_selection_does_not_conflate_absent_with_regression(self):
+        old = self.suite_rows([("a.Case.test_old", "passed", 1.0),
+                               ("a.Case.test_common", "passed", 2.0)])
+        new = self.suite_rows([("a.Case.test_common", "passed", 2.0),
+                               ("a.Case.test_added", "failed", 2.0)])
+        result = efficiency.compare_suites(old, new)
+        self.assertFalse(result["identical_test_ids"])
+        self.assertEqual(result["shared_tests"], 1)
+        self.assertEqual(result["added_tests"], 1)
+        self.assertEqual(result["removed_tests"], 1)
+        self.assertEqual(result["regressed"]["count"], 0)
+        self.assertEqual(result["added_nonpassing"]["count"], 1)
+
+    def test_comparison_output_remains_bounded_with_many_long_test_ids(self):
+        ids = [f"a.Case.test_{n:03}_" + "x" * 115 for n in range(65)]
+        old = self.suite_rows([(name, "passed", 1.0) for name in ids])
+        new = self.suite_rows([(name, "failed", 8.0) for name in ids])
+        result = efficiency.report(telemetry=self.data(self.record()),
+                                   suite=new, baseline_suite=old)
+        encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertLessEqual(len(encoded), efficiency.MAX_OUTPUT)
+        compare = result["suite_comparison"]
+        self.assertEqual(compare["regressed"]["count"], 65)
+        self.assertEqual(len(compare["regressed"]["sample"]), 3)
+        self.assertEqual(compare["regressed"]["omitted"], 62)
+
+    def test_many_groups_and_long_ids_preserve_bounded_comparison(self):
+        rows = []
+        for index in range(6):
+            row = self.record(dispatch_id=f"{index:024x}", alias=f"alias{index}")
+            rows.append(row)
+        names = [f"a.Case.test_{index:03}_" + "x" * 100 for index in range(60)]
+        before = self.suite_rows([(name, "passed", 1.0) for name in names])
+        after = self.suite_rows([(name, "failed", 10.0) for name in names])
+        result = efficiency.report(telemetry=self.data(*rows), suite=after,
+                                   baseline_suite=before)
+        size = len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode())
+        self.assertLessEqual(size, efficiency.MAX_OUTPUT)
+        self.assertEqual(result["suite_comparison"]["regressed"]["count"], 60)
+        self.assertEqual(result["hosted"]["finished"], 6)
+
+    def test_missing_current_suite_never_ignores_baseline(self):
+        with self.assertRaisesRegex(ValueError, "requires a current"):
+            efficiency.report(baseline_suite=self.suite())
+
+    def test_baseline_invalid_report_rejected_even_when_current_passes(self):
+        old = self.suite_rows([("a.Case.test_old", "passed", 1.0)])
+        current = self.suite_rows([("a.Case.test_new", "passed", 1.0)])
+        bad = json.loads(old)
+        bad["tests"][0]["status"] = "failed"  # inconsistent passed count
+        with self.assertRaisesRegex(ValueError, "passed count mismatch"):
+            efficiency.report(suite=current, baseline_suite=json.dumps(bad).encode())
+
+    def test_cli_comparison_is_readonly_and_rejects_missing_baseline(self):
+        old = self.root / "baseline.json"
+        new = self.root / "latest.json"
+        old.write_bytes(self.suite_rows([("a.Case.test_a", "passed", 1.0)]))
+        new.write_bytes(self.suite_rows([("a.Case.test_a", "failed", 2.0)]))
+        before = (old.stat().st_mtime_ns, new.stat().st_mtime_ns)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = efficiency.main(["--suite", str(new), "--baseline-suite", str(old)])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(json.loads(out.getvalue())["suite_comparison"]["regressed"]["count"], 1)
+        self.assertEqual((old.stat().st_mtime_ns, new.stat().st_mtime_ns), before)
+        old.unlink()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = efficiency.main(["--suite", str(new), "--baseline-suite", str(old)])
+        self.assertEqual(code, 2)
+        self.assertIn("requested evidence is absent", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
