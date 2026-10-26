@@ -109,6 +109,16 @@ devflow autopilot resume <domain> --until complete
 
 The active routing aliases and model capabilities are defined in `core/routing/default.yaml` and `core/routing/models.yaml`. Read [`host-telemetry.md`](core/protocol/host-telemetry.md) for hosted leases, step fencing, recovery, checkpoints, and telemetry. A pending live or unconfirmed child is a blocker, not evidence of termination. Read [`skill-composition.md`](core/protocol/skill-composition.md) for optional Superpowers, Ponytail, Vercel, Matt Pocock, and Trail of Bits peer disciplines; peer skills never replace DevFlow lifecycle authority.
 
+For a read-only, bounded summary of hosted dispatch durations, retry counts
+and slow regression tests, run from the repository root:
+
+```bash
+python3 plugins/devflow/scripts/devflow_efficiency.py --domain <domain> \
+  --suite /tmp/devflow-focused.json
+```
+
+It never estimates token usage or replaces a fresh release gate.
+
 ## Rendered context and evidence
 
 `devflow render <action>` emits the applicable role contract and selected protocol documents. Plan receives the approved PRD; Run receives one WORK and linked requirements; Audit receives scope-specific context. Finalize uses a paged WORK manifest rather than inlining every WORK body.

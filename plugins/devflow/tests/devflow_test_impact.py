@@ -42,6 +42,9 @@ IMPACT_MAP = {
         "test_claude_native_host", "test_cross_host_parity_integration",
         "test_host_autopilot",
     }),
+    "scripts/devflow_efficiency.py": frozenset({
+        "test_efficiency_report", "test_test_impact",
+    }),
     "tests/run_suite.py": frozenset({
         "test_suite_runner", "test_suite_output_budget", "test_release_gate",
         "test_test_impact",

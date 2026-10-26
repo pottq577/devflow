@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.6 - 2026-10-26 - Bounded routing and regression efficiency analysis
+
+- Add a read-only, 4 KiB-bounded efficiency analyzer for existing hosted dispatch JSONL and suite JSON, grouping observed role/model/effort wall time, outcomes, retries and optional caller-observed wait/packet bytes. Never infer billed tokens, model quality, or WORK completion.
+- Summarize the three slowest tests and partial/full test evidence without exposing raw dispatch messages, task names, session tokens or giant suite logs. Reject malformed, oversized and symlinked evidence.
+- Add focused self-contained tests and explicit change-impact mapping. Preserve full release-gate authority and artifact protocol `1.8.0`.
+
 ## 0.13.5 - 2026-10-26 - Advisory change-aware focused regression selection
 
 - Add `run_suite.py --changed-from <ref>` to select exact impacted test modules using committed, staged, unstaged and untracked paths; unclassified plugin changes expand to all focused tests instead of silently passing.

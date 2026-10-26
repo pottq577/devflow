@@ -74,6 +74,9 @@ python3 plugins/devflow/tests/run_suite.py --summary-from /tmp/devflow-focused.j
 python3 plugins/devflow/tests/run_suite.py \
   --rerun-from /tmp/devflow-merge-verdict.suite.json \
   --report /tmp/devflow-rerun.json
+# Inspect bounded routing and test duration metrics without exposing full logs:
+python3 plugins/devflow/scripts/devflow_efficiency.py --domain <domain> \
+  --suite /tmp/devflow-focused.json
 ```
 
 The default console prints a bounded exception line per failure (no success dots

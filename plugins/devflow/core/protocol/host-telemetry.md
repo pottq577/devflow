@@ -47,6 +47,25 @@ The telemetry format adds no STATE/WORK field, lifecycle artifact, transition or
 approval requirement. Native token accounting, including hosted token-budget
 enforcement, remains outside this contract.
 
+## Read-only efficiency summary
+
+From the repository root, summarize existing hosted dispatch records and optionally
+an existing compact suite JSON without dumping the raw telemetry or test list:
+
+```bash
+python3 plugins/devflow/scripts/devflow_efficiency.py --domain <domain> \
+  --suite /tmp/devflow-focused.json
+```
+
+`--telemetry <path>` accepts an explicit historical JSONL file instead of
+`--domain`. This inspection does not create runtime data and caps JSON stdout
+at 4 KiB. It shows observed wall time (including supervisor overhead), outcomes,
+retry attempts, and optional caller-reported child wait and packet byte counts.
+A start without a finish remains **unknown**, not proof of an active or failed
+child. A `completed` telemetry finish is not completed WORK. The analyzer never
+infers token spending, pricing, or a preferred model; historical suite evidence,
+even if complete, is not a fresh release gate.
+
 Starting telemetry prunes settled inflight files under `host-dispatch-inflight/`, keeping only
 the file whose `step_id` is the live reserved step. A supervisor that crashed between start and
 finish therefore cannot accumulate files without bound, and another session's live record is never
