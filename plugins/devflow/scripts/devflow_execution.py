@@ -37,6 +37,25 @@ def _bounded_items(values: list[str], name: str) -> list[str]:
     return [_require_text(value, name) for value in values]
 
 
+def _receipt_items(values: list[str] | None, name: str) -> list[str]:
+    """Keep optional reasoning hints short; these are not approval or authority."""
+    if values is None:
+        return []
+    if not isinstance(values, list) or len(values) > 8:
+        raise ValueError(f"{name} permits at most 8 entries")
+    return [_require_text(value, name, 240) for value in values]
+
+
+def _receipt_paths(values: list[str] | None) -> list[str]:
+    paths = _receipt_items(values, "files")
+    for path in paths:
+        # Repository-relative navigation hints only, never arbitrary filesystem paths.
+        if (path.startswith(("/", "~")) or "\\" in path or ":" in path
+                or any(piece in {"", ".", ".."} for piece in path.split("/"))):
+            raise ValueError("receipt files must be repository-relative paths")
+    return paths
+
+
 def _action_ref(action: dict[str, Any]) -> dict[str, Any]:
     """Never treat a copied next_action as an independent lifecycle decision."""
     return {key: action.get(key) for key in ("role", "command", "scope", "phase", "work_item", "mode")}
@@ -244,7 +263,10 @@ def record_command_finish(runtime_dir: Path, *, command_id: str, action: dict[st
 def checkpoint(runtime_dir: Path, *, action: dict[str, Any], git_state: dict[str, Any],
                stage: str, note: str, completed: list[str] | None = None,
                pending: list[str] | None = None, verification: list[str] | None = None,
-               host: str | None = None) -> dict[str, Any]:
+               host: str | None = None, decisions: list[str] | None = None,
+               assumptions: list[str] | None = None, constraints: list[str] | None = None,
+               files: list[str] | None = None, next_steps: list[str] | None = None,
+               ) -> dict[str, Any]:
     stage = _require_text(stage, "stage", 48)
     note = _require_text(note, "note")
     if host is not None and not HOST_PATTERN.fullmatch(host):
@@ -257,6 +279,14 @@ def checkpoint(runtime_dir: Path, *, action: dict[str, Any], git_state: dict[str
         "host": host,
         "authority": "caller_reported_unverified",
     }
+    if any(value is not None for value in (decisions, assumptions, constraints, files, next_steps)):
+        details["receipt"] = {
+            "decisions": _receipt_items(decisions, "decisions"),
+            "assumptions": _receipt_items(assumptions, "assumptions"),
+            "constraints": _receipt_items(constraints, "constraints"),
+            "files": _receipt_paths(files),
+            "next_steps": _receipt_items(next_steps, "next_steps"),
+        }
     event_id = _insert(runtime_dir, event_kind="checkpoint", command_id=None,
                        action=action, git_state=git_state, details=details)
     return {"status": "recorded", "event_id": event_id,

@@ -20,12 +20,16 @@ If the host cannot invoke the **exact** routed model and effort, report a capabi
 ## Own the domain before any hosted work
 
 Before writing goal requirements, bootstrapping, or dispatching, inspect the
-read-only handoff projection from the repository root:
+small read-only resume context from the repository root:
 
 ```bash
-python3 <this-skill-directory>/../../scripts/devflow.py execution handoff <domain>
+python3 <this-skill-directory>/../../scripts/devflow.py execution resume-brief <domain>
 ```
 
+This is **advisory navigation**, not authority to mutate or take over a lease.
+If it shows a pending child, corrupted record, active foreign owner, unfinished
+command, or uncertain evidence, inspect `execution handoff <domain>` and the
+original STATE/WORK and guard before taking action. Do not replay unknown work.
 Read the computed lifecycle action and hosted ownership separately. If the prior
 host still owns the live lease and you lack its exact private session ID, stop
 and request a human-verified idle handoff. Never self-attest source termination.

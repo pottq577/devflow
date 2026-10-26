@@ -34,6 +34,7 @@ if SCRIPT_DIRECTORY not in sys.path:
 import devflow_autopilot as autopilot
 import devflow_delivery as delivery
 import devflow_execution as execution
+import devflow_resume as resume
 import devflow_finalization as finalization
 import devflow_newman as newman
 import devflow_scout as scout_contract
@@ -6730,7 +6731,9 @@ def execution_command(args: argparse.Namespace) -> int:
             runtime, action=action, git_state=git_state,
             stage=args.stage, note=args.note, completed=args.completed,
             pending=args.pending, verification=args.verification,
-            host=args.host,
+            host=args.host, decisions=args.decisions,
+            assumptions=args.assumptions, constraints=args.constraints,
+            files=args.files, next_steps=args.next_steps,
         )
     else:
         result = execution.read(runtime, action=action, git_state=git_state)
@@ -6748,7 +6751,12 @@ def execution_command(args: argparse.Namespace) -> int:
                 }
             except KeyError:
                 result["work"] = {"id": selected, "status": "unavailable"}
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.execution_command == "resume-brief":
+            result = resume.build(result)
+    if args.execution_command == "resume-brief":
+        print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -7103,6 +7111,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = esub.add_parser("handoff", help="Read-only state, Git and checkpoint recovery view")
     s.add_argument("domain")
     s.set_defaults(func=execution_command)
+    s = esub.add_parser("resume-brief", help="Read-only, 4KB bounded handoff context")
+    s.add_argument("domain")
+    s.set_defaults(func=execution_command)
     s = esub.add_parser("checkpoint", help="Record a bounded, non-authoritative progress observation")
     s.add_argument("domain")
     s.add_argument("--stage", required=True)
@@ -7110,6 +7121,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--completed", action="append", default=[])
     s.add_argument("--pending", action="append", default=[])
     s.add_argument("--verification", action="append", default=[])
+    s.add_argument("--decision", dest="decisions", action="append")
+    s.add_argument("--assumption", dest="assumptions", action="append")
+    s.add_argument("--constraint", dest="constraints", action="append")
+    s.add_argument("--file", dest="files", action="append")
+    s.add_argument("--next-step", dest="next_steps", action="append")
     s.add_argument("--host", help="Optional caller-reported host label, e.g. codex or claude")
     s.set_defaults(func=execution_command)
     return p
@@ -7129,7 +7145,7 @@ def main() -> int:
             args.func == sources_command and args.sources_command == "verify"
         )
         readonly_report = args.func == requirements_report and not args.write
-        readonly_execution = (args.func == execution_command and args.execution_command == "handoff")
+        readonly_execution = (args.func == execution_command and args.execution_command in {"handoff", "resume-brief"})
         if (
             args.func not in {validate, print_status, requirements_inspect}
             and not readonly_execution

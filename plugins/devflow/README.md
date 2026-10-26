@@ -40,7 +40,8 @@ Use `devflow status <domain>` before each action. The reported next action deter
 For a manual Codex/Claude Code handoff, inspect the host-independent recovery projection:
 
 ```bash
-devflow execution handoff <domain>
+devflow execution resume-brief <domain>  # compact advisory resume context
+devflow execution handoff <domain>       # full view when verification is necessary
 devflow execution checkpoint <domain> --stage verification --note 'Tests pending' --pending 'Run integration tests' --host codex
 ```
 

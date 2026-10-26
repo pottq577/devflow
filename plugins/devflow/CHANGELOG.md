@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.4 - 2026-10-26 - Structured execution receipts and compact resume briefs
+
+- Extend existing optional execution checkpoints with bounded decisions, assumptions, constraints, source path pointers and next steps. All values remain caller-reported, never completion or policy approval evidence.
+- Add read-only `execution resume-brief` with a hard 4KB JSON output bound, current lifecycle/WORK/Git pointers and explicit pending-child and owner checks. Preserve full `execution handoff` for deeper inspection.
+- Add offline receipt/brief regressions. Reuse the existing SQLite journal and avoid extra model calls or new lifecycle artifacts; protocol stays `1.8.0`.
+
 ## 0.13.3 - 2026-10-23 - Codex crash recovery and compact regression feedback
 
 - Add subscription-free Codex-only subprocess-crash regression covering persisted WORK anchors, incomplete command journal, guarded restart, termination attestation and retry continuity.

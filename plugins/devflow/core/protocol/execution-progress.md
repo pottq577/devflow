@@ -24,6 +24,35 @@ devflow execution checkpoint <domain> --stage implementation \
   --verification './gradlew test -> not yet run' --host codex
 ```
 
+Optionally attach a structured **Execution Receipt** to the same checkpoint:
+
+```
+devflow execution checkpoint <domain> --stage implementation --note 'Service updated' \
+  --decision 'Reuse existing period validator' \
+  --assumption 'Policy question remains open' \
+  --constraint 'Keep API contract unchanged' \
+  --file 'apps/hr/src/WorkStandardService.java' \
+  --next-step 'Run controller regression' --host codex
+```
+
+Receipt fields are short, optional, caller-reported hints. `--file` accepts only
+repository-relative paths; do not store source bodies, secrets, personal data, or
+unapproved policy decisions. Receipts stay in the existing checkpoint event and
+have no independent lifecycle or approval authority. Existing checkpoints remain
+readable without migration.
+
+For a low-token supervisor restart, inspect the bounded JSON first:
+
+```
+devflow execution resume-brief <domain>
+```
+
+The 4KB output keeps the computed next action, current WORK/Git pointers,
+pending-child and owner-check flags, unconfirmed-command count, and recent
+checkpoint hints. The brief is **advisory only** and cannot grant a lease,
+resolve a pending child, verify a test, or mark WORK complete. Use the full
+`execution handoff` when safety is ambiguous or more context is necessary.
+
 Use a stage appropriate to the actual lifecycle action (planning, implementation,
 verification, audit, finalization, etc.). Never claim a verification result that
 was not observed. Do not copy full conversations, source bodies, private tokens,
