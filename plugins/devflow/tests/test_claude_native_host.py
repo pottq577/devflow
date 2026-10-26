@@ -52,6 +52,25 @@ class ClaudeNativeHostTests(unittest.TestCase):
         self.assertTrue(all(step["effort"] != "max" for step in
                             policy["escalation"]["retries"]["worker_stages"]))
 
+    def test_claude_audit_and_diagnosis_use_xhigh_only_for_elevated_risk(self):
+        policy = claude.load_policy(PLUGIN, None)
+        registry = autopilot.ModelRegistry.from_policy(policy)
+        native = {registry.model_id(alias) for alias in registry.aliases()}
+        caps = autopilot.CapabilityRegistry.assumed(
+            policy, native_models=native, exec_available=False
+        )
+        router = autopilot.RouteEngine(policy, caps)
+        for action, attempt in (
+            ({"command": "audit", "scope": "integration"}, 0),
+            ({"command": "run", "scope": "phase"}, 3),
+        ):
+            for risk, effort in (("medium", "high"), ("high", "xhigh"),
+                                 ("critical", "xhigh")):
+                with self.subTest(action=action["command"], risk=risk):
+                    spec = router.resolve(action, {"risk_profile": risk}, attempt)
+                    self.assertEqual(spec["model"]["selected"], "opus")
+                    self.assertEqual(spec["model"]["reasoning_effort"], effort)
+
     def test_claude_project_override_cannot_enable_codex_exec(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

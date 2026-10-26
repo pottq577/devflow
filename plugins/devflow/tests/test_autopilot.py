@@ -46,7 +46,7 @@ class AutopilotRoutingTests(unittest.TestCase):
         for model_id in self.models.values():
             self.assertNotIn(model_id, routing_text)
         self.assertEqual(self.models["fast"], "gpt-6-luna")
-        self.assertEqual(self.models["balanced"], "gpt-5.6-terra")
+        self.assertEqual(self.models["balanced"], "gpt-6.1-terra")
         self.assertEqual(self.models["frontier"], "gpt-6.1-sol")
         self.assertEqual(
             self.policy["profiles"]["economy"]["candidates"], ["fast", "balanced"]
@@ -184,7 +184,7 @@ class AutopilotRoutingTests(unittest.TestCase):
             )
             diagnosis = router.resolve(action, state, attempt=2)
             self.assertEqual(diagnosis["role"], "diagnostician")
-            self.assert_route(diagnosis, "frontier", "xhigh")
+            self.assert_route(diagnosis, "frontier", "high")
             self.assert_route(
                 router.resolve(action, state, attempt=3), "frontier", "xhigh"
             )
@@ -292,12 +292,22 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assert_route(spec, "frontier", "high")
         self.assertEqual(spec["execution"]["backend"], "native_agent")
 
-    def test_critical_integration_audit_routes_to_frontier_xhigh(self):
-        spec = self.router.resolve(
-            {"command": "audit", "scope": "integration", "mode": "initial"},
-            {"risk_profile": "critical"},
-        )
-        self.assert_route(spec, "frontier", "xhigh")
+    def test_integration_audit_reserves_xhigh_for_elevated_risk(self):
+        action = {"command": "audit", "scope": "integration", "mode": "initial"}
+        for risk, effort in (("medium", "high"), ("high", "xhigh"),
+                             ("critical", "xhigh")):
+            with self.subTest(risk=risk):
+                spec = self.router.resolve(action, {"risk_profile": risk})
+                self.assert_route(spec, "frontier", effort)
+
+    def test_diagnostician_reserves_xhigh_for_elevated_risk(self):
+        action = {"command": "run", "scope": "phase", "item_kind": "implementation"}
+        for risk, effort in (("medium", "high"), ("high", "xhigh"),
+                             ("critical", "xhigh")):
+            with self.subTest(risk=risk):
+                spec = self.router.resolve(action, {"risk_profile": risk}, attempt=3)
+                self.assertEqual(spec["role"], "diagnostician")
+                self.assert_route(spec, "frontier", effort)
 
     def test_work_verification_stays_on_sol_and_escalates_effort_for_risk(self):
         medium = self.router.resolve(
@@ -632,7 +642,7 @@ class AutopilotRoutingTests(unittest.TestCase):
         self.assert_route(xhigh, "fast", "xhigh")
         self.assert_route(maximum, "fast", "max")
         self.assertEqual(diag["role"], "diagnostician")
-        self.assert_route(diag, "frontier", "xhigh")
+        self.assert_route(diag, "frontier", "high")
         self.assert_route(post_diag, "fast", "max")
         self.assert_route(fallback, "balanced", "xhigh")
 

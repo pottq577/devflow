@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.8 - 2026-10-27 - Terra 6.1 and risk-based reasoning effort
+
+- Upgrade Codex `balanced` to GPT-6.1 Terra; keep Luna routing and Worker retry behavior unchanged.
+- Use `high` for default integration audit and diagnosis on Codex and Claude Code. Reserve `xhigh` for high/critical risk and the existing final Worker fallback.
+- Test role and risk selection on both hosts. Artifact protocol remains `1.8.0`; live model availability and native-Agent acceptance still require host verification.
+
 ## 0.13.7 - 2026-10-26 - Historical suite comparison and regression deltas
 
 - Compare previous and current suite reports by exact test ID, surfacing new failures, recoveries, added failing tests and measured runtime increases. Explicitly disclose unequal selections and never infer full coverage from a partial run.

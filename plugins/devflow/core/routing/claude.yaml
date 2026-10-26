@@ -14,8 +14,8 @@ roles:
   worker: { profile: economy, effort: high, permissions: inherit }
   verifier: { profile: frontier, effort: high, permissions: inherit }
   auditor: { profile: frontier, effort: high, permissions: inherit }
-  integration_auditor: { profile: hardest, effort: xhigh, permissions: inherit }
-  diagnostician: { profile: frontier, effort: xhigh, permissions: read-only }
+  integration_auditor: { profile: hardest, effort: high, permissions: inherit }
+  diagnostician: { profile: frontier, effort: high, permissions: read-only }
   finalizer: { profile: frontier, effort: high, permissions: inherit }
 escalation:
   kind:

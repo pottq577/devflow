@@ -366,7 +366,7 @@ class HostAutopilotUnitTests(unittest.TestCase):
         )
         self.assertEqual(envelope["attempt"], 5)
         self.assertEqual(envelope["primary"]["model_alias"], "balanced")
-        self.assertEqual(envelope["primary"]["model"], "gpt-5.6-terra")
+        self.assertEqual(envelope["primary"]["model"], "gpt-6.1-terra")
         self.assertEqual(envelope["primary"]["reasoning_effort"], "xhigh")
         self.assertIsNone(envelope["scout"])
 
